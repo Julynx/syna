@@ -10,8 +10,7 @@ def execute_command(command: str, arguments: list[str]):
     over. You may install packages, create and run scripts, and take any action you need
     to perform your assigned task.
 
-    Almost any task can be completed through a linux terminal in one way or another, so
-    do not give up until you reach your stated goal.
+    Almost any task can be completed through a linux terminal in one way or another.
     """
     container = get_container()
     response = container.exec([command, *arguments])
