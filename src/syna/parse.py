@@ -1,3 +1,5 @@
+"""Tool call parsing and execution for agent responses."""
+
 import json
 
 import tools
@@ -5,27 +7,27 @@ from string_grab import grab_all
 
 
 def parse_and_execute_tools(text):
-
+    """Parse tool invocations from text and execute their corresponding functions."""
     outputs = []
 
     for tool_call in grab_all(text, start="```tool", end="```"):
         try:
-            # Extract the tool information
             tool = json.loads(tool_call)
             tool_name = next(iter(tool.keys()))
             tool_arguments = tool[tool_name]
 
-            # Call the tool
             func = getattr(tools, tool_name)
             output = func(**tool_arguments)
 
         except json.decoder.JSONDecodeError as exc:
-            print(f"  ! (Tool call failed: {exc[:32]})")
+            print(f"  ! (Tool call failed: {str(exc)[:32]})")
             tool_name = "unknown"
             tool_arguments = {"unknown": "unknown"}
             output = f"A tool call could not be decoded as JSON: {exc}"
+        except Exception as exc:
+            print(f"  ! (Tool execution failed: {str(exc)[:64]})")
+            output = f"Tool execution error: {exc}"
 
-        # Format the output
         outputs.append(
             {
                 "name": tool_name,

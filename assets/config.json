@@ -1,0 +1,13 @@
+{
+  "timeout_ms": 120000,
+  "retry": {
+    "strategy": "backoff",
+    "initial_interval_ms": 1000,
+    "max_interval_ms": 10000,
+    "exponent": 1.5,
+    "max_elapsed_time_ms": 30000,
+    "retry_connection_errors": false
+  },
+  "max_command_output_chars": 4000,
+  "log_file": "syna.log"
+}

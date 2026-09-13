@@ -2,8 +2,8 @@ import ast
 
 
 def get_function_metadata(file_path):
-    with open(file_path, "r", encoding="utf-8") as f:
-        tree = ast.parse(f.read(), filename=file_path)
+    with open(file_path, "r", encoding="utf-8") as file:
+        tree = ast.parse(file.read(), filename=file_path)
 
     functions_info = []
 

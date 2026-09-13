@@ -1,3 +1,5 @@
+"""Application entrypoint for Syna AI agent."""
+
 import sys
 
 from ask import ask_loop
@@ -5,6 +7,7 @@ from state import close_docker_client
 
 
 def main() -> None:
+    """Start the interactive agent loop."""
     ask_loop()
 
 

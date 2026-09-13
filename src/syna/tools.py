@@ -1,3 +1,4 @@
+from config import truncate_command_output
 from state import get_container
 
 
@@ -14,7 +15,7 @@ def execute_command(command: str, arguments: list[str]):
     """
     container = get_container()
     response = container.exec([command, *arguments])
-    return response
+    return truncate_command_output(response)
 
 
 def respond(text: str):
