@@ -2,12 +2,13 @@
 
 import json
 
-import ask_utils
-from config import get_project_root, load_config
 from dotenv import dotenv_values
-from inspect_module import get_function_metadata
 from openrouter import OpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
+
+from . import ask_utils
+from .config import get_project_root, load_config
+from .inspect_module import get_function_metadata
 
 dotenv = dotenv_values(get_project_root() / ".env")
 
@@ -56,8 +57,11 @@ def create_model_client():
     )
 
 
-def ask_loop(model="google/gemini-3.8-flash"):
+def ask_loop():
     """Execute the interactive conversation and tool execution loop."""
+    model = dotenv.get("MODEL")
+    if not model:
+        raise ValueError("MODEL not found in .env file.")
     prompt = build_prompt()
     messages = [{"role": "system", "content": prompt}]
     ask_utils.show_welcome()

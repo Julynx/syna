@@ -1,5 +1,5 @@
-from config import truncate_command_output
-from state import get_container
+from .config import truncate_command_output
+from .state import get_container
 
 
 def execute_command(command: str, arguments: list[str]):

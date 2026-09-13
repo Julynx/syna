@@ -2,18 +2,14 @@
 
 import sys
 
-from ask import ask_loop
-from state import close_docker_client
+from .ask import ask_loop
+from .state import close_docker_client
 
 
 def main() -> None:
     """Start the interactive agent loop."""
-    ask_loop()
-
-
-if __name__ == "__main__":
     try:
-        main()
+        ask_loop()
     except KeyboardInterrupt:
         print("\n  + (Received CTRL+C)")
         sys.exit(0)

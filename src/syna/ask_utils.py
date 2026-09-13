@@ -2,9 +2,9 @@ import json
 import time
 import traceback
 
-from commands import get_command_help, parse_and_execute_command
-from config import setup_file_logging
-from parse import parse_and_execute_tools
+from .commands import get_command_help, parse_and_execute_command
+from .config import setup_file_logging
+from .parse import parse_and_execute_tools
 
 
 def show_welcome():

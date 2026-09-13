@@ -21,12 +21,11 @@
 
    ```text
    OPENROUTER_API_KEY=your-openrouter-api-key
+   MODEL=model-to-use(eg:google/gemini-3.8-flash)
    ```
 
 3. Install `uv` and run:
 
    ```bash
-   uv run "syna/src/syna/__init__.py"
+   uv run syna
    ```
-
-   > You can set the model in `syna/src/syna/ask.py` -> `ask_loop(model="...")`.

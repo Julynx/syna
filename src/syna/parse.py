@@ -2,8 +2,9 @@
 
 import json
 
-import tools
 from string_grab import grab_all
+
+from . import tools
 
 
 def parse_and_execute_tools(text):

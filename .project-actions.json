@@ -1,0 +1,9 @@
+{
+  "actions": [
+    {
+      "text": "$(play) Run",
+      "command": "uv run .",
+      "color": "#b0eb93"
+    }
+  ]
+}
