@@ -8,6 +8,6 @@
     "max_elapsed_time_ms": 30000,
     "retry_connection_errors": false
   },
-  "max_command_output_chars": 4000,
+  "max_command_output_chars": 40000,
   "log_file": "syna.log"
 }
