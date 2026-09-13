@@ -18,7 +18,7 @@ def load_config() -> dict[str, Any]:
         return json.load(config_file)
 
 
-def setup_file_logging() -> logging.Logger:
+def get_logger() -> logging.Logger:
     """Configure file-based logging for the application and return the logger."""
     config = load_config()
     log_file_name = config.get("log_file", "syna.log")

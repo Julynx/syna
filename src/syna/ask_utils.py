@@ -3,7 +3,7 @@ import time
 import traceback
 
 from .commands import get_command_help, parse_and_execute_command
-from .config import setup_file_logging
+from .config import get_logger
 from .parse import parse_and_execute_tools
 
 
@@ -17,6 +17,7 @@ def show_welcome():
 
 def prepare_question(messages):
     """Prompt the user for input, handle slash commands, and append user message."""
+    logger = get_logger()
     query = input("(Ask Syna): ")
 
     if query.strip().startswith("/"):
@@ -27,23 +28,27 @@ def prepare_question(messages):
             print(f"  ! ({exc})")
         return prepare_question(messages)
 
-    messages.append({"role": "user", "content": query})
+    msg = {"role": "user", "content": query}
+    messages.append(msg)
+    logger.info(str(msg))
     print("  + (Thinking...)", end="\r", flush=True)
 
 
 def ask_question(client, model, messages, delay=2):
     """Send conversation messages to the model and record its response."""
+    logger = get_logger()
     time.sleep(delay)
     print("  + (Waiting for model...)", end="\r", flush=True)
     try:
         response = client.chat.send(model=model, messages=messages)
         content = response.choices[0].message.content
-        messages.append({"role": "assistant", "content": content})
+        msg = {"role": "assistant", "content": content}
+        messages.append(msg)
+        logger.info(str(msg))
         print("  + (Processing model response...)", end="\r", flush=True)
         return content
     except Exception as exc:
-        logger = setup_file_logging()
-        logger.exception("Failed to get model response: %s", exc)
+        logger.exception("Failed to get model response")
         print(f"\n  ! (Error communicating with model: {exc})")
         traceback.print_exc()
         raise
@@ -51,6 +56,7 @@ def ask_question(client, model, messages, delay=2):
 
 def use_tools(response, messages):
     """Execute tool calls present in the model response and append tool output."""
+    logger = get_logger()
     tool_results = parse_and_execute_tools(response)
     tool_results_str = json.dumps(tool_results)
 
@@ -64,6 +70,8 @@ def use_tools(response, messages):
         print(f"    └─ {output_summary}...")
         print("  + (Thinking...)", end="\r", flush=True)
 
-    messages.append({"role": "user", "content": f"[Tool]: {tool_results_str}"})
+    msg = {"role": "user", "content": f"[Tool]: {tool_results_str}"}
+    messages.append(msg)
+    logger.info(str(msg))
 
     return tool_results

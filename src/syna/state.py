@@ -11,7 +11,7 @@ container = None
 
 
 def get_container():
-    global client, container
+    global container
     if client is None:
         init_docker_client()
     if container is not None:
@@ -33,7 +33,7 @@ def init_docker_client(*args, **kwargs):
 
 def close_docker_client():
     """Manually closes the context manager."""
-    global _exit_stack, client, container
+    global _exit_stack, client
 
     if container is not None:
         container.stop()

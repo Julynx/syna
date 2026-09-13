@@ -7,7 +7,7 @@ from openrouter import OpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
 
 from . import ask_utils
-from .config import get_project_root, load_config
+from .config import get_logger, get_project_root, load_config
 from .inspect_module import get_function_metadata
 
 dotenv = dotenv_values(get_project_root() / ".env")
@@ -59,6 +59,7 @@ def create_model_client():
 
 def ask_loop():
     """Execute the interactive conversation and tool execution loop."""
+    logger = get_logger()
     model = dotenv.get("MODEL")
     if not model:
         raise ValueError("MODEL not found in .env file.")
@@ -83,7 +84,9 @@ def ask_loop():
                     "WARNING: No tool calls were found in your response."
                     " Your responses must contain at least one tool call."
                 )
-                messages.append({"role": "user", "content": f"[System]: {message}"})
+                msg = {"role": "user", "content": f"[System]: {message}"}
+                messages.append(msg)
+                logger.info(str(msg))
                 continue
 
             tool_results = ask_utils.use_tools(response, messages)
