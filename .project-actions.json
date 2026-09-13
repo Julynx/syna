@@ -2,7 +2,7 @@
   "actions": [
     {
       "text": "$(play) Run",
-      "command": "uv run .",
+      "command": "uv run syna",
       "color": "#b0eb93"
     }
   ]
