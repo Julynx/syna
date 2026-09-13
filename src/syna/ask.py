@@ -1,10 +1,10 @@
 import json
 from pathlib import Path
 
+import ask_utils
 from dotenv import dotenv_values
 from inspect_module import get_function_metadata
 from openrouter import OpenRouter
-from parse import parse_and_execute_tools
 
 dotenv = dotenv_values(".env")
 
@@ -29,62 +29,29 @@ def ask_loop(model="google/gemini-3.8-flash"):
 
     prompt = build_prompt()
     messages = [{"role": "system", "content": prompt}]
+    ask_utils.show_welcome()
 
-    # First question
-    query = input("(Enter your question): ")
-    messages.append({"role": "user", "content": query})
-    print("  + (Thinking...)", end="\r", flush=True)
-
+    ask_utils.prepare_question(messages)
     while True:
         with OpenRouter(api_key=dotenv["OPENROUTER_API_KEY"]) as client:
-            print("  + (Waiting for model...)", end="\r", flush=True)
-            response = client.chat.send(
-                model=model,
-                messages=messages,
-            )
-            response = response.choices[0].message.content
-            messages.append({"role": "assistant", "content": response})
-            print("  + (Processing model response...)", end="\r", flush=True)
+            response = ask_utils.ask_question(client, model, messages)
 
-            if "```tool" in response:
-                tool_results = parse_and_execute_tools(response)
-                tool_results_str = json.dumps(tool_results)
-
-                for tool_result in tool_results:
-                    if tool_result["name"] == "finish":
-                        continue
-                    signature_summary = tool_result["signature"].strip()[:64]
-                    output_summary = tool_result["output"].replace("\n", " ")
-                    output_summary = output_summary.strip()[:64]
-                    print(f"  + │Used tool '{signature_summary}...'")
-                    print(f"    └─ {output_summary}...")
-                    print("  + (Thinking...)", end="\r", flush=True)
-
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": f"[Tool output]: {tool_results_str}",
-                    }
-                )
-
-                finish = next(
-                    (tool for tool in tool_results if tool["name"] == "finish"),
-                    None,
-                )
-
-                if finish:
-                    print(f"[{model}]: {finish['output']}")
-                    query = input("(Enter your question): ")
-                    messages.append({"role": "user", "content": query})
-                    print("  + (Thinking...)", end="\r", flush=True)
-            else:
+            if "```tool" not in response:
                 print("  + (No tool detected)")
                 message = (
-                    "WARNING: No tool in response. Your responses must contain a tool."
+                    "WARNING: No tool calls were found in your response."
+                    " Your responses must contain at least one tool call."
                 )
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": f"[System]: {message}",
-                    }
-                )
+                messages.append({"role": "user", "content": f"[System]: {message}"})
+                continue
+
+            tool_results = ask_utils.use_tools(response, messages)
+
+            used_respond_tool = next(
+                (tool for tool in tool_results if tool["name"] == "respond"),
+                None,
+            )
+
+            if used_respond_tool:
+                print(f"[Syna]: {used_respond_tool['output']}")
+                ask_utils.prepare_question(messages)

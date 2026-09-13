@@ -1,17 +1,21 @@
 from ask import ask_loop
+import sys
 from state import close_docker_client
 
 
 def main() -> None:
-    try:
-        ask_loop()
-    except KeyboardInterrupt:
-        return 0
+    ask_loop()
 
 
 if __name__ == "__main__":
     try:
         main()
+    except KeyboardInterrupt:
+        print(
+            "\n\n  + (Received CTRL+C:"
+            " Cleaning up and shutting down, please wait...)\n"
+        )
+        sys.exit(0)
     finally:
         try:
             close_docker_client()

@@ -3,7 +3,7 @@ from contextlib import ExitStack
 
 from bollard import DockerClient
 
-logging.getLogger("bollard.container").setLevel(logging.WARNING)
+logging.getLogger("bollard").setLevel(logging.WARNING)
 
 _exit_stack: ExitStack | None = None
 client = None

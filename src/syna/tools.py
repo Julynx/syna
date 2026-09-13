@@ -17,9 +17,9 @@ def execute_command(command: str, arguments: list[str]):
     return response
 
 
-def finish(answer):
+def respond(text: str):
     """
-    Finish the task by sending your final answer to the user. This will pass priority
-    for him to input your next task to solve.
+    Send a message to the user. This will end the task and pass priority to him.
+    If you are still working on a task, only call this tool when you have finished.
     """
-    return answer
+    return text
