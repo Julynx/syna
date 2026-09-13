@@ -1,4 +1,6 @@
-# syna
+# Syna
+
+_Syna, the AI agent with a pod._
 
 - Syna is an AI agent that can run commands inside of a docker container.
 - It uses [bollard](https://pypi.org/project/bollard/) to manage the container's lifecycle, and [OpenRouter](https://openrouter.ai/) for model calls.
@@ -12,7 +14,7 @@
 
 1. Clone this repo:
 
-   ```text
+   ```bash
    git clone https://github.com/julynx/syna
    cd syna
    ```
