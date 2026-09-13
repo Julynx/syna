@@ -16,7 +16,7 @@ def get_container():
         init_docker_client()
     if container is not None:
         return container
-    container = client.run_container("alpine:latest", command="sleep infinity")
+    container = client.run_container("debian:bookworm-slim", command="sleep infinity")
     return container
 
 
