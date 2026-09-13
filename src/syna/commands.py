@@ -1,4 +1,5 @@
 import shlex
+import sys
 import tkinter as tk
 from tkinter import filedialog
 
@@ -24,6 +25,14 @@ def receive(src_path):
     container: Container = get_container()
     container.copy_from(src_path, dest_path)
     return f"Directory '{src_path}' copied from pod to '{dest_path}'"
+
+
+def bye():
+    sys.exit(0)
+
+
+def show_help():
+    return get_command_help()
 
 
 def parse_and_execute_command(command_str: str) -> str:
@@ -55,6 +64,13 @@ def parse_and_execute_command(command_str: str) -> str:
     except Exception as exc:
         raise ValueError(f"Error invoking callback '{command_str}': {exc}") from exc
     return result
+
+
+def get_command_help():
+    text = ["The following commands are supported:"]
+    for command, params in registered_commands.items():
+        text.append(" " * 2 + f"/{command}: {params['description']}")
+    return "\n".join(text)
 
 
 def _select_folder():
@@ -110,5 +126,15 @@ registered_commands = {
         "description": "Get a file or a directory from Syna's pod.",
         "n_args": 1,
         "callback": receive,
+    },
+    "help": {
+        "description": "Show this help message.",
+        "n_args": 0,
+        "callback": show_help,
+    },
+    "exit": {
+        "description": "End the chat with Syna.",
+        "n_args": 0,
+        "callback": bye,
     },
 }

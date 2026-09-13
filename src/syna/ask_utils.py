@@ -1,16 +1,14 @@
 import json
 import time
 
-from commands import parse_and_execute_command, registered_commands
+from commands import get_command_help, parse_and_execute_command
 from parse import parse_and_execute_tools
 
 
 def show_welcome():
     print()
     print("Welcome to Syna, the AI agent with a pod.")
-    print("The following commands are supported:")
-    for command, params in registered_commands.items():
-        print(" " * 2 + f"/{command}: {params['description']}")
+    print(get_command_help())
     print()
 
 
@@ -55,6 +53,6 @@ def use_tools(response, messages):
         print(f"    └─ {output_summary}...")
         print("  + (Thinking...)", end="\r", flush=True)
 
-    messages.append({"role": "user", "content": f"[Tool output]: {tool_results_str}"})
+    messages.append({"role": "user", "content": f"[Tool]: {tool_results_str}"})
 
     return tool_results

@@ -1,5 +1,6 @@
-from ask import ask_loop
 import sys
+
+from ask import ask_loop
 from state import close_docker_client
 
 
@@ -11,13 +12,12 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print(
-            "\n\n  + (Received CTRL+C:"
-            " Cleaning up and shutting down, please wait...)\n"
-        )
+        print("\n  + (Received CTRL+C)")
         sys.exit(0)
     finally:
         try:
+            print("  + (Cleaning up container and shutting down, please wait...)")
             close_docker_client()
+            print("  + (Cleanup finished. Goodbye!)\n")
         except KeyboardInterrupt:
             pass
