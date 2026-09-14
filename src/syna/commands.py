@@ -51,9 +51,10 @@ def parse_and_execute_command(command_str: str) -> str:
 
     # Ensure enough arguments are provided
     reg_cmd_n_args = reg_cmd["n_args"]
+    reg_cmd_arg_help = reg_cmd["arg_help"]
     error_msg_n_args = (
-        f"Not enough arguments for command {command_str}"
-        f" (Takes {reg_cmd_n_args} arguments)."
+        "Not enough arguments."
+        f" Command {command_str} takes {reg_cmd_n_args} argument(s): {reg_cmd_arg_help}"
     )
     if len(command) - 1 != reg_cmd_n_args:
         raise ValueError(error_msg_n_args)
