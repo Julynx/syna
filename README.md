@@ -7,6 +7,7 @@ _Syna, the AI agent with a pod._
 
 ## Requirements
 
+- Podman.
 - An OpenRouter account.
 - UV.
 
@@ -31,3 +32,12 @@ _Syna, the AI agent with a pod._
    ```bash
    uv run syna
    ```
+
+## Troubleshooting common problems
+
+```text
+Timed out connecting to \\.\pipe\docker... or similar
+```
+
+- Please install podman on your machine and run `podman machine init`.
+- If the podman machine already exists and is running, try executing `podman machine stop` before launching syna again. It will detect it and start it on its own.
