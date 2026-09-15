@@ -71,7 +71,7 @@ def parse_and_execute_command(command_str: str) -> str:
 def get_command_help():
     lines = ["The following commands are supported:"]
     for command, params in registered_commands.items():
-        cmd_text = " " * 2 + f"/{command}{params['arg_help']}: {params['description']}"
+        cmd_text = f"\n  {params['description']}\n    /{command}{params['arg_help']}"
         lines.append(cmd_text)
     return "\n".join(lines)
 
@@ -120,15 +120,15 @@ def _select_file_or_folder() -> str | None:
 
 
 registered_commands = {
-    "send": {
-        "description": "Send a file or a directory to Syna's pod.",
-        "arg_help": " [dest_path (Syna's pod)]",
+    "send-to": {
+        "description": "Select a file or folder to send to Syna's pod.",
+        "arg_help": " 'dest_path' (Folder in Syna's pod to send it to)",
         "n_args": 1,
         "callback": send,
     },
-    "receive": {
-        "description": "Get a file or a directory from Syna's pod.",
-        "arg_help": " [src_path (Syna's pod)]",
+    "get-from": {
+        "description": "Get a file or folder from Syna's pod.",
+        "arg_help": " 'src_path' (File or folder to take from Syna's pod)",
         "n_args": 1,
         "callback": receive,
     },
