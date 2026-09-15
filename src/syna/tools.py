@@ -20,6 +20,7 @@ def execute_command(command: str, arguments: list[str]):
 def respond(text: str):
     """
     Send a message to the user. This will end the task and pass priority to him.
+    Never include a call to this tool in the same response as other tool calls.
     If you are still working on a task, only call this tool when you have finished.
     """
     return text
