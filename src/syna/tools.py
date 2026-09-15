@@ -6,7 +6,7 @@ def execute_command(command: str, arguments: list[str]):
     """
     Execute a shell command and get its output.
 
-    The shell command will be executed inside a linux machine you have full control
+    The shell command will be executed inside a debian machine you have full control
     over. You may install packages, create and run scripts, and take any action you need
     to perform your assigned task.
 
