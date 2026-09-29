@@ -41,6 +41,3 @@ def respond(text: str):
     If you are still working on a task, only call this tool when you have finished.
     """
     return text
-
-
-read_file("/etc/os-release")
