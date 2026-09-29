@@ -1,13 +1,13 @@
 import logging
 from contextlib import ExitStack
 
-from bollard import DockerClient
+from bollard import DockerClient, Container
 
 logging.getLogger("bollard").setLevel(logging.WARNING)
 
 _exit_stack: ExitStack | None = None
 client = None
-container = None
+container: Container = None
 
 
 def get_container():

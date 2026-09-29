@@ -1,5 +1,22 @@
+from pathlib import Path
+
 from .config import truncate_command_output
+from .editor import read_file as e_read_file
 from .state import get_container
+
+
+def read_file(file_path):
+    temp_path = Path(".syna-tmp")
+    try:
+        container = get_container()
+        container.copy_from(file_path, temp_path)
+        output = e_read_file(Path(temp_path, Path(file_path).name))
+    finally:
+        try:
+            temp_path.unlink()
+        except PermissionError:
+            pass
+    return output
 
 
 def execute_command(command: str, arguments: list[str]):
@@ -24,3 +41,6 @@ def respond(text: str):
     If you are still working on a task, only call this tool when you have finished.
     """
     return text
+
+
+read_file("/etc/os-release")

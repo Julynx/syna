@@ -5,8 +5,12 @@ import sys
 from .ask import ask_loop
 from .state import close_docker_client
 
+def main():
+    from .tools import read_file
+    result = read_file("/etc/os-release")
+    print(result)
 
-def main() -> None:
+def main_() -> None:
     """Start the interactive agent loop."""
     try:
         ask_loop()
