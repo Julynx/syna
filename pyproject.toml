@@ -12,6 +12,10 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "string-grab>=1.3.0",
     "bollard>=0.1.3",
+    "playwright==1.60.0",
+    "ddgs>=9.16.0",
+    "drissionpage>=4.1.1.4",
+    "markdownify>=1.2.3",
 ]
 
 [project.scripts]

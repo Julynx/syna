@@ -6,17 +6,34 @@ from .config import truncate_command_output
 from .editor import edit_file as e_edit_file
 from .editor import read_file as e_read_file
 from .state import get_container
+from .web_search import search
 
 
-def read_file(file_path: str, start:int=1, limit:int=200):
+def web_search(query_or_url: str):
+    """
+    Search the web or read a web page. Acting on web pages is not supported for now.
+
+    - query_or_url: If of the form "https:/...", will try to load the website.
+                    If not, will search it and return the top 10 results, including
+                    title, description and url.
+
+    Example:
+      {"web_search": {"query_or_url": "Japan"}}
+    """
+    return search(query_or_url)
+
+
+def read_file(file_path: str, start: int = 1, limit: int = 200):
     """
     View the contents of a file with line numbers.
     Use this tool over 'execute_command' for file reading.
 
     - 'file_path' must be an absolute path.
     - 'start' is the first line to be read (lines start at 1).
-    - 'limit' is the number of lines to read from 'start'. Always set a limit to save tokens.
-    - The displayed line numbers are the real file line numbers; use them for 'edit_file'.
+    - 'limit' is the number of lines to read from 'start'.
+        Always set a limit to save tokens.
+    - The displayed line numbers are the real file line numbers.
+        Use them for 'edit_file'.
 
     Example:
       {"read_file": {"file_path": "/var/log/app.log", "start": 10, "limit": 30}}
@@ -26,8 +43,6 @@ def read_file(file_path: str, start:int=1, limit:int=200):
         container = get_container()
         container.copy_from(file_path, temp_path)
         output = e_read_file(Path(temp_path, basename(file_path)), start, limit)
-    except Exception as exc:
-        return f"Unable to read file. {exc}"
     finally:
         shutil.rmtree(temp_path, ignore_errors=True)
     return output
@@ -48,7 +63,7 @@ def edit_file(file_path: str, operations: list[dict]):
 
     Example:
       {"edit_file": {"file_path": "/tmp/notes.txt", "operations": [
-        {"replace": {"line_num_or_range": [2, 2], "replace_with_lines": ["new second line"]}},
+        {"replace": {"line_num_or_range": [2, 2], "replace_with_lines": ["new line"]}},
         {"insert_above": {"line_num": 4, "insert_lines": ["inserted line"]}},
         {"delete": {"line_num_or_range": [6, 7]}}
       ]}}
@@ -60,8 +75,6 @@ def edit_file(file_path: str, operations: list[dict]):
         temp_file_path = Path(temp_path, basename(file_path))
         e_edit_file(temp_file_path, operations)
         container.copy_to(temp_file_path, dirname(file_path) or "/")
-    except Exception as exc:
-        return f"Unable to edit file. {exc}"
     finally:
         shutil.rmtree(temp_path, ignore_errors=True)
     return f"File edited successfully ({len(operations)} operations applied)."
