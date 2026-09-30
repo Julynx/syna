@@ -2,9 +2,10 @@ from pathlib import Path
 
 
 def with_line_numbers(text, start=1, limit=200):
+    """Render text with 1-based line numbers, reading `limit` lines from `start`."""
     start -= 1
     lines = text.splitlines()
-    lines_dict = dict(enumerate(lines[start:limit], start=1))
+    lines_dict = dict(enumerate(lines[start:start + limit], start=start + 1))
 
     max_lines_digits = len(str(abs(len(lines))))
 
@@ -57,7 +58,7 @@ def edit_file(file_path, operations: list[dict]):
 
     result.extend(inserts.get(len(lines) + 1, []))
     result = "\n".join(result) + "\n"
-    Path(file_path).write_text(result)
+    Path(file_path).write_text(result, newline="\n")
 
 
 # result = read_file("test.txt")

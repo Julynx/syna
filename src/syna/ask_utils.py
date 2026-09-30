@@ -64,7 +64,9 @@ def use_tools(response, messages):
         if tool_result["name"] == "respond":
             continue
         signature_summary = tool_result["signature"].strip()[:64]
-        output_summary = tool_result["output"].replace("\n", " ")
+        signature_summary = signature_summary.replace("\n", " ")
+        output_summary = str(tool_result["output"] or "")
+        output_summary = output_summary.replace("\n", " ")
         output_summary = output_summary.strip()[:64]
         print(f"  + │Used tool '{signature_summary}...'")
         print(f"    └─ {output_summary}...")
