@@ -16,10 +16,14 @@ dependencies = [
     "ddgs>=9.16.0",
     "drissionpage>=4.1.1.4",
     "markdownify>=1.2.3",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "python-multipart>=0.0.9",
 ]
 
 [project.scripts]
 syna = "syna:main"
+syna-server = "syna.server:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

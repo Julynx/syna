@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Syna</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --surface: #ffffff;
+    --surface-soft: #eceef1;
+    --text: #1b1e22;
+    --muted: #6b7280;
+    --accent: #4f46e5;
+    --accent-soft: #eef0fe;
+    --on-accent: #ffffff;
+    --border: #e3e5e9;
+    --danger: #b3261e;
+    --radius: 16px;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1114;
+      --surface: #191c20;
+      --surface-soft: #23272d;
+      --text: #e6e8eb;
+      --muted: #9aa1ab;
+      --accent: #818cf8;
+      --accent-soft: #262a3d;
+      --on-accent: #0f1114;
+      --border: #2a2f36;
+      --danger: #f2b8b5;
+    }
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+  .brand { font-weight: 650; font-size: 17px; letter-spacing: 0.2px; }
+  .status {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.3s;
+  }
+  .status-dot.working { background: #d97706; animation: pulse 1.2s infinite; }
+  .status-dot.ready { background: #16a34a; }
+  .status-dot.error { background: var(--danger); }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+
+  #banner {
+    display: none;
+    background: var(--danger);
+    color: var(--on-accent);
+    text-align: center;
+    font-size: 13px;
+    padding: 6px 12px;
+  }
+  #banner.visible { display: block; }
+
+  #chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  #chat > * { max-width: 720px; width: 100%; margin: 0 auto; }
+
+  .bubble {
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    line-height: 1.55;
+    font-size: 15px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-width: 85%;
+  }
+  .bubble.user {
+    align-self: flex-end;
+    background: var(--accent);
+    color: var(--on-accent);
+    border-bottom-right-radius: 5px;
+  }
+  .bubble.model {
+    align-self: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 5px;
+  }
+  .queued-tag {
+    align-self: flex-end;
+    font-size: 11px;
+    color: var(--muted);
+    margin: -6px 4px 0 0;
+  }
+
+  .tool-row {
+    align-self: flex-start;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    max-width: 85%;
+    font-size: 13px;
+    color: var(--muted);
+    padding: 3px 2px;
+  }
+  .tool-icon {
+    flex: none;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    display: grid;
+    place-items: center;
+  }
+  .tool-icon svg { width: 13px; height: 13px; stroke: var(--muted); }
+  .tool-text { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+  .tool-row.running .tool-text::after {
+    content: " ...";
+    animation: blink 1.2s infinite;
+  }
+  @keyframes blink { 50% { opacity: 0.2; } }
+  .tool-row.toggleable { cursor: pointer; }
+  .tool-row pre {
+    display: none;
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: var(--surface-soft);
+    border-radius: 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .tool-row.open pre { display: block; }
+
+  .file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 13px;
+    border-radius: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    text-decoration: none;
+    font-size: 14px;
+    max-width: 85%;
+  }
+  .file-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .file-chip svg { flex: none; width: 17px; height: 17px; stroke: var(--accent); }
+  .file-chip .file-meta { color: var(--muted); font-size: 12px; }
+  .file-chip.outgoing { align-self: flex-end; }
+  .files-group { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  .files-group.right { align-self: flex-end; align-items: flex-end; }
+
+  .event-row {
+    align-self: center;
+    font-size: 12.5px;
+    color: var(--muted);
+    background: var(--surface-soft);
+    padding: 5px 12px;
+    border-radius: 999px;
+  }
+  .event-row.error { color: var(--danger); }
+
+  footer {
+    padding: 10px 16px 16px;
+    background: var(--bg);
+  }
+  .composer {
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 8px 10px;
+  }
+  .composer:focus-within { border-color: var(--accent); }
+  .icon-btn {
+    flex: none;
+    width: 38px; height: 38px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+  }
+  .icon-btn:hover { background: var(--surface-soft); color: var(--text); }
+  .icon-btn svg { width: 19px; height: 19px; }
+  #input {
+    flex: 1;
+    border: none;
+    outline: none;
+    resize: none;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 15px;
+    line-height: 1.45;
+    max-height: 160px;
+    padding: 8px 0;
+  }
+  #send-btn {
+    flex: none;
+    width: 38px; height: 38px;
+    border: none;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--on-accent);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: opacity 0.2s;
+  }
+  #send-btn:disabled { opacity: 0.35; cursor: default; }
+  #send-btn:not(:disabled):hover { filter: brightness(1.08); }
+  #send-btn svg { width: 17px; height: 17px; }
+  #file-input { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="brand">Syna</span>
+  <span class="status">
+    <span id="status-dot" class="status-dot"></span>
+    <span id="status-label">Connecting...</span>
+  </span>
+</header>
+<div id="banner">Connection lost. Reconnecting...</div>
+
+<main id="chat"></main>
+
+<footer>
+  <div class="composer">
+    <button id="attach-btn" class="icon-btn" title="Attach files" aria-label="Attach files"></button>
+    <textarea id="input" rows="1" placeholder="Message Syna..." aria-label="Message"></textarea>
+    <button id="send-btn" title="Send" aria-label="Send" disabled></button>
+    <input id="file-input" type="file" multiple>
+  </div>
+</footer>
+
+<script>
+"use strict";
+
+const chat = document.getElementById("chat");
+const input = document.getElementById("input");
+const sendBtn = document.getElementById("send-btn");
+const attachBtn = document.getElementById("attach-btn");
+const fileInput = document.getElementById("file-input");
+const statusDot = document.getElementById("status-dot");
+const statusLabel = document.getElementById("status-label");
+const banner = document.getElementById("banner");
+
+const CLIENT_ID_KEY = "syna-client-id";
+let clientId = localStorage.getItem(CLIENT_ID_KEY);
+if (!clientId) {
+  clientId = crypto.randomUUID();
+  localStorage.setItem(CLIENT_ID_KEY, clientId);
+}
+
+let ws = null;
+let reconnectDelay = 1000;
+let busy = false;
+
+const ICONS = {
+  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+  clip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l8.57-8.57a4 4 0 1 1 5.66 5.66l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
+  terminal: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+  pencil: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
+  share: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>',
+  warn: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+};
+
+const TOOL_META = {
+  execute_command: { verb: "Ran command", icon: ICONS.terminal, arg: 0 },
+  web_search: { verb: "Searched", icon: ICONS.search, arg: 0 },
+  read_file: { verb: "Read file", icon: ICONS.eye, arg: 0 },
+  edit_file: { verb: "Edited file", icon: ICONS.pencil, arg: 0 },
+  expose_file: { verb: "Exposed file", icon: ICONS.share, arg: 0 }
+};
+
+attachBtn.innerHTML = ICONS.clip;
+setSendState();
+input.focus();
+
+function setSendState() {
+  if (busy) {
+    sendBtn.innerHTML = ICONS.stop;
+    sendBtn.title = "Stop";
+    sendBtn.disabled = false;
+  } else {
+    sendBtn.innerHTML = ICONS.send;
+    sendBtn.title = "Send";
+    sendBtn.disabled = !input.value.trim();
+  }
+}
+
+function formatSize(bytes) {
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
+  if (bytes >= 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return bytes + " B";
+}
+
+function firstQuotedArg(signature) {
+  const match = String(signature).match(/'((?:[^'\\]|\\.)*)'/);
+  if (!match) return "";
+  return match[1].replace(/\\'/g, "'").replace(/\\\\/g, "\\");
+}
+
+function isAtBottom() {
+  return chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+}
+
+function scrollToBottom() {
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function append(element) {
+  const stick = isAtBottom();
+  chat.appendChild(element);
+  if (stick) scrollToBottom();
+}
+
+function addBubble(content, side, queued) {
+  const bubble = document.createElement("div");
+  bubble.className = "bubble " + side;
+  bubble.textContent = content;
+  append(bubble);
+  if (queued) {
+    const tag = document.createElement("div");
+    tag.className = "queued-tag";
+    tag.textContent = "queued";
+    append(tag);
+  }
+}
+
+function toolEventText(event) {
+  const meta = TOOL_META[event.name];
+  if (!meta) return event.signature;
+  const arg = firstQuotedArg(event.signature);
+  let verb = meta.verb;
+  if (event.name === "web_search" && /^https?:\/\//.test(arg)) verb = "Visited";
+  return verb + (arg ? ' "' + arg + '"' : "");
+}
+
+function closeFileGroup() {
+  const group = chat.querySelector(".files-group.open");
+  if (group) group.classList.remove("open");
+}
+
+function addToolRow(event) {
+  const meta = TOOL_META[event.name];
+  const row = document.createElement("div");
+  row.className = "tool-row running";
+  row.id = "tool-" + event.id;
+  const icon = meta ? meta.icon : ICONS.terminal;
+  row.innerHTML =
+    '<span class="tool-icon">' + icon + "</span>" +
+    '<span class="tool-text"></span>' +
+    "<pre hidden></pre>";
+  row.querySelector(".tool-text").textContent = toolEventText(event);
+  append(row);
+}
+
+function finishToolRow(event) {
+  let row = document.getElementById("tool-" + event.id);
+  if (!row) {
+    addToolRow(event);
+    row = document.getElementById("tool-" + event.id);
+  }
+  row.classList.remove("running");
+  row.querySelector(".tool-text").textContent = toolEventText(event);
+  const preview = (event.output_preview || "").trim();
+  if (preview) {
+    row.classList.add("toggleable");
+    row.addEventListener("click", () => row.classList.toggle("open"));
+    row.querySelector("pre").hidden = false;
+    row.querySelector("pre").textContent = preview;
+  }
+}
+
+function addFileChip(event) {
+  closeFileGroup();
+  const chipHost = document.createElement("div");
+  chipHost.className =
+    "files-group open" + (event.type === "file_sent" ? " right" : "");
+  const chip = document.createElement("a");
+  chip.className = "file-chip" + (event.type === "file_sent" ? " outgoing" : "");
+  chip.href = event.url || "#";
+  if (event.url) chip.setAttribute("download", event.name);
+  chip.innerHTML = ICONS.file +
+    "<span></span><span class='file-meta'></span>";
+  chip.children[1].textContent = event.name;
+  chip.children[2].textContent = event.size ? formatSize(event.size) : "";
+  chipHost.appendChild(chip);
+  append(chipHost);
+}
+
+function addEventRow(text, isError) {
+  const row = document.createElement("div");
+  row.className = "event-row" + (isError ? " error" : "");
+  row.textContent = text;
+  append(row);
+}
+
+function setStatus(kind, label) {
+  statusDot.className = "status-dot " + kind;
+  statusLabel.textContent = label;
+}
+
+function render(event) {
+  if (event.type !== "file" && event.type !== "file_sent") closeFileGroup();
+  switch (event.type) {
+    case "user_message":
+      addBubble(event.content, "user", event.queued);
+      break;
+    case "model_message":
+      addBubble(event.content, "model", false);
+      break;
+    case "tool_call":
+      if (event.status === "started") addToolRow(event);
+      else finishToolRow(event);
+      break;
+    case "file":
+    case "file_sent":
+      addFileChip(event);
+      break;
+    case "status":
+      setStatus(busy ? "working" : "ready", event.text);
+      break;
+    case "busy":
+      busy = true;
+      setStatus("working", "Working...");
+      setSendState();
+      break;
+    case "ready":
+      busy = false;
+      setStatus("ready", "Ready");
+      setSendState();
+      break;
+    case "error":
+      addEventRow(event.text, true);
+      setStatus("error", "Error");
+      break;
+  }
+}
+
+function connect() {
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(protocol + "//" + location.host + "/ws/" + clientId);
+
+  ws.onopen = () => {
+    reconnectDelay = 1000;
+    banner.classList.remove("visible");
+    chat.innerHTML = "";
+    setStatus("ready", "Ready");
+  };
+
+  ws.onmessage = (message) => {
+    try { render(JSON.parse(message.data)); } catch (err) { console.error(err); }
+  };
+
+  ws.onclose = () => {
+    busy = false;
+    setSendState();
+    setStatus("", "Connecting...");
+    banner.classList.add("visible");
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+function sendMessage() {
+  const content = input.value.trim();
+  if (!content || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "message", content: content }));
+  input.value = "";
+  input.style.height = "auto";
+  setSendState();
+  input.focus();
+}
+
+function sendStop() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "stop" }));
+  setStatus("working", "Stopping...");
+}
+
+function uploadFiles(files) {
+  for (const file of files) {
+    const form = new FormData();
+    form.append("file", file);
+    fetch("/api/upload/" + clientId, { method: "POST", body: form })
+      .then((response) => {
+        if (!response.ok) throw new Error("Upload failed (" + response.status + ")");
+      })
+      .catch((err) => addEventRow("Could not send " + file.name + ": " + err.message, true));
+  }
+}
+
+sendBtn.addEventListener("click", () => (busy ? sendStop() : sendMessage()));
+attachBtn.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => {
+  uploadFiles(fileInput.files);
+  fileInput.value = "";
+});
+
+input.addEventListener("input", () => {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 160) + "px";
+  setSendState();
+});
+input.addEventListener("keydown", (keyEvent) => {
+  if (keyEvent.key === "Enter" && !keyEvent.shiftKey) {
+    keyEvent.preventDefault();
+    sendMessage();
+  }
+});
+
+connect();
+</script>
+</body>
+</html>

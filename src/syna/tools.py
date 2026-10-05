@@ -1,4 +1,6 @@
+import shlex
 import shutil
+import tempfile
 from pathlib import Path
 from posixpath import basename, dirname
 
@@ -38,13 +40,11 @@ def read_file(file_path: str, start: int = 1, limit: int = 200):
     Example:
       {"read_file": {"file_path": "/var/log/app.log", "start": 10, "limit": 30}}
     """
-    temp_path = Path(".syna-tmp")
-    try:
+    with tempfile.TemporaryDirectory(prefix="syna-") as temp_dir:
+        temp_path = Path(temp_dir)
         container = get_container()
-        container.copy_from(file_path, temp_path)
+        container.copy_from(file_path, str(temp_path))
         output = e_read_file(Path(temp_path, basename(file_path)), start, limit)
-    finally:
-        shutil.rmtree(temp_path, ignore_errors=True)
     return output
 
 
@@ -68,15 +68,13 @@ def edit_file(file_path: str, operations: list[dict]):
         {"delete": {"line_num_or_range": [6, 7]}}
       ]}}
     """
-    temp_path = Path(".syna-tmp")
-    try:
+    with tempfile.TemporaryDirectory(prefix="syna-") as temp_dir:
+        temp_path = Path(temp_dir)
         container = get_container()
-        container.copy_from(file_path, temp_path)
+        container.copy_from(file_path, str(temp_path))
         temp_file_path = Path(temp_path, basename(file_path))
         e_edit_file(temp_file_path, operations)
-        container.copy_to(temp_file_path, dirname(file_path) or "/")
-    finally:
-        shutil.rmtree(temp_path, ignore_errors=True)
+        container.copy_to(str(temp_file_path), dirname(file_path) or "/")
     return f"File edited successfully ({len(operations)} operations applied)."
 
 
@@ -104,6 +102,38 @@ def execute_command(command: str, arguments: list[str] | None = None):
     container = get_container()
     response = container.exec(argv)
     return truncate_command_output(response)
+
+
+def expose_file(file_path: str):
+    """
+    Share a file or directory with the user through the chat interface.
+    ALWAYS call this tool for every file you want the user to see or keep,
+    such as reports, images, documents or any generated output files.
+    Files that live inside the pod are NOT reachable by the user in any
+    other way: if you do not expose a file with this tool, the user will
+    not be able to access it.
+
+    - 'file_path' must be an absolute path to an existing file or directory.
+    - Directories are exposed as a single downloadable zip archive.
+
+    Example:
+      {"expose_file": {"file_path": "/home/user/report.pdf"}}
+    """
+    container = get_container()
+    quoted_path = shlex.quote(file_path)
+    probe = container.exec(
+        ["bash", "-c",
+         f"if [ -f {quoted_path} ]; then echo file;"
+         f" elif [ -d {quoted_path} ]; then echo dir;"
+         f" else echo missing; fi"]
+    ).strip()
+    if probe == "missing":
+        return {"error": f"Path not found inside the pod: {file_path}"}
+    return {
+        "path": file_path,
+        "name": basename(file_path.rstrip("/")) or file_path,
+        "is_dir": probe == "dir",
+    }
 
 
 def respond(text: str):

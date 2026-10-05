@@ -9,5 +9,9 @@
     "retry_connection_errors": false
   },
   "max_command_output_chars": 40000,
-  "log_file": "syna.log"
+  "log_file": "syna.log",
+  "server_host": "127.0.0.1",
+  "server_port": 8000,
+  "session_idle_timeout_min": 15,
+  "upload_dest": "/home/user/uploads"
 }
