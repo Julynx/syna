@@ -304,7 +304,15 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """Two-way realtime channel between one client and its session."""
     await websocket.accept()
     client_id = _sanitize_client_id(client_id)
-    record = get_or_create_session(client_id)
+    try:
+        record = get_or_create_session(client_id)
+    except Exception as exc:
+        logger.exception("Session creation failed for client %s", client_id)
+        await websocket.send_json(
+            {"type": "error", "text": f"Could not start a session: {exc}"}
+        )
+        await websocket.close()
+        return
     record.connected = True
     record.touch()
 

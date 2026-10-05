@@ -263,7 +263,7 @@
     <span id="status-label">Connecting...</span>
   </span>
 </header>
-<div id="banner">Connection lost. Reconnecting...</div>
+<div id="banner">Cannot reach the Syna server. Retrying... (start it with "uv run syna-server" and open http://127.0.0.1:8000)</div>
 
 <main id="chat"></main>
 
@@ -294,6 +294,12 @@ if (!clientId) {
   clientId = crypto.randomUUID();
   localStorage.setItem(CLIENT_ID_KEY, clientId);
 }
+
+const isServed = location.protocol === "http:" || location.protocol === "https:";
+const API_BASE = isServed ? location.origin : "http://127.0.0.1:8000";
+const WS_BASE = isServed
+  ? (location.protocol === "https:" ? "wss://" : "ws://") + location.host
+  : "ws://127.0.0.1:8000";
 
 let ws = null;
 let reconnectDelay = 1000;
@@ -427,7 +433,7 @@ function addFileChip(event) {
     "files-group open" + (event.type === "file_sent" ? " right" : "");
   const chip = document.createElement("a");
   chip.className = "file-chip" + (event.type === "file_sent" ? " outgoing" : "");
-  chip.href = event.url || "#";
+  chip.href = event.url ? API_BASE + event.url : "#";
   if (event.url) chip.setAttribute("download", event.name);
   chip.innerHTML = ICONS.file +
     "<span></span><span class='file-meta'></span>";
@@ -487,8 +493,7 @@ function render(event) {
 }
 
 function connect() {
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(protocol + "//" + location.host + "/ws/" + clientId);
+  ws = new WebSocket(WS_BASE + "/ws/" + clientId);
 
   ws.onopen = () => {
     reconnectDelay = 1000;
@@ -533,7 +538,7 @@ function uploadFiles(files) {
   for (const file of files) {
     const form = new FormData();
     form.append("file", file);
-    fetch("/api/upload/" + clientId, { method: "POST", body: form })
+    fetch(API_BASE + "/api/upload/" + clientId, { method: "POST", body: form })
       .then((response) => {
         if (!response.ok) throw new Error("Upload failed (" + response.status + ")");
       })
