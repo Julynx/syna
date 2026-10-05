@@ -11,5 +11,5 @@ wheels/
 .env
 
 *.log
-.TODO
-.technical_description.md
+TODO.md
+technical_description.md
