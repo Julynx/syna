@@ -13,7 +13,8 @@ def build_signature(tool_name, tool_arguments):
     return (
         f"{tool_name}("
         + ", ".join(
-            f"{arg_name}={arg_value}"
+            f"{arg_name}={arg_value!r}" if isinstance(arg_value, str)
+            else f"{arg_name}={arg_value}"
             for arg_name, arg_value in tool_arguments.items()
         )
         + ")"

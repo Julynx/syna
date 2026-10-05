@@ -170,6 +170,8 @@ class AgentSession:
 
     def _on_tool_event(self, status, name, signature, output=None):
         """Translate parser tool events into session events."""
+        if name == "respond":
+            return
         if status == "started":
             self._check_cancelled()
             self._tool_call_seq += 1

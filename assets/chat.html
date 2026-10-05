@@ -142,7 +142,7 @@
     place-items: center;
   }
   .tool-icon svg { width: 13px; height: 13px; stroke: var(--muted); }
-  .tool-text { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+  .tool-text { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
   .tool-row.running .tool-text::after {
     content: " ...";
     animation: blink 1.2s infinite;
@@ -349,9 +349,16 @@ function formatSize(bytes) {
 }
 
 function firstQuotedArg(signature) {
-  const match = String(signature).match(/'((?:[^'\\]|\\.)*)'/);
-  if (!match) return "";
-  return match[1].replace(/\\'/g, "'").replace(/\\\\/g, "\\");
+  const text = String(signature);
+  const quoted = text.match(/'((?:[^'\\]|\\.)*)'/);
+  if (quoted) return quoted[1].replace(/\\'/g, "'").replace(/\\\\/g, "\\");
+  const bare = text.match(/=\s*([^,)]+)/);
+  return bare ? bare[1].trim() : "";
+}
+
+function truncateArg(value) {
+  if (!value) return "";
+  return value.length > 32 ? value.slice(0, 32) + "..." : value;
 }
 
 function isAtBottom() {
@@ -383,10 +390,10 @@ function addBubble(content, side, queued) {
 
 function toolEventText(event) {
   const meta = TOOL_META[event.name];
-  if (!meta) return event.signature;
-  const arg = firstQuotedArg(event.signature);
+  if (!meta) return truncateArg(event.signature);
+  const arg = truncateArg(firstQuotedArg(event.signature));
   let verb = meta.verb;
-  if (event.name === "web_search" && /^https?:\/\//.test(arg)) verb = "Visited";
+  if (event.name === "web_search" && /^https?:\/\//.test(firstQuotedArg(event.signature))) verb = "Visited";
   return verb + (arg ? ' "' + arg + '"' : "");
 }
 
