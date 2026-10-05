@@ -106,7 +106,6 @@ class AgentSession:
     def run_turn(self, user_text: str):
         """Run one full think/act cycle for a user message. Blocking."""
         logger = get_logger()
-        self._tool_call_seq = 0
         msg = {"role": "user", "content": user_text}
         self.messages.append(msg)
         logger.info(str(msg))
