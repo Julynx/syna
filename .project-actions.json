@@ -4,6 +4,11 @@
       "text": "$(play) Run",
       "command": "uv run syna",
       "color": "#b0eb93"
+    },
+    {
+      "text": "$(play) Run server",
+      "command": "uv run syna-server",
+      "color": "#93ebeb"
     }
   ]
 }
