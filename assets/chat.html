@@ -56,13 +56,13 @@
     z-index: 5;
   }
   .brand { font-weight: 650; font-size: 17px; letter-spacing: 0.2px; }
-  .status {
-    margin-left: auto;
+  .inline-status {
     display: flex;
     align-items: center;
     gap: 7px;
     font-size: 13px;
     color: var(--muted);
+    padding: 2px 4px;
   }
   .status-dot {
     width: 8px; height: 8px; border-radius: 50%;
@@ -294,10 +294,6 @@
 
 <header>
   <span class="brand">Syna</span>
-  <span class="status">
-    <span id="status-dot" class="status-dot"></span>
-    <span id="status-label">Connecting...</span>
-  </span>
 </header>
 <div id="banner">Cannot reach the Syna server. Retrying... (start it with "uv run syna-server" and open http://127.0.0.1:8000)</div>
 
@@ -320,8 +316,11 @@ const input = document.getElementById("input");
 const sendBtn = document.getElementById("send-btn");
 const attachBtn = document.getElementById("attach-btn");
 const fileInput = document.getElementById("file-input");
-const statusDot = document.getElementById("status-dot");
-const statusLabel = document.getElementById("status-label");
+const statusRow = document.createElement("div");
+statusRow.className = "inline-status";
+statusRow.innerHTML = '<span class="status-dot"></span><span class="status-label"></span>';
+const statusDot = statusRow.querySelector(".status-dot");
+const statusLabel = statusRow.querySelector(".status-label");
 const banner = document.getElementById("banner");
 
 const CLIENT_ID_KEY = "syna-client-id";
@@ -526,7 +525,8 @@ function scrollToBottom() {
 
 function append(element) {
   const stick = isAtBottom();
-  chat.appendChild(element);
+  if (statusRow.parentNode === chat) chat.insertBefore(element, statusRow);
+  else chat.appendChild(element);
   if (stick) scrollToBottom();
 }
 
@@ -621,6 +621,13 @@ function addEventRow(text, isError) {
 function setStatus(kind, label) {
   statusDot.className = "status-dot " + kind;
   statusLabel.textContent = label;
+  const show = kind === "working";
+  if (show && statusRow.parentNode !== chat) {
+    chat.appendChild(statusRow);
+    if (isAtBottom()) scrollToBottom();
+  } else if (!show && statusRow.parentNode === chat) {
+    statusRow.remove();
+  }
 }
 
 function render(event) {

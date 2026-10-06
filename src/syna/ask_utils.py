@@ -16,13 +16,41 @@ def show_welcome():
     print()
 
 
+def _content_text(content) -> str:
+    """Flatten chat content (string or list of content parts) into plain text."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    parts = []
+    for item in content:
+        if isinstance(item, dict):
+            parts.append(item.get("text") or "")
+        else:
+            parts.append(getattr(item, "text", None) or "")
+    return "".join(parts)
+
+
 def ask_question(client, model, messages, delay=2):
-    """Send conversation messages to the model and record its response."""
+    """Send conversation messages to the model and record its response.
+
+    Raises RuntimeError when the model returns no usable content, so that
+    an empty assistant message is never added to the conversation history.
+    """
     logger = get_logger()
     time.sleep(delay)
     try:
         response = client.chat.send(model=model, messages=messages)
-        content = response.choices[0].message.content
+        message = response.choices[0].message
+        if message.refusal:
+            raise RuntimeError(f"Model refused to respond: {message.refusal}")
+        content = _content_text(message.content)
+        if not content:
+            finish_reason = response.choices[0].finish_reason
+            raise RuntimeError(
+                "Model returned an empty response"
+                f" (finish_reason={finish_reason!r})"
+            )
         msg = {"role": "assistant", "content": content}
         messages.append(msg)
         logger.info(str(msg))
