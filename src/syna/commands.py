@@ -3,22 +3,28 @@ import sys
 import tkinter as tk
 from tkinter import filedialog
 
+from pathlib import PurePath
+
 from bollard import Container
 
 from .state import get_container
 
 
-def send(dest_path):
+def send(dest_path, session=None):
     src_path = _select_file_or_folder()
     if src_path is None:
         return "No input file or folder selected"
 
     container: Container = get_container()
     container.copy_to(src_path, dest_path)
+    if session is not None:
+        name = PurePath(src_path).name
+        pod_path = f"{dest_path.rstrip('/')}/{name}"
+        session.notify_file_upload(name, pod_path)
     return f"Directory '{src_path}' copied from machine to '{dest_path}'"
 
 
-def receive(src_path):
+def receive(src_path, session=None):
     dest_path = _select_folder()
     if dest_path is None:
         return "No output folder selected"
@@ -28,15 +34,15 @@ def receive(src_path):
     return f"Directory '{src_path}' copied from pod to '{dest_path}'"
 
 
-def bye():
+def bye(session=None):
     sys.exit(0)
 
 
-def show_help():
+def show_help(session=None):
     return get_command_help()
 
 
-def parse_and_execute_command(command_str: str) -> str:
+def parse_and_execute_command(command_str: str, session=None) -> str:
     command = shlex.split(command_str.strip())
 
     # Ensure the command is registered
@@ -62,7 +68,7 @@ def parse_and_execute_command(command_str: str) -> str:
     # Call the command and get a response
     args = command[1:]
     try:
-        result = reg_cmd["callback"](*args)
+        result = reg_cmd["callback"](*args, session=session)
     except Exception as exc:
         raise ValueError(f"Error invoking callback '{command_str}': {exc}") from exc
     return result

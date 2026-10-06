@@ -55,7 +55,9 @@ class SessionRecord:
         self.connected = False
         self.shutdown = threading.Event()
         self.last_activity = time.time()
-        self.session = AgentSession(on_event=self._on_session_event)
+        self.session = AgentSession(
+            on_event=self._on_session_event, emit_tool_errors=True
+        )
         self.worker = threading.Thread(
             target=self._run_worker,
             name=f"syna-worker-{client_id[:8]}",
@@ -271,6 +273,8 @@ async def upload_file(client_id: str, file: UploadFile, dest: str | None = None)
         logger.exception("Upload failed for session %s", client_id)
         raise HTTPException(status_code=502, detail=f"Upload failed: {exc}") from exc
     record.push({"type": "file_sent", "name": safe_name, "dest": destination})
+    pod_path = f"{destination.rstrip('/')}/{safe_name}"
+    record.session.notify_file_upload(safe_name, pod_path)
     return {"status": "ok", "name": safe_name, "dest": destination}
 
 

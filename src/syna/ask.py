@@ -22,10 +22,10 @@ def _print_event(event):
         print(f"\n  ! ({event['text']})")
 
 
-def _handle_slash_command(query: str):
+def _handle_slash_command(query: str, session: AgentSession):
     """Execute a slash command and echo its result or error."""
     try:
-        result = parse_and_execute_command(query)
+        result = parse_and_execute_command(query, session=session)
         print(f"  + ({result})")
     except ValueError as exc:
         print(f"  ! ({exc})")
@@ -41,6 +41,6 @@ def ask_loop():
             if not query.strip():
                 continue
             if query.strip().startswith("/"):
-                _handle_slash_command(query)
+                _handle_slash_command(query, session)
                 continue
             session.run_turn(query)

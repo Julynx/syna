@@ -161,6 +161,7 @@
   .tool-row {
     align-self: flex-start;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 9px;
     max-width: 85%;
@@ -186,6 +187,7 @@
   @keyframes blink { 50% { opacity: 0.2; } }
   .tool-row.toggleable { cursor: pointer; }
   .tool-row pre {
+    flex-basis: 100%;
     display: none;
     margin-top: 6px;
     padding: 8px 10px;

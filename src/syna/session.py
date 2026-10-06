@@ -15,6 +15,8 @@ dotenv = dotenv_values(get_project_root() / ".env")
 
 OUTPUT_PREVIEW_CHARS = 512
 DEFAULT_REQUEST_DELAY_S = 2
+DEFAULT_MAX_HISTORY_MESSAGES = 30
+HISTORY_NOTE_PREFIX = "[System]: [Context] "
 
 
 class TurnCancelled(Exception):
@@ -85,9 +87,18 @@ class AgentSession:
     invoked synchronously from whatever thread calls 'run_turn'.
     """
 
-    def __init__(self, on_event=None, request_delay: float = DEFAULT_REQUEST_DELAY_S):
+    def __init__(
+        self,
+        on_event=None,
+        request_delay: float = DEFAULT_REQUEST_DELAY_S,
+        emit_tool_errors: bool = False,
+    ):
         self.on_event = on_event or (lambda event: None)
         self.request_delay = request_delay
+        self.emit_tool_errors = emit_tool_errors
+        self.max_history_messages = load_config().get(
+            "max_history_messages", DEFAULT_MAX_HISTORY_MESSAGES
+        )
         self.messages: list[dict] = []
         self._cancel_event = threading.Event()
         self._tool_call_seq = 0
@@ -103,6 +114,23 @@ class AgentSession:
         """Forget any pending cancellation request."""
         self._cancel_event.clear()
 
+    def notify_file_upload(self, file_name: str, pod_path: str):
+        """Record a user file upload in the conversation history.
+
+        Adds a system note so the model knows the upload happened and where
+        the file lives inside the pod.
+        """
+        logger = get_logger()
+        msg = {
+            "role": "user",
+            "content": (
+                f"[System]: The user uploaded the file '{file_name}'."
+                f" It is now available in the pod at '{pod_path}'."
+            ),
+        }
+        self.messages.append(msg)
+        logger.info(str(msg))
+
     def run_turn(self, user_text: str):
         """Run one full think/act cycle for a user message. Blocking."""
         logger = get_logger()
@@ -114,6 +142,7 @@ class AgentSession:
         while True:
             try:
                 self._check_cancelled()
+                self._trim_history()
                 response = ask_question(
                     self.client, self.model, self.messages, delay=self.request_delay
                 )
@@ -128,8 +157,12 @@ class AgentSession:
             if "```tool" not in response:
                 self._emit({"type": "status", "text": "No tool detected, retrying..."})
                 warning = (
-                    "WARNING: No tool calls were found in your response."
-                    " Your responses must contain at least one tool call."
+                    "WARNING: Your previous message contained no tool call, so it was"
+                    " discarded and never reached the user. To act you must include a"
+                    ' fenced block in this exact format:\n```tool\n{"tool_name":'
+                    " {\"argument\": \"value\"}}\n```\n"
+                    "To speak to the user, call the 'respond' tool with your message"
+                    " as its 'text' argument."
                 )
                 msg = {"role": "user", "content": f"[System]: {warning}"}
                 self.messages.append(msg)
@@ -138,7 +171,9 @@ class AgentSession:
 
             try:
                 tool_results = parse_and_execute_tools(
-                    response, on_tool_event=self._on_tool_event
+                    response,
+                    on_tool_event=self._on_tool_event,
+                    echo_errors=not self.emit_tool_errors,
                 )
             except TurnCancelled:
                 self._finish_cancelled_turn()
@@ -159,6 +194,31 @@ class AgentSession:
                 )
                 return
 
+    def _trim_history(self):
+        """Drop the oldest messages once the history exceeds the configured cap.
+
+        The system prompt is never trimmed. A single omission note is kept at
+        the front of the trimmed region and merged instead of duplicated.
+        """
+        cap = self.max_history_messages
+        history = self.messages[1:]
+        if len(history) <= cap:
+            return
+        if history[0]["content"].startswith(HISTORY_NOTE_PREFIX):
+            history.pop(0)
+        omitted = len(history) - (cap - 1)
+        note = {
+            "role": "user",
+            "content": (
+                f"{HISTORY_NOTE_PREFIX}{omitted} earlier messages were omitted"
+                " to save context. Their outcome is reflected in later messages."
+            ),
+        }
+        self.messages[:] = [self.messages[0], note, *history[omitted:]]
+        get_logger().info(
+            "Trimmed %d messages from history (cap=%d)", omitted, cap
+        )
+
     def _finish_cancelled_turn(self):
         """Record the interruption in the conversation and notify listeners."""
         logger = get_logger()
@@ -168,8 +228,17 @@ class AgentSession:
         self._emit({"type": "status", "text": "Interrupted."})
 
     def _on_tool_event(self, status, name, signature, output=None):
-        """Translate parser tool events into session events."""
+        """Translate parser tool events into session events.
+
+        Parser failures become 'error' events only when the session was built
+        with 'emit_tool_errors'; otherwise the parser echoes them to stdout
+        for the CLI, preserving its legacy rendering.
+        """
         if name == "respond":
+            return
+        if status == "error":
+            if self.emit_tool_errors:
+                self._emit({"type": "error", "text": _preview_text(output)})
             return
         if status == "started":
             self._check_cancelled()
