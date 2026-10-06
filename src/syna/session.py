@@ -66,7 +66,7 @@ def build_prompt():
 
     tool_blocks = []
     for tool in tools:
-        args_dict = {arg["name"]: arg["type"] for arg in tool["arguments"]}
+        args_dict = {arg["name"]: f'<{arg["type"]}>' for arg in tool["arguments"]}
         body_json = json.dumps({tool["name"]: args_dict}, indent=2)
         tool_blocks.append(f"### {tool['name']}")
         tool_blocks.append(f"{tool['docstring']}")

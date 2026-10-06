@@ -18,9 +18,6 @@ def web_search(query_or_url: str):
     - query_or_url: If of the form "https:/...", will try to load the website.
                     If not, will search it and return the top 10 results, including
                     title, description and url.
-
-    Example:
-      {"web_search": {"query_or_url": "Japan"}}
     """
     return search(query_or_url)
 
@@ -36,9 +33,6 @@ def read_file(file_path: str, start: int = 1, limit: int = 200):
         Always set a limit to save tokens.
     - The displayed line numbers are the real file line numbers.
         Use them for 'edit_file'.
-
-    Example:
-      {"read_file": {"file_path": "/var/log/app.log", "start": 10, "limit": 30}}
     """
     with tempfile.TemporaryDirectory(prefix="syna-") as temp_dir:
         temp_path = Path(temp_dir)
@@ -60,13 +54,6 @@ def edit_file(file_path: str, operations: list[dict]):
         {"delete": {"line_num_or_range": [45, 47]}}   # ranges are inclusive
     - Line numbers are 1-based and always refer to the ORIGINAL file, as shown
       by 'read_file'. Combine several operations in one call.
-
-    Example:
-      {"edit_file": {"file_path": "/tmp/notes.txt", "operations": [
-        {"replace": {"line_num_or_range": [2, 2], "replace_with_lines": ["new line"]}},
-        {"insert_above": {"line_num": 4, "insert_lines": ["inserted line"]}},
-        {"delete": {"line_num_or_range": [6, 7]}}
-      ]}}
     """
     with tempfile.TemporaryDirectory(prefix="syna-") as temp_dir:
         temp_path = Path(temp_dir)
@@ -90,10 +77,6 @@ def execute_command(command: str, arguments: list[str] | None = None):
       quotes all work.
     - Argv style: 'command' is the bare executable name and 'arguments' is the
       list of words after it.
-
-    Examples:
-      {"execute_command": {"command": "grep -rn 'def main' src/ | head -5"}}
-      {"execute_command": {"command": "ls", "arguments": ["-la", "/tmp"]}}
     """
     if arguments:
         argv = [command, *arguments]
@@ -115,9 +98,6 @@ def expose_file(file_path: str):
 
     - 'file_path' must be an absolute path to an existing file or directory.
     - Directories are exposed as a single downloadable zip archive.
-
-    Example:
-      {"expose_file": {"file_path": "/home/user/report.pdf"}}
     """
     container = get_container()
     quoted_path = shlex.quote(file_path)
