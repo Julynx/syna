@@ -141,5 +141,7 @@ def respond(text: str):
     Send a message to the user. This will end the task and pass priority to him.
     DO NOT include a call to this tool in the same message as other tool calls.
     If you are still working on a task, only call this tool when you have finished.
+    You may use basic markdown syntax (headings, lists, links, tables, code
+    blocks) in 'text' when it helps readability.
     """
     return text

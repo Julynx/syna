@@ -15,6 +15,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_logger, get_project_root, load_config
 from .session import AgentSession
@@ -250,6 +251,11 @@ async def _janitor_loop():
 
 
 app = FastAPI(lifespan=lifespan)
+app.mount(
+    "/vendor",
+    StaticFiles(directory=get_project_root() / "assets" / "vendor"),
+    name="vendor",
+)
 
 
 @app.get("/")
