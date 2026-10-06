@@ -10,7 +10,7 @@ from . import tools
 from .config import get_logger, load_config
 from .state import get_registered_container, register_container, unregister_container
 
-DEFAULT_TOOL_CALL_TIMEOUT_S = 240
+DEFAULT_TOOL_CALL_TIMEOUT_S = 60
 
 
 def build_signature(tool_name, tool_arguments):

@@ -9,7 +9,7 @@
     "retry_connection_errors": false
   },
   "max_command_output_chars": 40000,
-  "tool_call_timeout_s": 240,
+  "tool_call_timeout_s": 60,
   "max_history_messages": 100,
   "enable_compaction": true,
   "max_visible_tool_calls": 3,
