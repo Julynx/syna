@@ -465,6 +465,8 @@ const TOOL_META = {
   expose_file: { verb: "Exposed file", icon: ICONS.share, arg: 0 }
 };
 
+const DECODE_ERROR_PREFIX = "A tool call could not be decoded as JSON";
+
 attachBtn.innerHTML = ICONS.clip;
 setSendState();
 input.focus();
@@ -653,6 +655,19 @@ function finishToolRow(event) {
   }
 }
 
+function addDecodeErrorRow(detail) {
+  const row = document.createElement("div");
+  row.className = "tool-row failed toggleable";
+  row.innerHTML =
+    '<span class="tool-icon">' + ICONS.warn + "</span>" +
+    '<span class="tool-text">Tool call failed: "' + DECODE_ERROR_PREFIX +
+    '"</span>' +
+    "<pre hidden></pre>";
+  row.querySelector("pre").textContent = detail;
+  row.addEventListener("click", () => row.classList.toggle("open"));
+  append(row);
+}
+
 function addFileChip(event) {
   closeFileGroup();
   const chipHost = document.createElement("div");
@@ -744,7 +759,11 @@ function render(event) {
       updateToolRunThinking();
       break;
     case "error":
-      addEventRow(event.text, true);
+      if (event.text.startsWith(DECODE_ERROR_PREFIX)) {
+        addDecodeErrorRow(event.text);
+      } else {
+        addEventRow(event.text, true);
+      }
       setStatus("error", "Error");
       break;
   }
