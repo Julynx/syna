@@ -22,7 +22,36 @@ OUTPUT_PREVIEW_CHARS = 512
 DEFAULT_REQUEST_DELAY_S = 2
 DEFAULT_MAX_HISTORY_MESSAGES = 100
 DEFAULT_ENABLE_COMPACTION = True
+MAX_NO_TOOL_RETRIES = 3
 SYSTEM_NOTE_PREFIX = "[System]: "
+
+
+def build_tool_format_warning(response: str) -> str:
+    """Compose the retry warning for a response without a tool call.
+
+    When the rejected response contains recognizable tool-call markup from
+    other agent frameworks, the warning names it explicitly so the model can
+    correct the specific mistake instead of guessing.
+    """
+    warning = (
+        "WARNING: Your previous message contained no tool call, so it was"
+        " discarded and never reached the user. To act you must include a"
+        ' fenced block in this exact format:\n```tool\n{"tool_name":'
+        ' {"argument": "value"}}\n```\n'
+    )
+    if "<tool_call>" in response or "<function=" in response:
+        warning += (
+            "Your message used tool-call markup such as"
+            " <tool_call><function=...><parameter=...>, which is not"
+            " recognized and will never be parsed. Do not use it. Write the"
+            " JSON object directly inside the ```tool fenced block"
+            " instead.\n"
+        )
+    warning += (
+        "To speak to the user, call the 'respond' tool with your message"
+        " as its 'text' argument."
+    )
+    return warning
 
 
 class TurnCancelled(Exception):
@@ -143,12 +172,21 @@ class AgentSession:
         logger.info(str(msg))
 
     def run_turn(self, user_text: str):
-        """Run one full think/act cycle for a user message. Blocking."""
+        """Run one full think/act cycle for a user message. Blocking.
+
+        A response without a tool call is discarded from the history (it
+        would otherwise teach the model its own malformed format by
+        example) and retried with a corrective warning. After
+        'MAX_NO_TOOL_RETRIES' consecutive failures the turn is aborted: the
+        model receives an ultimatum, the user gets a warning, and control
+        returns to the caller.
+        """
         logger = get_logger()
         msg = {"role": "user", "content": user_text}
         self.messages.append(msg)
         logger.info(str(msg))
 
+        no_tool_streak = 0
         while True:
             try:
                 self._check_cancelled()
@@ -166,19 +204,20 @@ class AgentSession:
                 return
 
             if "```tool" not in response:
+                no_tool_streak += 1
+                self._discard_last_assistant_message()
                 self._emit({"type": "status", "text": "No tool detected, retrying..."})
-                warning = (
-                    "WARNING: Your previous message contained no tool call, so it was"
-                    " discarded and never reached the user. To act you must include a"
-                    ' fenced block in this exact format:\n```tool\n{"tool_name":'
-                    " {\"argument\": \"value\"}}\n```\n"
-                    "To speak to the user, call the 'respond' tool with your message"
-                    " as its 'text' argument."
-                )
-                msg = {"role": "user", "content": f"[System]: {warning}"}
+                if no_tool_streak >= MAX_NO_TOOL_RETRIES:
+                    self._abort_turn(logger)
+                    return
+                msg = {
+                    "role": "user",
+                    "content": f"[System]: {build_tool_format_warning(response)}",
+                }
                 self.messages.append(msg)
                 logger.info(str(msg))
                 continue
+            no_tool_streak = 0
 
             try:
                 tool_results = parse_and_execute_tools(
@@ -292,6 +331,36 @@ class AgentSession:
                 if not message["content"].startswith(SYSTEM_NOTE_PREFIX)
             ),
             None,
+        )
+
+    def _discard_last_assistant_message(self):
+        """Remove the assistant response that failed the tool-call check.
+
+        Keeping it would leave malformed serialization examples in the
+        history, which the model tends to imitate on the next attempt.
+        """
+        if self.messages and self.messages[-1]["role"] == "assistant":
+            self.messages.pop()
+
+    def _abort_turn(self, logger):
+        """Record the abort in the history and hand control back to the user."""
+        msg = {
+            "role": "user",
+            "content": (
+                "[System]: The task was aborted because you weren't able to"
+                " follow the instructions to call a tool properly."
+            ),
+        }
+        self.messages.append(msg)
+        logger.info(str(msg))
+        self._emit(
+            {
+                "type": "error",
+                "text": (
+                    "Task aborted: no valid tool call after"
+                    f" {MAX_NO_TOOL_RETRIES} consecutive attempts."
+                ),
+            }
         )
 
     def _finish_cancelled_turn(self):
