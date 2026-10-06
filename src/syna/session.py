@@ -144,7 +144,9 @@ class AgentSession:
         self._tool_errored = False
         self.client = create_model_client()
         self.model = self._require_model()
-        self.messages.append({"role": "system", "content": build_prompt()})
+        msg = {"role": "system", "content": build_prompt()}
+        self.messages.append(msg)
+        get_logger().info(str(msg))
 
     def cancel(self):
         """Request the interruption of the current turn at its next pause."""
