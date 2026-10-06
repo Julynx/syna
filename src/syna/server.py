@@ -93,6 +93,12 @@ class SessionRecord:
         token = uuid.uuid4().hex
 
         copy_dir = self.tmp_dir / token
+        if not self.tmp_dir.exists():
+            logger.warning(
+                "Temp dir for session %s was removed; recreating it",
+                self.client_id,
+            )
+            self.tmp_dir.mkdir(parents=True)
         copy_dir.mkdir()
         self.container.copy_from(source_path, str(copy_dir))
         source_copy = copy_dir / name
@@ -173,7 +179,7 @@ class SessionRecord:
                     "Container cleanup failed for session %s", self.client_id
                 )
             try:
-                self.session.client.close()
+                self.session.close()
             except Exception:
                 logger.exception("Model client cleanup failed for session %s", self.client_id)
             shutil.rmtree(self.tmp_dir, ignore_errors=True)

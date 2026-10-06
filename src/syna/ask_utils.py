@@ -5,6 +5,8 @@ import traceback
 
 from .config import get_logger
 
+EMPTY_RESPONSE_MAX_ATTEMPTS = 3
+
 
 def show_welcome():
     """Display the welcome header and available interactive commands."""
@@ -34,29 +36,42 @@ def _content_text(content) -> str:
 def ask_question(client, model, messages, delay=2):
     """Send conversation messages to the model and record its response.
 
-    Raises RuntimeError when the model returns no usable content, so that
-    an empty assistant message is never added to the conversation history.
+    Transient empty responses (no content, e.g. finish_reason 'error')
+    are retried up to EMPTY_RESPONSE_MAX_ATTEMPTS times; request failures
+    and refusals raise immediately. Raises RuntimeError when the model
+    returns no usable content, so an empty assistant message is never
+    added to the conversation history.
     """
     logger = get_logger()
-    time.sleep(delay)
     try:
-        response = client.chat.send(model=model, messages=messages)
-        message = response.choices[0].message
-        if message.refusal:
-            raise RuntimeError(f"Model refused to respond: {message.refusal}")
-        content = _content_text(message.content)
-        if not content:
-            finish_reason = response.choices[0].finish_reason
-            raise RuntimeError(
-                "Model returned an empty response"
-                f" (finish_reason={finish_reason!r})"
+        for attempt in range(1, EMPTY_RESPONSE_MAX_ATTEMPTS + 1):
+            time.sleep(delay)
+            response = client.chat.send(model=model, messages=messages)
+            message = response.choices[0].message
+            if message.refusal:
+                raise RuntimeError(f"Model refused to respond: {message.refusal}")
+            content = _content_text(message.content)
+            if content:
+                msg = {"role": "assistant", "content": content}
+                messages.append(msg)
+                logger.info(str(msg))
+                return content
+            logger.warning(
+                "Empty model response (attempt %d of %d, finish_reason=%r)",
+                attempt,
+                EMPTY_RESPONSE_MAX_ATTEMPTS,
+                response.choices[0].finish_reason,
             )
-        msg = {"role": "assistant", "content": content}
-        messages.append(msg)
-        logger.info(str(msg))
-        return content
     except Exception as exc:
         logger.exception("Failed to get model response")
         print(f"\n  ! (Error communicating with model: {exc})")
         traceback.print_exc()
         raise
+
+    error = RuntimeError(
+        "Model returned no usable content"
+        f" after {EMPTY_RESPONSE_MAX_ATTEMPTS} attempts"
+    )
+    logger.error("Failed to get model response: %s", error)
+    print(f"\n  ! (Error communicating with model: {error})")
+    raise error

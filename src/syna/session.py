@@ -156,6 +156,15 @@ class AgentSession:
         """Forget any pending cancellation request."""
         self._cancel_event.clear()
 
+    def close(self):
+        """Release the underlying model client's HTTP resources.
+
+        The OpenRouter SDK exposes cleanup through the context-manager
+        protocol instead of a public 'close' method, so teardown goes
+        through '__exit__'.
+        """
+        self.client.__exit__(None, None, None)
+
     def notify_file_upload(self, file_name: str, pod_path: str):
         """Record a user file upload in the conversation history.
 
