@@ -12,7 +12,7 @@
   "tool_call_timeout_s": 240,
   "max_history_messages": 100,
   "enable_compaction": true,
-  "max_visible_tool_calls": 5,
+  "max_visible_tool_calls": 3,
   "log_file": "syna.log",
   "server_host": "127.0.0.1",
   "server_port": 8000,

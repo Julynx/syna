@@ -263,7 +263,7 @@ def index():
     """Serve the chat GUI with runtime settings injected."""
     chat_path = get_project_root() / "assets" / "chat.html"
     html = chat_path.read_text(encoding="utf-8")
-    gui_config = {"max_visible_tool_calls": config.get("max_visible_tool_calls", 5)}
+    gui_config = {"max_visible_tool_calls": config.get("max_visible_tool_calls", 3)}
     script = f"<script>window.SYNA_CONFIG = {json.dumps(gui_config)};</script>"
     return HTMLResponse(html.replace("</head>", script + "</head>"))
 
