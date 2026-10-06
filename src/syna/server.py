@@ -1,6 +1,7 @@
 """FastAPI web server exposing Syna agent sessions over HTTP and WebSocket."""
 
 import asyncio
+import json
 import queue
 import re
 import shutil
@@ -28,6 +29,7 @@ REPLAYED_EVENT_TYPES = {
     "tool_call",
     "file",
     "file_sent",
+    "compaction",
     "error",
 }
 
@@ -252,9 +254,12 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
 def index():
-    """Serve the chat GUI."""
+    """Serve the chat GUI with runtime settings injected."""
     chat_path = get_project_root() / "assets" / "chat.html"
-    return HTMLResponse(chat_path.read_text(encoding="utf-8"))
+    html = chat_path.read_text(encoding="utf-8")
+    gui_config = {"max_visible_tool_calls": config.get("max_visible_tool_calls", 5)}
+    script = f"<script>window.SYNA_CONFIG = {json.dumps(gui_config)};</script>"
+    return HTMLResponse(html.replace("</head>", script + "</head>"))
 
 
 @app.post("/api/upload/{client_id}")

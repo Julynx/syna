@@ -18,6 +18,8 @@ def _print_event(event):
         print("  + (Thinking...)", end="\r", flush=True)
     elif kind == "model_message":
         print(f"\n[Syna]: {event['content']}\n")
+    elif kind == "compaction":
+        print(f"\n----- Compaction -----\n{event['summary']}\n")
     elif kind == "error":
         print(f"\n  ! ({event['text']})")
 

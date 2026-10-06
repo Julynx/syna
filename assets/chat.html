@@ -186,6 +186,9 @@
   }
   @keyframes blink { 50% { opacity: 0.2; } }
   .tool-row.toggleable { cursor: pointer; }
+  .tool-row.failed { color: var(--danger); }
+  .tool-row.failed .tool-icon { border-color: var(--danger); }
+  .tool-row.failed .tool-icon svg { stroke: var(--danger); }
   .tool-row pre {
     flex-basis: 100%;
     display: none;
@@ -231,6 +234,62 @@
     border-radius: 999px;
   }
   .event-row.error { color: var(--danger); }
+
+  .see-more, .see-less {
+    align-self: flex-start;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+  .see-more:hover, .see-less:hover { color: var(--text); }
+  .jump-dots {
+    display: none;
+    align-items: flex-end;
+    gap: 3px;
+    height: 7px;
+  }
+  .see-more.thinking .jump-dots { display: inline-flex; }
+  .jump-dots i {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--muted);
+    animation: jump 1.2s infinite ease-in-out;
+  }
+  .jump-dots i:nth-child(2) { animation-delay: 0.15s; }
+  .jump-dots i:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes jump {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.6; }
+    30% { transform: translateY(-5px); opacity: 1; }
+  }
+
+  .compaction-divider {
+    align-self: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .compaction-summary {
+    align-self: center;
+    width: 85%;
+    margin: 0;
+    padding: 8px 10px;
+    background: var(--surface-soft);
+    border-radius: 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 240px;
+    overflow-y: auto;
+  }
 
   footer {
     padding: 10px 16px 16px;
@@ -324,6 +383,10 @@ statusRow.innerHTML = '<span class="status-dot"></span><span class="status-label
 const statusDot = statusRow.querySelector(".status-dot");
 const statusLabel = statusRow.querySelector(".status-label");
 const banner = document.getElementById("banner");
+
+const MAX_VISIBLE_TOOL_CALLS =
+  (window.SYNA_CONFIG && window.SYNA_CONFIG.max_visible_tool_calls) || 5;
+let toolRun = null;
 
 const CLIENT_ID_KEY = "syna-client-id";
 let clientId = localStorage.getItem(CLIENT_ID_KEY);
@@ -565,6 +628,58 @@ function closeFileGroup() {
   if (group) group.classList.remove("open");
 }
 
+function resetToolRun() {
+  toolRun = null;
+}
+
+function updateToolRunThinking() {
+  chat.querySelectorAll(".see-more.thinking").forEach((row) => {
+    if (!(toolRun && toolRun.moreRow === row) || !busy || toolRun.expanded) {
+      row.classList.remove("thinking");
+    }
+  });
+  if (busy && toolRun && !toolRun.expanded && toolRun.moreRow) {
+    toolRun.moreRow.classList.add("thinking");
+  }
+}
+
+function ensureMoreRow(run) {
+  if (!run.moreRow) {
+    const row = document.createElement("div");
+    row.className = "see-more";
+    row.innerHTML =
+      '<span class="jump-dots"><i></i><i></i><i></i></span>' +
+      "<span>See more</span>";
+    row.addEventListener("click", () => expandToolRun(run));
+    run.moreRow = row;
+  }
+  return run.moreRow;
+}
+
+function expandToolRun(run) {
+  run.expanded = true;
+  run.rows.forEach((row) => (row.style.display = ""));
+  if (run.moreRow) run.moreRow.style.display = "none";
+  run.lessRow = document.createElement("div");
+  run.lessRow.className = "see-less";
+  run.lessRow.textContent = "See less";
+  run.lessRow.addEventListener("click", () => collapseToolRun(run));
+  append(run.lessRow);
+}
+
+function collapseToolRun(run) {
+  run.expanded = false;
+  run.rows.slice(MAX_VISIBLE_TOOL_CALLS).forEach((row) => {
+    row.style.display = "none";
+  });
+  if (run.moreRow) run.moreRow.style.display = "";
+  if (run.lessRow) {
+    run.lessRow.remove();
+    run.lessRow = null;
+  }
+  updateToolRunThinking();
+}
+
 function addToolRow(event) {
   const meta = TOOL_META[event.name];
   const row = document.createElement("div");
@@ -576,7 +691,19 @@ function addToolRow(event) {
     '<span class="tool-text"></span>' +
     "<pre hidden></pre>";
   row.querySelector(".tool-text").textContent = toolEventText(event);
-  append(row);
+  if (!toolRun) {
+    toolRun = { rows: [], moreRow: null, lessRow: null, expanded: false };
+  }
+  toolRun.rows.push(row);
+  if (!toolRun.expanded && toolRun.rows.length > MAX_VISIBLE_TOOL_CALLS) {
+    row.style.display = "none";
+    append(row);
+    append(ensureMoreRow(toolRun));
+    updateToolRunThinking();
+  } else {
+    append(row);
+    if (toolRun.expanded && toolRun.lessRow) append(toolRun.lessRow);
+  }
 }
 
 function finishToolRow(event) {
@@ -586,7 +713,14 @@ function finishToolRow(event) {
     row = document.getElementById("tool-" + event.id);
   }
   row.classList.remove("running");
-  row.querySelector(".tool-text").textContent = toolEventText(event);
+  if (event.failed) {
+    row.classList.add("failed");
+    row.querySelector(".tool-icon").innerHTML = ICONS.warn;
+    row.querySelector(".tool-text").textContent =
+      "Tool call failed: " + toolEventText(event);
+  } else {
+    row.querySelector(".tool-text").textContent = toolEventText(event);
+  }
   const preview = (event.output_preview || "").trim();
   if (preview) {
     row.classList.add("toggleable");
@@ -620,6 +754,17 @@ function addEventRow(text, isError) {
   append(row);
 }
 
+function addCompactionRow(event) {
+  const divider = document.createElement("div");
+  divider.className = "compaction-divider";
+  divider.textContent = "----- Compaction -----";
+  append(divider);
+  const box = document.createElement("pre");
+  box.className = "compaction-summary";
+  box.textContent = event.summary;
+  append(box);
+}
+
 function setStatus(kind, label) {
   statusDot.className = "status-dot " + kind;
   statusLabel.textContent = label;
@@ -634,6 +779,14 @@ function setStatus(kind, label) {
 
 function render(event) {
   if (event.type !== "file" && event.type !== "file_sent") closeFileGroup();
+  if (
+    event.type !== "tool_call" &&
+    event.type !== "status" &&
+    event.type !== "busy" &&
+    event.type !== "ready"
+  ) {
+    resetToolRun();
+  }
   switch (event.type) {
     case "user_message":
       addBubble(event.content, "user", event.queued);
@@ -649,6 +802,9 @@ function render(event) {
     case "file_sent":
       addFileChip(event);
       break;
+    case "compaction":
+      addCompactionRow(event);
+      break;
     case "status":
       setStatus(busy ? "working" : "ready", event.text);
       break;
@@ -656,11 +812,13 @@ function render(event) {
       busy = true;
       setStatus("working", "Working...");
       setSendState();
+      updateToolRunThinking();
       break;
     case "ready":
       busy = false;
       setStatus("ready", "Ready");
       setSendState();
+      updateToolRunThinking();
       break;
     case "error":
       addEventRow(event.text, true);
@@ -676,6 +834,7 @@ function connect() {
     reconnectDelay = 1000;
     banner.classList.remove("visible");
     chat.innerHTML = "";
+    toolRun = null;
     setStatus("ready", "Ready");
   };
 

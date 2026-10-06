@@ -8,6 +8,11 @@ from openrouter import OpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
 
 from .ask_utils import ask_question
+from .compaction import (
+    COMPACTION_NOTE_PREFIX,
+    build_compaction_messages,
+    load_compaction_prompt,
+)
 from .config import get_logger, get_project_root, load_config
 from .parse import parse_and_execute_tools
 
@@ -15,8 +20,9 @@ dotenv = dotenv_values(get_project_root() / ".env")
 
 OUTPUT_PREVIEW_CHARS = 512
 DEFAULT_REQUEST_DELAY_S = 2
-DEFAULT_MAX_HISTORY_MESSAGES = 30
-HISTORY_NOTE_PREFIX = "[System]: [Context] "
+DEFAULT_MAX_HISTORY_MESSAGES = 100
+DEFAULT_ENABLE_COMPACTION = True
+SYSTEM_NOTE_PREFIX = "[System]: "
 
 
 class TurnCancelled(Exception):
@@ -99,9 +105,14 @@ class AgentSession:
         self.max_history_messages = load_config().get(
             "max_history_messages", DEFAULT_MAX_HISTORY_MESSAGES
         )
+        self.compaction_enabled = load_config().get(
+            "enable_compaction", DEFAULT_ENABLE_COMPACTION
+        )
+        self.compaction_prompt = load_compaction_prompt()
         self.messages: list[dict] = []
         self._cancel_event = threading.Event()
         self._tool_call_seq = 0
+        self._tool_errored = False
         self.client = create_model_client()
         self.model = self._require_model()
         self.messages.append({"role": "system", "content": build_prompt()})
@@ -137,12 +148,12 @@ class AgentSession:
         msg = {"role": "user", "content": user_text}
         self.messages.append(msg)
         logger.info(str(msg))
-        self._emit({"type": "status", "text": "Thinking..."})
 
         while True:
             try:
                 self._check_cancelled()
-                self._trim_history()
+                self._compact_history_if_needed()
+                self._emit({"type": "status", "text": "Thinking..."})
                 response = ask_question(
                     self.client, self.model, self.messages, delay=self.request_delay
                 )
@@ -194,29 +205,93 @@ class AgentSession:
                 )
                 return
 
-    def _trim_history(self):
-        """Drop the oldest messages once the history exceeds the configured cap.
+    def _compact_history_if_needed(self):
+        """Replace old history with a summary once it reaches the interval.
 
-        The system prompt is never trimmed. A single omission note is kept at
-        the front of the trimmed region and merged instead of duplicated.
+        Fires when the non-system history length reaches
+        'max_history_messages'. The system prompt, the conversation's first
+        real user message and the newest message (the one that crossed the
+        threshold) stay outside the summary, which replaces everything else.
+        A failed compaction keeps the history intact and is retried at the
+        next crossing; it never aborts the turn.
         """
-        cap = self.max_history_messages
-        history = self.messages[1:]
-        if len(history) <= cap:
+        if not self.compaction_enabled:
             return
-        if history[0]["content"].startswith(HISTORY_NOTE_PREFIX):
-            history.pop(0)
-        omitted = len(history) - (cap - 1)
-        note = {
+        history = self.messages[1:]
+        if len(history) < self.max_history_messages:
+            return
+        compactable = self._select_compactable(history)
+        if not compactable:
+            return
+        logger = get_logger()
+        self._emit({"type": "status", "text": "Compacting history..."})
+        try:
+            summary = ask_question(
+                self.client,
+                self.model,
+                build_compaction_messages(self.compaction_prompt, compactable),
+                delay=self.request_delay,
+            )
+        except Exception as exc:
+            logger.exception("History compaction failed")
+            self._emit(
+                {
+                    "type": "error",
+                    "text": (
+                        "History compaction failed; continuing with full"
+                        f" history: {exc}"
+                    ),
+                }
+            )
+            return
+        summary_message = {
             "role": "user",
             "content": (
-                f"{HISTORY_NOTE_PREFIX}{omitted} earlier messages were omitted"
-                " to save context. Their outcome is reflected in later messages."
+                f"{COMPACTION_NOTE_PREFIX}The conversation grew too long, so"
+                " the earlier messages (except the first) were replaced by"
+                f" the following summary:\n\n{summary}"
             ),
         }
-        self.messages[:] = [self.messages[0], note, *history[omitted:]]
-        get_logger().info(
-            "Trimmed %d messages from history (cap=%d)", omitted, cap
+        logger.info(str(summary_message))
+        first_user_idx = self._first_user_index(history)
+        kept = [history[first_user_idx]] if first_user_idx is not None else []
+        self.messages[:] = [
+            self.messages[0],
+            *kept,
+            summary_message,
+            history[-1],
+        ]
+        self._emit({"type": "compaction", "summary": summary})
+        logger.info(
+            "Compacted %d messages into a summary (interval=%d)",
+            len(compactable),
+            self.max_history_messages,
+        )
+
+    def _select_compactable(self, history: list[dict]) -> list[dict]:
+        """Return the history slice eligible for compaction.
+
+        Everything except the first real user message and the newest message;
+        system notes that precede the first user message take part in the
+        compaction so no context is silently lost.
+        """
+        first_user_idx = self._first_user_index(history)
+        return [
+            message
+            for index, message in enumerate(history[:len(history) - 1])
+            if index != first_user_idx
+        ]
+
+    @staticmethod
+    def _first_user_index(history: list[dict]) -> int | None:
+        """Return the index of the first non-system message in the history."""
+        return next(
+            (
+                index
+                for index, message in enumerate(history)
+                if not message["content"].startswith(SYSTEM_NOTE_PREFIX)
+            ),
+            None,
         )
 
     def _finish_cancelled_turn(self):
@@ -230,19 +305,24 @@ class AgentSession:
     def _on_tool_event(self, status, name, signature, output=None):
         """Translate parser tool events into session events.
 
-        Parser failures become 'error' events only when the session was built
-        with 'emit_tool_errors'; otherwise the parser echoes them to stdout
-        for the CLI, preserving its legacy rendering.
+        Undecodable tool calls (no tool row exists for them) become 'error'
+        events when the session was built with 'emit_tool_errors'. Tool
+        execution failures are instead flagged on the 'finished' tool event
+        ('failed': True) so frontends can mark the tool row itself; with
+        'emit_tool_errors' False the parser echoes failures to stdout for
+        the CLI, preserving its legacy rendering.
         """
         if name == "respond":
             return
         if status == "error":
-            if self.emit_tool_errors:
+            self._tool_errored = True
+            if name == "unknown" and self.emit_tool_errors:
                 self._emit({"type": "error", "text": _preview_text(output)})
             return
         if status == "started":
             self._check_cancelled()
             self._tool_call_seq += 1
+            self._tool_errored = False
             self._emit(
                 {
                     "type": "tool_call",
@@ -262,6 +342,8 @@ class AgentSession:
             "signature": signature,
             "output_preview": _preview_text(output),
         }
+        if self._tool_errored:
+            event["failed"] = True
         if name == "expose_file":
             event["output"] = output
         self._emit(event)
