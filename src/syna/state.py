@@ -26,6 +26,11 @@ def unregister_container() -> None:
     _local.container = None
 
 
+def get_registered_container() -> Container | None:
+    """Return the container bound to the calling thread, if any."""
+    return getattr(_local, "container", None)
+
+
 def create_container() -> Container:
     """Initialize the shared Docker client if needed and run a new container."""
     global client
