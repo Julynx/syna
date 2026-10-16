@@ -42,7 +42,7 @@ _registry_lock = threading.Lock()
 
 
 class SessionRecord:
-    """Owns one client's agent session, container, queues and exposed files."""
+    """Owns one client's agent session, container, queues and shared files."""
 
     def __init__(self, client_id: str):
         self.client_id = client_id
@@ -50,7 +50,7 @@ class SessionRecord:
         self.outbound: queue.Queue = queue.Queue()
         self.event_log: list[dict] = []
         self.event_log_lock = threading.Lock()
-        self.exposed: dict[str, dict] = {}
+        self.shared: dict[str, dict] = {}
         self.tmp_dir = Path(tempfile.mkdtemp(prefix=f"syna-{client_id[:8]}-"))
         self.container = None
         self.container_ready = threading.Event()
@@ -85,8 +85,8 @@ class SessionRecord:
         if not self.container_ready.wait(timeout=timeout):
             raise TimeoutError("Container did not start in time.")
 
-    def expose_file(self, metadata: dict):
-        """Copy an exposed pod path to the host and register it for download."""
+    def share_file(self, metadata: dict):
+        """Copy an shared pod path to the host and register it for download."""
         source_path = metadata["path"]
         name = metadata["name"]
         is_dir = metadata["is_dir"]
@@ -113,18 +113,18 @@ class SessionRecord:
         else:
             host_path = source_copy
 
-        self.exposed[token] = {
+        self.shared[token] = {
             "name": name,
             "path": str(host_path),
             "size": host_path.stat().st_size,
         }
-        logger.info("Exposed '%s' as token %s for session %s",
+        logger.info("Shared '%s' as token %s for session %s",
                     source_path, token, self.client_id)
         self.push(
             {
                 "type": "file",
                 "name": name,
-                "size": self.exposed[token]["size"],
+                "size": self.shared[token]["size"],
                 "url": f"/api/files/{self.client_id}/{token}",
             }
         )
@@ -137,15 +137,15 @@ class SessionRecord:
         if (
             event.get("type") == "tool_call"
             and event.get("status") == "finished"
-            and event.get("name") == "expose_file"
+            and event.get("name") == "share_file"
             and isinstance(event.get("output"), dict)
             and "path" in event["output"]
         ):
             try:
-                self.expose_file(event["output"])
+                self.share_file(event["output"])
             except Exception as exc:
-                logger.exception("Failed to expose file for session %s", self.client_id)
-                self.push({"type": "error", "text": f"Could not expose file: {exc}"})
+                logger.exception("Failed to share file for session %s", self.client_id)
+                self.push({"type": "error", "text": f"Could not share file: {exc}"})
             event = {key: value for key, value in event.items() if key != "output"}
         self.push(event)
 
@@ -297,11 +297,11 @@ async def upload_file(client_id: str, file: UploadFile, dest: str | None = None)
 
 @app.get("/api/files/{client_id}/{token}")
 def download_file(client_id: str, token: str):
-    """Stream a previously exposed file to the client."""
+    """Stream a previously shared file to the client."""
     record = _sessions.get(client_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Unknown session.")
-    info = record.exposed.get(token)
+    info = record.shared.get(token)
     if info is None:
         raise HTTPException(status_code=404, detail="Unknown file.")
     return FileResponse(info["path"], filename=info["name"])

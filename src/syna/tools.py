@@ -1,25 +1,100 @@
 import shlex
-import shutil
 import tempfile
 from pathlib import Path
 from posixpath import basename, dirname
 
+from .browser import Browser
 from .config import truncate_command_output
 from .editor import edit_file as e_edit_file
 from .editor import read_file as e_read_file
 from .state import get_container
 from .web_search import search
 
+BROWSER = None
 
-def web_search(query_or_url: str):
-    """
-    Search the web or read a web page. Acting on web pages is not supported for now.
 
-    - query_or_url: If of the form "https:/...", will try to load the website.
-                    If not, will search it and return the top 10 results, including
-                    title, description and url.
+def web_search(query: str):
     """
-    return search(query_or_url)
+    Search the web. Returns the top 10 results, including title, description and url.
+
+    - query: String to search.
+    """
+    return search(query)
+
+
+def web_interact(command: str, args: dict[str:any]):
+    """
+    Interact with a website. Available commands:
+
+    "goto"
+      > Open a URL in the persistent browser. Returns a compact page view.
+      > Elements like [12] button "Buy" are interactable; use the number as `ref`.
+      > "args": {"url": "<str>"}
+      > Mandatory args: "url"
+
+    "snapshot"
+      > Re-read the current page. Set viewport_only to see just what is on screen.
+      > "args": {"viewport_only": {"type": "boolean"}}
+      > Mandatory args: none
+
+    "click"
+      > Click the element with this ref. Returns what changed on the page.
+      > "args": {"ref": {"type": "integer"}}
+      > Mandatory args: "ref"
+
+    "type"
+      > "Type text into an input/textarea by ref (clears first by default). "
+      > "submit=true presses Enter afterwards."
+      > "args": {
+            "ref": {"type": "integer"},
+            "text": {"type": "string"},
+            "clear": {"type": "boolean"},
+            "submit": {"type": "boolean"},
+        },
+      > Mandatory args: "ref", "text"
+
+    "select"
+      > Choose an option (by visible label or value) in a <select> by ref.
+      > "args": {"ref": {"type": "integer"}, "option": {"type": "string"}}
+      > Mandatory args: "ref", "option"
+
+    "press"
+      > Press a keyboard key, e.g. Enter, Escape, Tab, ArrowDown.
+      > "args": {"key": {"type": "string"}}
+      > Mandatory args: "key"
+
+    "scroll"
+      > Scroll the page and return the visible viewport.
+      > "args": {
+            "direction": {"type": "string", "enum": ["down", "up", "top", "bottom"]},
+            "amount": {
+                "type": "number",
+                "description": "fraction of viewport height, default 0.8",
+            },
+        },
+      > Mandatory args: none
+
+    "back"
+      > Navigate back in history.
+      > "args": null
+      > Mandatory args: none
+
+    "read"
+      > Get the full plain text of one element (or the whole page if ref omitted).
+      > Use when the snapshot truncated or shortened text you need.
+      > "args": {"ref": {"type": "integer"}, "max_chars": {"type": "integer"}}
+      > Mandatory args: none
+    """
+    global BROWSER
+
+    if not BROWSER:
+        BROWSER = Browser()
+
+    if not args:
+        args = {}
+
+    function = getattr(BROWSER, command)
+    return function(**args)
 
 
 def read_file(file_path: str, start: int = 1, limit: int = 200):
@@ -87,25 +162,28 @@ def execute_command(command: str, arguments: list[str] | None = None):
     return truncate_command_output(response)
 
 
-def expose_file(file_path: str):
+def share_file(file_path: str):
     """
     Share a file or directory with the user through the chat interface.
     ALWAYS call this tool for every file you want the user to see or keep,
     such as reports, images, documents or any generated output files.
     Files that live inside the pod are NOT reachable by the user in any
-    other way: if you do not expose a file with this tool, the user will
+    other way: if you do not share a file with this tool, the user will
     not be able to access it.
 
     - 'file_path' must be an absolute path to an existing file or directory.
-    - Directories are exposed as a single downloadable zip archive.
+    - Directories are shared as a single downloadable zip archive.
     """
     container = get_container()
     quoted_path = shlex.quote(file_path)
     probe = container.exec(
-        ["bash", "-c",
-         f"if [ -f {quoted_path} ]; then echo file;"
-         f" elif [ -d {quoted_path} ]; then echo dir;"
-         f" else echo missing; fi"]
+        [
+            "bash",
+            "-c",
+            f"if [ -f {quoted_path} ]; then echo file;"
+            f" elif [ -d {quoted_path} ]; then echo dir;"
+            f" else echo missing; fi",
+        ]
     ).strip()
     if probe == "missing":
         return {"error": f"Path not found inside the pod: {file_path}"}

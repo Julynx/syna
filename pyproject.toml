@@ -19,6 +19,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "python-multipart>=0.0.9",
+    "camoufox[geoip]>=0.5.8",
 ]
 
 [project.scripts]

@@ -34,10 +34,15 @@ def build_tool_format_warning(response: str) -> str:
     correct the specific mistake instead of guessing.
     """
     warning = (
-        "WARNING: Your previous message contained no tool call, so it was"
-        " discarded and never reached the user. To act you must include a"
-        ' fenced block in this exact format:\n```tool\n{"tool_name":'
-        ' {"argument": "value"}}\n```\n'
+        "WARNING: Your previous message contained no tool calls, so it was discarded.\n"
+        "- To continue working on your task, call at least one tool as such:\n"
+        "  ```tool\n"
+        r'     {"tool_name": {"argument": "value"}}'
+        "\n"
+        "  ```\n"
+        '- To end the task and talk to the user, call the tool "respond".\n'
+        "Any further messages with no tool calls will be discarded, and repeated "
+        "violations of this rule will get you terminated."
     )
     if "<tool_call>" in response or "<function=" in response:
         warning += (
@@ -47,10 +52,6 @@ def build_tool_format_warning(response: str) -> str:
             " JSON object directly inside the ```tool fenced block"
             " instead.\n"
         )
-    warning += (
-        "To speak to the user, call the 'respond' tool with your message"
-        " as its 'text' argument."
-    )
     return warning
 
 
@@ -66,7 +67,7 @@ def build_prompt():
 
     tool_blocks = []
     for tool in tools:
-        args_dict = {arg["name"]: f'<{arg["type"]}>' for arg in tool["arguments"]}
+        args_dict = {arg["name"]: f"<{arg['type']}>" for arg in tool["arguments"]}
         body_json = json.dumps({tool["name"]: args_dict}, indent=2)
         tool_blocks.append(f"### {tool['name']}")
         tool_blocks.append(f"{tool['docstring']}")
@@ -250,9 +251,7 @@ class AgentSession:
                 None,
             )
             if respond_tool:
-                self._emit(
-                    {"type": "model_message", "content": respond_tool["output"]}
-                )
+                self._emit({"type": "model_message", "content": respond_tool["output"]})
                 return
 
     def _compact_history_if_needed(self):
@@ -328,7 +327,7 @@ class AgentSession:
         first_user_idx = self._first_user_index(history)
         return [
             message
-            for index, message in enumerate(history[:len(history) - 1])
+            for index, message in enumerate(history[: len(history) - 1])
             if index != first_user_idx
         ]
 
@@ -424,7 +423,7 @@ class AgentSession:
         }
         if self._tool_errored:
             event["failed"] = True
-        if name == "expose_file":
+        if name == "share_file":
             event["output"] = output
         self._emit(event)
 

@@ -109,9 +109,11 @@ def parse_and_execute_tools(
         tool_timeout_s = load_tool_call_timeout()
     logger = get_logger()
 
+    decoder = json.JSONDecoder()
     for tool_call in grab_all(text, start="```tool", end="```"):
         try:
-            tool = json.loads(tool_call)
+            # tool = json.loads(tool_call)
+            tool, idx = decoder.raw_decode(tool_call.strip())
             tool_name = next(iter(tool.keys()))
             tool_arguments = tool[tool_name]
         except json.decoder.JSONDecodeError as exc:
