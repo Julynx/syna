@@ -33,8 +33,12 @@ def _content_text(content) -> str:
     return "".join(parts)
 
 
-def ask_question(client, model, messages, delay=2):
+def ask_question(client, model, messages, delay=2, effort=None):
     """Send conversation messages to the model and record its response.
+
+    'effort' optionally sets OpenRouter's reasoning effort, sent as the
+    unified 'reasoning' parameter ({"effort": ...}); None leaves the
+    model's default behavior untouched.
 
     Transient empty responses (no content, e.g. finish_reason 'error')
     are retried up to EMPTY_RESPONSE_MAX_ATTEMPTS times; request failures
@@ -46,7 +50,10 @@ def ask_question(client, model, messages, delay=2):
     try:
         for attempt in range(1, EMPTY_RESPONSE_MAX_ATTEMPTS + 1):
             time.sleep(delay)
-            response = client.chat.send(model=model, messages=messages)
+            request = {"model": model, "messages": messages}
+            if effort:
+                request["reasoning"] = {"effort": effort}
+            response = client.chat.send(**request)
             message = response.choices[0].message
             if message.refusal:
                 raise RuntimeError(f"Model refused to respond: {message.refusal}")
@@ -69,8 +76,7 @@ def ask_question(client, model, messages, delay=2):
         raise
 
     error = RuntimeError(
-        "Model returned no usable content"
-        f" after {EMPTY_RESPONSE_MAX_ATTEMPTS} attempts"
+        f"Model returned no usable content after {EMPTY_RESPONSE_MAX_ATTEMPTS} attempts"
     )
     logger.error("Failed to get model response: %s", error)
     print(f"\n  ! (Error communicating with model: {error})")

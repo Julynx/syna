@@ -1,7 +1,5 @@
 """Transcript rendering and request assembly for history compaction."""
 
-from pathlib import Path
-
 from .config import get_project_root
 
 COMPACTION_NOTE_PREFIX = "[System]: [Compaction] "
@@ -29,16 +27,14 @@ def build_transcript(messages: list[dict]) -> str:
     for message in messages:
         content = message["content"]
         if is_summary_message(content):
-            summary = content[len(COMPACTION_NOTE_PREFIX):].strip()
+            summary = content[len(COMPACTION_NOTE_PREFIX) :].strip()
             blocks.append(f"[previous summary]:\n{summary}")
         else:
             blocks.append(f"[{message['role']}]:\n{content}")
     return "\n\n".join(blocks)
 
 
-def build_compaction_messages(
-    system_prompt: str, messages: list[dict]
-) -> list[dict]:
+def build_compaction_messages(system_prompt: str, messages: list[dict]) -> list[dict]:
     """Assemble the message list for one compaction request."""
     return [
         {"role": "system", "content": system_prompt},

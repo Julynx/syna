@@ -4,13 +4,28 @@ from pathlib import Path
 from posixpath import basename, dirname
 
 from .browser import Browser
-from .config import truncate_command_output
+from .config import get_logger, truncate_command_output
 from .editor import edit_file as e_edit_file
 from .editor import read_file as e_read_file
 from .state import get_container
 from .web_search import search
 
 BROWSER = None
+
+# The only methods the model may reach through web_interact. Dispatching
+# through this whitelist (instead of getattr on the Browser object) keeps
+# internals like run(), page, close() and dunder attributes out of reach.
+BROWSER_COMMANDS = {
+    "goto": Browser.goto,
+    "snapshot": Browser.snapshot,
+    "click": Browser.click,
+    "type": Browser.type,
+    "select": Browser.select,
+    "press": Browser.press,
+    "scroll": Browser.scroll,
+    "back": Browser.back,
+    "read": Browser.read,
+}
 
 
 def web_search(query: str):
@@ -93,8 +108,13 @@ def web_interact(command: str, args: dict[str:any]):
     if not args:
         args = {}
 
-    function = getattr(BROWSER, command)
-    return function(**args)
+    function = BROWSER_COMMANDS.get(command)
+    if function is None:
+        return (
+            f"ERROR: unknown browser command '{command}'. Available commands:"
+            f" {', '.join(sorted(BROWSER_COMMANDS))}"
+        )
+    return function(BROWSER, **args)
 
 
 def read_file(file_path: str, start: int = 1, limit: int = 200):
@@ -194,8 +214,25 @@ def share_file(file_path: str):
     }
 
 
-def respond(text: str):
+def _reset_browser():
+    """Close the shared browser so the next web_interact starts a clean one.
+
+    Called by the server when a chat is reset: the browser lives on the host
+    (outside the pod), so it must be torn down separately from the VM.
     """
+    global BROWSER
+    if BROWSER is None:
+        return "No browser session was open."
+    browser, BROWSER = BROWSER, None
+    try:
+        browser.close()
+    except Exception:
+        get_logger().exception("Failed to close the browser during reset")
+    return "Browser session closed."
+
+
+def respond(text: str):
+    r"""
     Send a message to the user. This will end the task and pass priority to him.
     DO NOT include a call to this tool in the same message as other tool calls.
     If you are still working on a task, only call this tool when you have finished.
@@ -203,3 +240,18 @@ def respond(text: str):
     blocks) in 'text' when it helps readability.
     """
     return text
+
+
+# The complete set of tools the model may call. parse.py dispatches through
+# this registry instead of doing getattr on the module, so module internals
+# and imported helpers (editor primitives, path utilities...) stay out of
+# the model's reach.
+TOOL_REGISTRY = {
+    "web_search": web_search,
+    "web_interact": web_interact,
+    "read_file": read_file,
+    "edit_file": edit_file,
+    "execute_command": execute_command,
+    "share_file": share_file,
+    "respond": respond,
+}

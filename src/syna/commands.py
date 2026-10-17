@@ -1,9 +1,8 @@
 import shlex
 import sys
 import tkinter as tk
-from tkinter import filedialog
-
 from pathlib import PurePath
+from tkinter import filedialog
 
 from bollard import Container
 

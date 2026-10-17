@@ -5,8 +5,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Syna</title>
+<link rel="icon" type="image/png" href="vendor/syna-favicon.png">
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f5f7">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f1114">
+<link rel="stylesheet" href="vendor/katex.min.css">
 <style>
 /* ==== css/base.css ==== */
 /* ===== Syna — design tokens & base =================================================== */
@@ -37,6 +39,7 @@
   --ok: #16a34a;
   --radius: 16px;
   --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+  --serif: "Lora", Charter, Georgia, "Times New Roman", serif;
   --blur: 18px;
   --saturate: 165%;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -80,6 +83,45 @@ body {
   color: var(--text);
   display: flex;
   flex-direction: column;
+}
+
+/* ---------- Lora (vendored, OFL) — the serif voice of the model ----------
+   Two subsets per style; unicode-range lets the browser pick per glyph. */
+@font-face {
+  font-family: "Lora";
+  src: url("vendor/fonts/lora-latin-400-normal.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Lora";
+  src: url("vendor/fonts/lora-ext-latin-400-normal.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Lora";
+  src: url("vendor/fonts/lora-latin-400-italic.woff2") format("woff2");
+  font-weight: 400; font-style: italic; font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Lora";
+  src: url("vendor/fonts/lora-ext-latin-400-italic.woff2") format("woff2");
+  font-weight: 400; font-style: italic; font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Lora";
+  src: url("vendor/fonts/lora-latin-700-normal.woff2") format("woff2");
+  font-weight: 700; font-style: normal; font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Lora";
+  src: url("vendor/fonts/lora-ext-latin-700-normal.woff2") format("woff2");
+  font-weight: 700; font-style: normal; font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
 :focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
@@ -205,6 +247,18 @@ header {
   box-shadow: 0 0 10px 1px rgba(99, 102, 241, 0.55);
 }
 
+/* Wordmark logo (white glyphs, transparent background). The dark scheme
+   shows it as-is; light mode inverts it to black for contrast. */
+.brand-logo {
+  display: block;
+  height: 28px;
+  width: auto;
+  margin-left: 8px;
+}
+@media (prefers-color-scheme: light) {
+  .brand-logo { filter: invert(1); }
+}
+
 /* "Working..." / "Ready" pill that lives at the bottom of the conversation */
 .inline-status {
   display: flex;
@@ -312,6 +366,10 @@ header {
   box-shadow: var(--glass-shadow);
   border-bottom-left-radius: 5px;
   transform-origin: 0 100%;
+  /* the agent's voice speaks in serif; UI chrome and user bubbles stay sans */
+  font-family: var(--serif);
+  font-size: 15.5px;
+  line-height: 1.65;
 }
 @media (prefers-color-scheme: dark) {
   .bubble.user {
@@ -532,13 +590,20 @@ header {
 }
 .tool-row.open pre { display: block; opacity: 1; filter: blur(0); transform: none; }
 
-/* rows beyond MAX_VISIBLE_TOOL_CALLS collapse away; "See more" reveals them */
-.tool-row.hidden {
-  display: none;
-  opacity: 0;
-  filter: blur(12px);
-  transform: translateY(4px) scale(0.99);
-  transition-duration: 0.25s, 0.25s, 0.25s, var(--dur-out), var(--dur-out), var(--dur-out), var(--dur-out);
+/* rows beyond MAX_VISIBLE_TOOL_CALLS live inside a wrapper; the pill expands
+   and collapses THE WRAPPER (one height animation = one layout change), and
+   rows inside only crossfade — opacity/blur never touch layout, so nothing
+   janks or jumps while the run opens and closes. */
+.tool-overflow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px; /* keep inner spacing identical to #chat */
+}
+.tool-overflow.collapsed {
+  height: 0;
+  margin-top: -10px; /* cancels the #chat gap on both sides while collapsed */
+  overflow: hidden;
+  visibility: hidden; /* out of the tab order once fully collapsed */
 }
 
 /* ---------- files ---------- */
@@ -673,7 +738,7 @@ header {
 
 /* ---------- shared entrances & exits ---------- */
 @starting-style {
-  .bubble, .tool-row:not(.hidden), .event-row, .queued-tag,
+  .bubble, .tool-row, .event-row, .queued-tag,
   .compaction-divider, .compaction-summary, .see-more, .files-group,
   .inline-status, #banner.visible {
     opacity: 0;
@@ -854,7 +919,8 @@ footer {
 </div>
 
 <header>
-  <span class="brand"><span class="brand-dot"></span>Syna</span>
+  <span class="brand"><img class="brand-logo" src="vendor/syna-logo.png" alt="Syna"></span>
+  <button id="newchat-btn" class="icon-btn" title="New chat" aria-label="Start a new chat"></button>
   <button id="sound-btn" class="icon-btn" title="Toggle sound" aria-label="Toggle sound"></button>
 </header>
 <div id="banner">Cannot reach the Syna server. Retrying... (start it with "uv run syna-server" and open http://127.0.0.1:8000)</div>
@@ -871,6 +937,8 @@ footer {
 </footer>
 
 <script src="vendor/markdown-it.min.js"></script>
+<script src="vendor/katex.min.js"></script>
+<script src="vendor/auto-render.min.js"></script>
 <script>
 /* ==== js/ambient.js ==== */
 "use strict";
@@ -1206,7 +1274,66 @@ function renderMarkdown(source) {
       .replace(/>/g, "&gt;");
     return "<p>" + text.replace(/\n/g, "<br>") + "</p>";
   }
-  return md.render(String(source));
+  const extracted = extractMath(source);
+  return restoreMath(md.render(extracted.text), extracted.mathStore);
+}
+
+// ---------- LaTeX math inside model messages ----------
+// Rendered by the vendored KaTeX after markdown. Two extra passes are needed
+// because markdown-it would otherwise eat the backslashes ("\(" comes out of
+// the parser as "("): math spans are lifted out before rendering, restored
+// verbatim (HTML-escaped) after, and KaTeX auto-render then finds them in the
+// DOM. Fenced and inline code are shielded first, so math inside code blocks
+// stays literal. Only the safe delimiters are enabled ($$..$$, \[..\], \(..\))
+// — single '$' stays off so prices like "$19.99" can never turn into math.
+const MATH_RE = /\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)/g;
+const MATH_TOKEN_RE = /MQ(\d+)QM/g;
+
+const MATH_DELIMITERS = [
+  { left: "$$", right: "$$", display: true },
+  { left: "\\[", right: "\\]", display: true },
+  { left: "\\(", right: "\\)", display: false }
+];
+
+function escapeHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function extractMath(source) {
+  const codeStore = [];
+  const mathStore = [];
+  // shield fenced + inline code so neither math extraction nor the placeholder
+  // rewrite touches code content
+  let text = String(source)
+    .replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, (m) => {
+      codeStore.push(m);
+      return "\x00C" + (codeStore.length - 1) + "\x00";
+    })
+    .replace(/`[^`\n]*`/g, (m) => {
+      codeStore.push(m);
+      return "\x00C" + (codeStore.length - 1) + "\x00";
+    });
+  text = text.replace(MATH_RE, (m) => {
+    mathStore.push(m);
+    return "MQ" + (mathStore.length - 1) + "QM"; // plain-word token survives markdown
+  });
+  text = text.replace(/\x00C(\d+)\x00/g, (_, i) => codeStore[+i]);
+  return { text, mathStore };
+}
+
+function restoreMath(html, mathStore) {
+  return html.replace(MATH_TOKEN_RE, (_, i) => escapeHtml(mathStore[+i] || ""));
+}
+
+function renderMath(container) {
+  if (typeof window.renderMathInElement !== "function") return;
+  try {
+    window.renderMathInElement(container, {
+      delimiters: MATH_DELIMITERS,
+      ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+      throwOnError: false
+    });
+  } catch (err) { console.error(err); }
 }
 
 function applyLinkPolicy(container) {
@@ -1275,6 +1402,8 @@ const ICONS = {
   clip: I('<path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l8.57-8.57a4 4 0 1 1 5.66 5.66l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'),
   file: I('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
   terminal: I('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
+  globe: I('<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'),
+  newchat: I('<rect x="3" y="3" width="18" height="18" rx="5"/><path d="M12 8v8"/><path d="M8 12h8"/>'),
   search: I('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'),
   pencil: I('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>'),
   eye: I('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>'),
@@ -1286,6 +1415,7 @@ const ICONS = {
 
 const TOOL_META = {
   execute_command: { verb: "Ran command", icon: ICONS.terminal, arg: 0 },
+  web_interact: { verb: "Browsed", icon: ICONS.globe, arg: 0 },
   web_search: { verb: "Searched", icon: ICONS.search, arg: 0 },
   read_file: { verb: "Read file", icon: ICONS.eye, arg: 0 },
   edit_file: { verb: "Edited file", icon: ICONS.pencil, arg: 0 },
@@ -1345,6 +1475,7 @@ function addBubble(content, side, queued) {
     bubble.classList.add("markdown");
     bubble.innerHTML = rendered;
     applyLinkPolicy(bubble);
+    renderMath(bubble);
   } else {
     bubble.textContent = content;
   }
@@ -1399,10 +1530,36 @@ function addCopyButton(bubble, source) {
 function toolEventText(event) {
   const meta = TOOL_META[event.name];
   if (!meta) return truncateArg(event.signature);
+  if (event.name === "web_interact") return webInteractText(event.signature);
   const arg = truncateArg(firstQuotedArg(event.signature));
   let verb = meta.verb;
   if (event.name === "web_search" && /^https?:\/\//.test(firstQuotedArg(event.signature))) verb = "Visited";
   return verb + (arg ? ' "' + arg + '"' : "");
+}
+
+// web_interact rows read as actions, not raw signatures: the browser
+// command picks the verb and the most meaningful argument is shown.
+const WEB_VERBS = {
+  goto: "Visited", snapshot: "Read page", click: "Clicked", type: "Typed",
+  select: "Selected", press: "Pressed", scroll: "Scrolled", back: "Went back",
+  read: "Read"
+};
+
+function webInteractText(signature) {
+  const cmd = firstQuotedArg(signature);
+  const arg = (key) => {
+    const match = signature.match(new RegExp("'" + key + "':\\s*'([^']*)'"));
+    return match ? match[1] : null;
+  };
+  if (cmd === "goto") return 'Visited "' + truncateArg(arg("url") || "") + '"';
+  if (cmd === "click" || cmd === "read") {
+    const ref = signature.match(/'ref':\s*(\d+)/);
+    return WEB_VERBS[cmd] + (ref ? " #" + ref[1] : "");
+  }
+  if (cmd === "back" || cmd === "snapshot") return WEB_VERBS[cmd] || "Browsed";
+  const text = arg("text") || arg("option") || arg("key") ||
+    (signature.match(/'direction':\s*'([^']*)'/) || [])[1];
+  return (WEB_VERBS[cmd] || "Browsed") + (text ? ' "' + truncateArg(text) + '"' : "");
 }
 
 function closeFileGroup() {
@@ -1442,38 +1599,133 @@ function ensureMoreRow(run) {
   return run.moreRow;
 }
 
-// Rows animate height + margin + padding together, so everything below
-// glides instead of snapping; the toggle itself never moves or resizes.
-const rowFrame = (h, m, p, b, o, f, t) => ({
-  height: h + "px", marginTop: m + "px", paddingTop: p + "px", paddingBottom: p + "px",
-  borderTopWidth: b + "px", borderBottomWidth: b + "px", opacity: o, filter: f, transform: t
-});
-const ROW_OUT = "translateY(-6px) scale(0.985)";
+// ---------- see more / less (structural fix) ----------
+// Every row past MAX_VISIBLE_TOOL_CALLS lives inside a .tool-overflow wrapper
+// sitting between the visible rows and the pill. Expanding/collapsing animates
+// THE WRAPPER's height (one element = one layout change per frame), while the
+// rows inside only crossfade — opacity and blur never trigger layout, so the
+// motion stays on the compositor and nothing around the run snaps. Collapsed,
+// the wrapper's negative margin cancels #chat's row gap so the spacing is
+// exactly what display:none rows used to leave behind.
 
-function revealRow(row, delay) {
-  cancelAnim(row);
-  row.style.transition = "none"; row.style.overflow = "hidden";
-  row.classList.remove("hidden");
-  const h = row.getBoundingClientRect().height;
-  const anim = row._anim = row.animate(
-    [rowFrame(0, -10, 0, 0, 0, "blur(8px)", ROW_OUT), rowFrame(h, 0, 6, 1, 1, "blur(0px)", "none")],
-    { duration: 560, delay, easing: EASE_OUT, fill: "backwards" });
-  anim.onfinish = () => { row.style.transition = ""; row.style.overflow = ""; row._anim = null; };
+const CHAT_GAP = 10; // keep in sync with #chat { gap: 10px } and .tool-overflow { gap }
+
+function ensureOverflowWrap(run) {
+  if (!run.wrap) {
+    const wrap = document.createElement("div");
+    wrap.className = "tool-overflow collapsed";
+    run.wrap = wrap;
+    if (run.moreRow && run.moreRow.parentNode === chat) {
+      chat.insertBefore(wrap, run.moreRow);
+    } else if (statusRow.parentNode === chat) {
+      chat.insertBefore(wrap, statusRow); // status pill always stays last
+    } else {
+      chat.appendChild(wrap);
+    }
+  }
+  return run.wrap;
 }
 
-function concealRow(row, delay) {
-  if (row.classList.contains("hidden")) return;
-  cancelAnim(row);
-  row.style.transition = "none"; row.style.overflow = "hidden";
-  const h = row.getBoundingClientRect().height;
-  const anim = row._anim = row.animate(
-    [rowFrame(h, 0, 6, 1, 1, "blur(0px)", "none"), rowFrame(0, -10, 0, 0, 0, "blur(8px)", ROW_OUT)],
-    { duration: 380, delay, easing: EASE_IN, fill: "forwards" });
-  anim.onfinish = () => {
-    row.classList.add("hidden");
-    row.style.transition = ""; row.style.overflow = "";
-    anim.cancel(); row._anim = null;
-  };
+function expandToolRun(run) {
+  run.expanded = true;
+  Sfx.play("open");
+  run.moreRow.classList.add("expanded");
+  const stick = isAtBottom();
+  const wrap = run.wrap;
+  const rows = wrap ? Array.from(wrap.children) : [];
+  if (wrap && !REDUCE) {
+    cancelAnim(wrap);
+    wrap.style.overflow = "hidden";
+    wrap.classList.remove("collapsed");
+    const target = wrap.scrollHeight; // full content height (element is at 0 now)
+    const anim = wrap._anim = wrap.animate(
+      [{ height: "0px", marginTop: -CHAT_GAP + "px" },
+       { height: target + "px", marginTop: "0px" }],
+      { duration: 520, easing: EASE_OUT, fill: "backwards" });
+    anim.onfinish = () => { wrap.style.overflow = ""; wrap._anim = null; };
+    rows.forEach((row, i) => {
+      cancelAnim(row); // a lingering collapse fade would otherwise keep opacity at 0
+      row.style.opacity = "0";
+      const fade = row.animate(
+        [{ opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)" }],
+        { duration: 360, delay: Math.min(i * 55, 280), easing: EASE_OUT, fill: "backwards" });
+      fade.onfinish = () => { row.style.opacity = ""; };
+    });
+  } else if (wrap) {
+    wrap.classList.remove("collapsed");
+    rows.forEach((row) => { cancelAnim(row); row.style.opacity = ""; });
+  }
+  updateToolRunThinking();
+  if (stick) followBottom(900);
+}
+
+function collapseToolRun(run) {
+  run.expanded = false;
+  Sfx.play("close");
+  run.moreRow.classList.remove("expanded");
+  const stick = isAtBottom();
+  const wrap = run.wrap;
+  const rows = wrap ? Array.from(wrap.children) : [];
+  if (wrap && !REDUCE) {
+    cancelAnim(wrap);
+    wrap.style.overflow = "hidden";
+    const start = wrap.getBoundingClientRect().height;
+    const anim = wrap._anim = wrap.animate(
+      [{ height: start + "px", marginTop: "0px" },
+       { height: "0px", marginTop: -CHAT_GAP + "px" }],
+      { duration: 420, easing: EASE_IN, fill: "forwards" });
+    rows.forEach((row) => {
+      cancelAnim(row);
+      row._anim = row.animate(
+        [{ opacity: 1, filter: "blur(0px)" }, { opacity: 0, filter: "blur(6px)" }],
+        { duration: 280, easing: EASE_IN, fill: "forwards" });
+    });
+    anim.onfinish = () => {
+      wrap.classList.add("collapsed");
+      wrap.style.overflow = "";
+      wrap._anim = null;
+      anim.cancel(); // .collapsed holds the end state; drop the fill
+      rows.forEach((row) => cancelAnim(row)); // drop the forwards fills too
+    };
+  } else if (wrap) {
+    wrap.classList.add("collapsed");
+    rows.forEach((row) => cancelAnim(row));
+  }
+  updateToolRunThinking();
+  if (stick) followBottom(700);
+}
+
+function addToolRow(event) {
+  const meta = TOOL_META[event.name];
+  const row = document.createElement("div");
+  row.className = "tool-row glass running";
+  row.id = "tool-" + event.id;
+  const icon = meta ? meta.icon : ICONS.terminal;
+  row.innerHTML =
+    '<span class="tool-icon">' + icon + "</span>" +
+    '<span class="tool-text"></span>' +
+    "<pre hidden></pre>";
+  row.querySelector(".tool-text").textContent = toolEventText(event);
+  if (!toolRun) {
+    toolRun = { rows: [], moreRow: null, expanded: false, wrap: null };
+  }
+  toolRun.rows.push(row);
+  const stick = isAtBottom();
+  if (toolRun.rows.length > MAX_VISIBLE_TOOL_CALLS) {
+    // Rows past the cap always live in the wrapper. Collapsed, the wrapper
+    // keeps its height at 0, so adding rows shifts nothing outside it.
+    ensureMoreRow(toolRun);
+    const wrap = ensureOverflowWrap(toolRun);
+    if (toolRun.moreRow.parentNode !== chat) {
+      chat.insertBefore(toolRun.moreRow, wrap.nextSibling);
+    }
+    wrap.appendChild(row);
+    if (toolRun.expanded) growIn(row);
+  } else {
+    append(row);
+  }
+  if (stick) scrollToBottom();
+  updateAmbient();
 }
 
 let followUntil = 0, following = false;
@@ -1537,65 +1789,6 @@ function fitInput() {
   void input.offsetHeight;
   input.style.transition = "";
   input.style.height = target + "px";
-}
-
-function expandToolRun(run) {
-  run.expanded = true;
-  Sfx.play("open");
-  run.moreRow.classList.add("expanded");
-  const stick = isAtBottom();
-  run.rows.filter((r) => r.classList.contains("hidden"))
-    .forEach((row, i) => revealRow(row, Math.min(i * 45, 270)));
-  updateToolRunThinking();
-  if (stick) followBottom(900);
-}
-
-function collapseToolRun(run) {
-  run.expanded = false;
-  Sfx.play("close");
-  run.moreRow.classList.remove("expanded");
-  const stick = isAtBottom();
-  run.rows.slice(MAX_VISIBLE_TOOL_CALLS).forEach((row, i) => concealRow(row, Math.min(i * 30, 150)));
-  updateToolRunThinking();
-  if (stick) followBottom(700);
-}
-
-function addToolRow(event) {
-  const meta = TOOL_META[event.name];
-  const row = document.createElement("div");
-  row.className = "tool-row glass running";
-  row.id = "tool-" + event.id;
-  const icon = meta ? meta.icon : ICONS.terminal;
-  row.innerHTML =
-    '<span class="tool-icon">' + icon + "</span>" +
-    '<span class="tool-text"></span>' +
-    "<pre hidden></pre>";
-  row.querySelector(".tool-text").textContent = toolEventText(event);
-  if (!toolRun) {
-    toolRun = { rows: [], moreRow: null, expanded: false };
-  }
-  toolRun.rows.push(row);
-  const stick = isAtBottom();
-  if (!toolRun.expanded && toolRun.rows.length > MAX_VISIBLE_TOOL_CALLS) {
-    row.classList.add("hidden");
-    const moreRow = ensureMoreRow(toolRun);
-    if (moreRow.parentNode === chat) {
-      // Insert ahead of the existing row without re-appending it, so the
-      // "See more" pill does not replay its entrance on every new call.
-      chat.insertBefore(row, moreRow);
-    } else {
-      append(row);
-      append(moreRow);
-    }
-    updateToolRunThinking();
-  } else if (toolRun.expanded && toolRun.moreRow && toolRun.moreRow.parentNode === chat) {
-    chat.insertBefore(row, toolRun.moreRow);
-    growIn(row);
-  } else {
-    append(row);
-  }
-  if (stick) scrollToBottom();
-  updateAmbient();
 }
 
 function finishToolRow(event) {
@@ -1846,6 +2039,36 @@ function sendStop() {
   setStatus("working", "Stopping...");
 }
 
+// ---------- new chat ----------
+// Stops the running turn (the server does the same if it is still busy),
+// wipes the VM + conversation server-side, then reconnects for a fresh
+// session with a brand new container.
+let newChatBusy = false;
+
+async function newChat() {
+  if (newChatBusy) return;
+  newChatBusy = true;
+  Sfx.play("click");
+  try {
+    if (busy && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "stop" })); // stop-then-wipe
+    }
+    const response = await fetch(API_BASE + "/api/new-chat/" + clientId, { method: "POST" });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    chat.innerHTML = "";
+    toolRun = null;
+    busy = false;
+    setSendState();
+    input.focus();
+    connect(); // onopen clears the rest of the visual state
+  } catch (err) {
+    addEventRow("Could not start a new chat: " + err.message, true);
+  } finally {
+    newChatBusy = false;
+  }
+}
+
 function uploadFiles(files) {
   for (const file of files) {
     const form = new FormData();
@@ -1860,11 +2083,13 @@ function uploadFiles(files) {
 
 // ---------- wiring & boot ----------
 attachBtn.innerHTML = ICONS.clip;
+document.getElementById("newchat-btn").innerHTML = ICONS.newchat;
 setSendState();
 input.focus();
 
 sendBtn.addEventListener("click", () => (busy ? (Sfx.play("stop"), sendStop()) : sendMessage()));
 attachBtn.addEventListener("click", () => fileInput.click());
+document.getElementById("newchat-btn").addEventListener("click", newChat);
 fileInput.addEventListener("change", () => {
   uploadFiles(fileInput.files);
   fileInput.value = "";

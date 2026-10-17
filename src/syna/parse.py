@@ -6,9 +6,9 @@ from typing import Callable
 
 from string_grab import grab_all
 
-from . import tools
 from .config import get_logger, load_config
 from .state import get_registered_container, register_container, unregister_container
+from .tools import TOOL_REGISTRY
 
 DEFAULT_TOOL_CALL_TIMEOUT_S = 60
 
@@ -18,7 +18,8 @@ def build_signature(tool_name, tool_arguments):
     return (
         f"{tool_name}("
         + ", ".join(
-            f"{arg_name}={arg_value!r}" if isinstance(arg_value, str)
+            f"{arg_name}={arg_value!r}"
+            if isinstance(arg_value, str)
             else f"{arg_name}={arg_value}"
             for arg_name, arg_value in tool_arguments.items()
         )
@@ -54,7 +55,7 @@ def execute_tool_with_timeout(tool_name, tool_arguments, timeout_s):
 
     Returns a (output, detached) tuple.
     """
-    tool_fn = getattr(tools, tool_name)
+    tool_fn = TOOL_REGISTRY[tool_name]
     container = get_registered_container()
     finished = threading.Event()
     outcome = {}
@@ -130,6 +131,27 @@ def parse_and_execute_tools(
             continue
 
         signature = build_signature(tool_name, tool_arguments)
+
+        # Dispatch only through the whitelist: reaching for arbitrary module
+        # attributes would expose internals (editor primitives, helpers) and
+        # let the model touch the host filesystem directly.
+        if tool_name not in TOOL_REGISTRY:
+            output = (
+                f"Unknown tool '{tool_name}'. Available tools:"
+                f" {', '.join(sorted(TOOL_REGISTRY))}"
+            )
+            logger.warning(output)
+            if echo_errors:
+                print(f"  ! ({output})")
+            if on_tool_event is not None:
+                on_tool_event("started", tool_name, signature)
+                on_tool_event("error", tool_name, signature, output=output)
+                on_tool_event("finished", tool_name, signature, output)
+            outputs.append(
+                {"name": tool_name, "signature": signature, "output": output}
+            )
+            continue
+
         if on_tool_event is not None:
             on_tool_event("started", tool_name, signature)
 
@@ -157,8 +179,6 @@ def parse_and_execute_tools(
         if on_tool_event is not None:
             on_tool_event("finished", tool_name, signature, output)
 
-        outputs.append(
-            {"name": tool_name, "signature": signature, "output": output}
-        )
+        outputs.append({"name": tool_name, "signature": signature, "output": output})
 
     return outputs

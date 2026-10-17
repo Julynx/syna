@@ -9,6 +9,10 @@ def get_function_metadata(file_path):
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # Skip private/internal functions
+            if node.name.startswith("_"):
+                continue
+
             # Extract arguments and their type annotations
             args = []
             for arg in node.args.args:

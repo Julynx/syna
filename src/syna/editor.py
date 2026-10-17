@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 """Line-based file reading and editing helpers shared by the agent tools."""
 
 
@@ -8,7 +7,7 @@ def with_line_numbers(text, start=1, limit=200):
     """Render text with 1-based line numbers, reading `limit` lines from `start`."""
     start -= 1
     lines = text.splitlines()
-    lines_dict = dict(enumerate(lines[start:start + limit], start=start + 1))
+    lines_dict = dict(enumerate(lines[start : start + limit], start=start + 1))
 
     max_lines_digits = len(str(abs(len(lines))))
 

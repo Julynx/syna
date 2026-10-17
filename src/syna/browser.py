@@ -35,9 +35,14 @@ import random
 import sys
 import threading
 from typing import Any
+from urllib.parse import urlparse
 
 from camoufox.async_api import AsyncCamoufox
 from playwright.async_api import Error as PWError
+
+# Only these URL schemes can be opened in the browser. Everything else
+# (file:, ftp:, javascript:, data:, custom protocol handlers...) is refused.
+ALLOWED_SCHEMES = {"http", "https"}
 
 # --------------------------------------------------------------------------- #
 # In-page snapshot walker
@@ -375,7 +380,11 @@ class BrowserSession:
             self._kw["proxy"] = proxy
         self._persistent = user_data_dir is not None
         if self._persistent:
-            self._kw.update(persistent_context=True, user_data_dir=user_data_dir)
+            self._kw.update(
+                persistent_context=True,
+                user_data_dir=user_data_dir,
+                accept_downloads=False,
+            )
         self._cm = None
         self.context = None
         self.page = None
@@ -387,12 +396,30 @@ class BrowserSession:
         obj = await self._cm.__aenter__()
         if self._persistent:
             self.context = obj
-            self.page = obj.pages[0] if obj.pages else await obj.new_page()
         else:
-            self.page = await obj.new_page()
-            self.context = self.page.context
+            self.context = await obj.new_context(accept_downloads=False)
+        self.page = (
+            self.context.pages[0]
+            if self.context.pages
+            else await self.context.new_page()
+        )
+        self._watch_page(self.page)
         self.context.on("page", self._on_new_page)
         return self
+
+    def _on_download(self, download) -> None:
+        """Belt-and-braces guard: kill any download attempt in flight.
+
+        accept_downloads=False already blocks the save; cancelling here also
+        stops the browser from holding partial data in memory.
+        """
+        try:
+            download.cancel()
+        except Exception:
+            pass
+
+    def _watch_page(self, p) -> None:
+        p.on("download", self._on_download)
 
     async def close(self) -> None:
         if self._cm:
@@ -407,6 +434,7 @@ class BrowserSession:
 
     def _on_new_page(self, p) -> None:
         # a click opened a new tab -> follow it
+        self._watch_page(p)
         self.page = p
         self._last = None
 
@@ -506,6 +534,12 @@ class BrowserSession:
 
     # -- tools -------------------------------------------------------------- #
     async def tool_goto(self, url: str) -> str:
+        parsed = urlparse(url)
+        if parsed.scheme.lower() not in ALLOWED_SCHEMES:
+            raise ToolError(
+                f"blocked protocol '{parsed.scheme or 'none'}:' — only http and"
+                " https URLs can be opened"
+            )
         page = self._live_page()
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         await self._settle()
@@ -578,11 +612,36 @@ class BrowserSession:
         return await self._observe()
 
     async def tool_read(self, ref: int | None = None, max_chars: int = 6000) -> str:
-        """Full untruncated text of one element (or the whole page) for extraction."""
+        """Full untruncated text of one element (or the whole page) for extraction.
+
+        Form controls report their current value instead of text: inputs and
+        textareas return their value, selects return the chosen option plus
+        the full option list. Password fields stay masked.
+        """
         if ref is None:
             text = await self._live_page().inner_text("body")
         else:
-            text = await (await self._el(ref)).inner_text()
+            el = await self._el(ref)
+            info = await el.evaluate(
+                "e => ({tag: e.localName, type: e.type || '',"
+                " editable: e.isContentEditable})"
+            )
+            tag = info.get("tag", "")
+            if tag == "select":
+                text = await el.evaluate(
+                    "e => 'selected: '"
+                    " + Array.from(e.selectedOptions).map(o => o.text.trim()).join(' | ')"
+                    " + '\\nall options: '"
+                    " + Array.from(e.options).map(o => o.text.trim()).join(' | ')"
+                )
+            elif tag in ("input", "textarea"):
+                if info.get("type") == "password":
+                    text = "(password value hidden)"
+                else:
+                    text = await el.input_value()
+            else:
+                # regular elements and contenteditable regions
+                text = await el.inner_text()
         text = "\n".join(l.strip() for l in text.splitlines() if l.strip())
         return text[:max_chars] + ("\n... [truncated]" if len(text) > max_chars else "")
 
@@ -660,6 +719,8 @@ TOOLS = [
     _t(
         "read",
         "Get the full plain text of one element (or the whole page if ref omitted). "
+        "Form controls report their value instead: input/textarea return the current "
+        "value, select returns the chosen option and the full option list. "
         "Use when the snapshot truncated or shortened text you need.",
         {"ref": {"type": "integer"}, "max_chars": {"type": "integer"}},
     ),

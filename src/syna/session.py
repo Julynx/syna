@@ -25,6 +25,29 @@ DEFAULT_ENABLE_COMPACTION = True
 MAX_NO_TOOL_RETRIES = 3
 SYSTEM_NOTE_PREFIX = "[System]: "
 
+# OpenRouter's unified reasoning control (reasoning.effort). Loaded from
+# THINKING_EFFORT in .env; unset means "leave the model's default alone".
+VALID_THINKING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+
+def load_thinking_effort():
+    """Return the THINKING_EFFORT value from .env, or None when unset.
+
+    The value maps straight onto OpenRouter's 'reasoning.effort' parameter.
+    An invalid value raises here so a typo fails fast at session creation
+    instead of failing every model request.
+    """
+    value = dotenv.get("THINKING_EFFORT")
+    if not value:
+        return None
+    effort = value.strip().lower()
+    if effort not in VALID_THINKING_EFFORTS:
+        raise ValueError(
+            f"THINKING_EFFORT '{value}' is invalid. Use one of:"
+            f" {', '.join(VALID_THINKING_EFFORTS)} (or remove it from .env)."
+        )
+    return effort
+
 
 def build_tool_format_warning(response: str) -> str:
     """Compose the retry warning for a response without a tool call.
@@ -143,6 +166,7 @@ class AgentSession:
         self._cancel_event = threading.Event()
         self._tool_call_seq = 0
         self._tool_errored = False
+        self.thinking_effort = load_thinking_effort()
         self.client = create_model_client()
         self.model = self._require_model()
         msg = {"role": "system", "content": build_prompt()}
@@ -205,7 +229,11 @@ class AgentSession:
                 self._compact_history_if_needed()
                 self._emit({"type": "status", "text": "Thinking..."})
                 response = ask_question(
-                    self.client, self.model, self.messages, delay=self.request_delay
+                    self.client,
+                    self.model,
+                    self.messages,
+                    delay=self.request_delay,
+                    effort=self.thinking_effort,
                 )
             except TurnCancelled:
                 self._finish_cancelled_turn()
@@ -280,6 +308,7 @@ class AgentSession:
                 self.model,
                 build_compaction_messages(self.compaction_prompt, compactable),
                 delay=self.request_delay,
+                effort=self.thinking_effort,
             )
         except Exception as exc:
             logger.exception("History compaction failed")

@@ -19,11 +19,18 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_logger, get_project_root, load_config
 from .session import AgentSession
-from .state import create_container, destroy_container, register_container, unregister_container
+from .state import (
+    create_container,
+    destroy_container,
+    register_container,
+    unregister_container,
+)
+from .tools import _reset_browser
 
 CONTAINER_START_TIMEOUT_S = 120
 EVENT_LOG_MAX_ITEMS = 500
 JANITOR_INTERVAL_S = 15
+NEW_CHAT_STOP_TIMEOUT_S = 20
 REPLAYED_EVENT_TYPES = {
     "user_message",
     "model_message",
@@ -118,8 +125,9 @@ class SessionRecord:
             "path": str(host_path),
             "size": host_path.stat().st_size,
         }
-        logger.info("Shared '%s' as token %s for session %s",
-                    source_path, token, self.client_id)
+        logger.info(
+            "Shared '%s' as token %s for session %s", source_path, token, self.client_id
+        )
         self.push(
             {
                 "type": "file",
@@ -181,7 +189,9 @@ class SessionRecord:
             try:
                 self.session.close()
             except Exception:
-                logger.exception("Model client cleanup failed for session %s", self.client_id)
+                logger.exception(
+                    "Model client cleanup failed for session %s", self.client_id
+                )
             shutil.rmtree(self.tmp_dir, ignore_errors=True)
             logger.info("Session %s torn down", self.client_id)
 
@@ -285,7 +295,9 @@ async def upload_file(client_id: str, file: UploadFile, dest: str | None = None)
         with tempfile.TemporaryDirectory(prefix="syna-upload-") as temp_dir:
             local_path = Path(temp_dir, safe_name)
             local_path.write_bytes(await file.read())
-            await asyncio.to_thread(record.container.copy_to, str(local_path), destination)
+            await asyncio.to_thread(
+                record.container.copy_to, str(local_path), destination
+            )
     except Exception as exc:
         logger.exception("Upload failed for session %s", client_id)
         raise HTTPException(status_code=502, detail=f"Upload failed: {exc}") from exc
@@ -293,6 +305,35 @@ async def upload_file(client_id: str, file: UploadFile, dest: str | None = None)
     pod_path = f"{destination.rstrip('/')}/{safe_name}"
     record.session.notify_file_upload(safe_name, pod_path)
     return {"status": "ok", "name": safe_name, "dest": destination}
+
+
+@app.post("/api/new-chat/{client_id}")
+def new_chat(client_id: str):
+    """Reset a session: stop any running turn, destroy the VM and drop the
+    conversation so the next connection starts completely fresh.
+
+    Returns before the client reconnects; the replacement session (with a
+    new container) is created on the next WebSocket connect. If a turn is
+    still stuck past the stop timeout, teardown proceeds anyway — the old
+    worker finishes cleaning up in the background while the client gets a
+    brand new session.
+    """
+    with _registry_lock:
+        record = _sessions.get(client_id)
+    if record is None:
+        return {"status": "ok", "reset": False}
+    logger.info("New chat requested for session %s", client_id)
+    if record.busy.is_set():
+        record.session.cancel()
+        deadline = time.time() + NEW_CHAT_STOP_TIMEOUT_S
+        while record.busy.is_set() and time.time() < deadline:
+            time.sleep(0.1)
+    record.teardown()
+    record.worker.join(timeout=10)
+    with _registry_lock:
+        _sessions.pop(client_id, None)
+    _reset_browser()
+    return {"status": "ok", "reset": True}
 
 
 @app.get("/api/files/{client_id}/{token}")
