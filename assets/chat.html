@@ -1,371 +1,861 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
+<!-- GENERATED FILE — edit the css/ and js/ sources in build/, then rebuild with: python build.py -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Syna</title>
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f5f7">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f1114">
 <style>
+/* ==== css/base.css ==== */
+/* ===== Syna — design tokens & base =================================================== */
+:root {
+  color-scheme: light dark;
+  --bg: #f4f5f7;
+  /* Solid foreground glass. Darker and more opaque than pure white glass so
+     text stays readable over the bright parts of the ambient light field. */
+  --surface: rgba(239, 241, 245, 0.8);
+  --surface-strong: rgba(235, 238, 243, 0.92);
+  --surface-soft: rgba(24, 28, 38, 0.075);
+  --text: #1b1e22;
+  --muted: #6b7280;
+  --accent: #4f46e5;
+  --accent-soft: rgba(79, 70, 229, 0.12);
+  --accent-line: rgba(79, 70, 229, 0.45);
+  --on-accent: #ffffff;
+  --border: rgba(24, 28, 38, 0.1);
+  --glass-line: rgba(255, 255, 255, 0.62);
+  --glass-shadow: 0 14px 34px -16px rgba(18, 22, 33, 0.25), 0 2px 10px -4px rgba(18, 22, 33, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  --glass-shadow-soft: 0 8px 22px -14px rgba(18, 22, 33, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  --danger: #b3261e;
+  --danger-tint: rgba(179, 38, 30, 0.1);
+  --danger-line: rgba(179, 38, 30, 0.32);
+  --warn: #d97706;
+  --warn-tint: rgba(217, 119, 6, 0.12);
+  --warn-line: rgba(217, 119, 6, 0.35);
+  --ok: #16a34a;
+  --radius: 16px;
+  --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+  --blur: 18px;
+  --saturate: 165%;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-in: 0.5s;
+  --dur-out: 0.32s;
+  /* fine frost texture layered over every glass surface */
+  --frost: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='1' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.07'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+@media (prefers-color-scheme: dark) {
   :root {
-    --bg: #f4f5f7;
-    --surface: #ffffff;
-    --surface-soft: #eceef1;
-    --text: #1b1e22;
-    --muted: #6b7280;
-    --accent: #4f46e5;
-    --accent-soft: #eef0fe;
-    --on-accent: #ffffff;
-    --border: #e3e5e9;
-    --danger: #b3261e;
-    --radius: 16px;
-    --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+    --bg: #0f1114;
+    --surface: rgba(19, 23, 29, 0.75);
+    --surface-strong: rgba(13, 16, 21, 0.9);
+    --surface-soft: rgba(255, 255, 255, 0.085);
+    --text: #e6e8eb;
+    --muted: #9aa1ab;
+    --accent: #818cf8;
+    --accent-soft: rgba(129, 140, 248, 0.16);
+    --accent-line: rgba(129, 140, 248, 0.5);
+    --on-accent: #0f1114;
+    --border: rgba(255, 255, 255, 0.09);
+    --glass-line: rgba(255, 255, 255, 0.1);
+    --glass-shadow: 0 14px 34px -16px rgba(0, 0, 0, 0.6), 0 2px 10px -4px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    --glass-shadow-soft: 0 8px 22px -14px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --danger: #f2b8b5;
+    --danger-tint: rgba(242, 184, 181, 0.12);
+    --danger-line: rgba(242, 184, 181, 0.35);
+    --warn: #f5a623;
+    --warn-tint: rgba(245, 166, 35, 0.12);
+    --warn-line: rgba(245, 166, 35, 0.4);
+    --ok: #4ade80;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0f1114;
-      --surface: #191c20;
-      --surface-soft: #23272d;
-      --text: #e6e8eb;
-      --muted: #9aa1ab;
-      --accent: #818cf8;
-      --accent-soft: #262a3d;
-      --on-accent: #0f1114;
-      --border: #2a2f36;
-      --danger: #f2b8b5;
-    }
-  }
+}
 
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
-  body {
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    display: flex;
-    flex-direction: column;
-  }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
 
-  header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 20px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    position: sticky;
-    top: 0;
-    z-index: 5;
-  }
-  .brand { font-weight: 650; font-size: 17px; letter-spacing: 0.2px; }
-  .inline-status {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    font-size: 13px;
-    color: var(--muted);
-    padding: 2px 4px;
-  }
-  .status-dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--muted);
-    transition: background 0.3s;
-  }
-  .status-dot.working { background: #d97706; animation: pulse 1.2s infinite; }
-  .status-dot.ready { background: #16a34a; }
-  .status-dot.error { background: var(--danger); }
-  @keyframes pulse { 50% { opacity: 0.35; } }
+:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 
-  #banner {
-    display: none;
-    background: var(--danger);
-    color: var(--on-accent);
-    text-align: center;
-    font-size: 13px;
-    padding: 6px 12px;
-  }
-  #banner.visible { display: block; }
+/* Shared glass recipe: one source of truth for every floating surface
+   (status pill, tool rows, event rows, file chips, see-more pill, copy button,
+   compaction summary). Elements add .glass and override specifics in their own rules. */
+.glass {
+  background-color: var(--surface);
+  background-image: var(--frost);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  box-shadow: var(--glass-shadow-soft);
+}
 
-  #chat {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px 16px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  #chat > * { max-width: 720px; width: 100%; margin: 0 auto; }
+/* Shared keyframe: used by tool-row completion icons and the send button */
+@keyframes icon-pop {
+  0% { transform: scale(0.4) rotate(-90deg); opacity: 0; }
+  100% { transform: none; opacity: 1; }
+}
 
-  .bubble {
-    padding: 10px 14px;
-    border-radius: var(--radius);
-    line-height: 1.55;
-    font-size: 15px;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    max-width: 85%;
-  }
+</style>
+<style>
+/* ==== css/ambient.css ==== */
+/* ===== Syna — ambient background light field ========================================= */
+
+/* Registered so the state colors can crossfade smoothly (custom properties
+   are only transitionable when registered with a syntax). */
+@property --c3 { syntax: "<color>"; inherits: true; initial-value: #ffbf9f; }
+@property --bgA { syntax: "<color>"; inherits: true; initial-value: #b9a8ff; }
+@property --bgB { syntax: "<color>"; inherits: true; initial-value: #9ccfff; }
+
+body {
+  --glow: 99 102 241;   /* accent rgb triplet for rings & the composer halo */
+  --tp: 24%;            /* tint percentage of the corner color washes */
+  transition: --bgA 2.4s ease, --bgB 2.4s ease, --c3 2.4s ease;
+}
+body[data-ambient="thinking"] { --glow: 255 168 96; --bgA: #ffa860; --bgB: #ffcf7a; --c3: #ff8a7a; }
+body[data-ambient="tool"] { --glow: 91 155 255; --bgA: #5b9bff; --bgB: #7fd0ff; --c3: #7a7cff; }
+@media (prefers-color-scheme: dark) { body { --tp: 17%; } }
+
+/* The whole light field sits at reduced opacity so every layer (corner tints,
+   glow canvas, pulse rings, grain) fades uniformly toward the base --bg. */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.9;
+  background:
+    radial-gradient(95% 75% at 12% 8%, color-mix(in srgb, var(--bgA) var(--tp), transparent), transparent 70%),
+    radial-gradient(85% 75% at 92% 96%, color-mix(in srgb, var(--bgB) var(--tp), transparent), transparent 70%),
+    radial-gradient(60% 50% at 75% 28%, color-mix(in srgb, var(--c3) calc(var(--tp) * 0.6), transparent), transparent 70%),
+    linear-gradient(160deg, color-mix(in srgb, var(--bgA) 6%, var(--bg)), var(--bg) 55%, color-mix(in srgb, var(--bgB) 8%, var(--bg)));
+}
+
+.field { position: absolute; inset: 0; }
+
+/* Canvas painted by js/ambient.js: bright core + corona. Rendered small,
+   upscaled and blurred = heavy diffusion. */
+.glow { position: absolute; left: -4%; top: -4%; width: 108%; height: 108%; filter: blur(12px); }
+
+/* Expanding ring on every ambientKick (message sent, tool finished, ...) */
+.pulse-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46vmax;
+  height: 46vmax;
+  margin: -23vmax 0 0 -23vmax;
+  border-radius: 50%;
+  border: 2px solid rgb(var(--glow) / 0.45);
+  box-shadow: 0 0 5vmax rgb(var(--glow) / 0.22), inset 0 0 5vmax rgb(var(--glow) / 0.14);
+  filter: blur(3px);
+  opacity: 0;
+}
+
+.grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.025;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='1' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+}
+@media (prefers-color-scheme: dark) { .grain { opacity: 0.035; mix-blend-mode: soft-light; } }
+
+</style>
+<style>
+/* ==== css/chrome.css ==== */
+/* ===== Syna — chrome: header, status pill, banner ==================================== */
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background-color: var(--surface);
+  background-image: var(--frost);
+  backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 650;
+  font-size: 17px;
+  letter-spacing: 0.2px;
+}
+.brand-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #a5b4fc, var(--accent));
+  box-shadow: 0 0 10px 1px rgba(99, 102, 241, 0.55);
+}
+
+/* "Working..." / "Ready" pill that lives at the bottom of the conversation */
+.inline-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--muted);
+  padding: 5px 13px;
+  align-self: center;
+  border-radius: 999px;
+  transition: opacity var(--dur-in) var(--ease), filter var(--dur-in) var(--ease), transform var(--dur-in) var(--ease);
+}
+#chat > .inline-status { width: fit-content; }
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: background-color 0.4s ease;
+  flex: none;
+  position: relative;
+}
+.status-dot.working { background: var(--warn); animation: pulse 1.2s infinite; }
+.status-dot.ready { background: var(--ok); }
+.status-dot.error { background: var(--danger); }
+.status-dot.working::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--warn);
+  animation: dot-ring 1.6s ease-out infinite;
+}
+@keyframes pulse { 50% { opacity: 0.35; } }
+@keyframes dot-ring { 0% { transform: scale(1); opacity: 0.7; } 100% { transform: scale(2.9); opacity: 0; } }
+
+/* Connection-lost banner: always in the layout, revealed by growing max-height
+   so the page below glides down instead of snapping. */
+#banner {
+  display: block;
+  position: relative;
+  z-index: 4;
+  background: rgba(179, 38, 30, 0.88);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  color: #ffffff;
+  text-align: center;
+  font-size: 13px;
+  max-height: 0;
+  padding: 0 12px;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.5s var(--ease), padding 0.5s var(--ease), opacity 0.5s var(--ease);
+}
+#banner.visible { max-height: 120px; padding-top: 7px; padding-bottom: 7px; opacity: 1; }
+
+</style>
+<style>
+/* ==== css/chat.css ==== */
+/* ===== Syna — conversation: bubbles, tool rows, files, events, copy button =========== */
+
+#chat {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+#chat > * { max-width: 880px; width: 100%; margin: 0 auto; }
+
+/* ---------- bubbles ---------- */
+.bubble {
+  position: relative;
+  padding: 11px 15px;
+  border-radius: var(--radius);
+  line-height: 1.55;
+  font-size: 15px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  transition: opacity 0.5s var(--ease), filter 0.5s var(--ease), transform 0.7s cubic-bezier(0.34, 1.45, 0.64, 1);
+}
+.bubble.user {
+  align-self: flex-end;
+  background-image: var(--frost), linear-gradient(135deg, rgba(79, 70, 229, 0.92), rgba(99, 102, 241, 0.84));
+  color: var(--on-accent);
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  box-shadow: 0 14px 30px -14px rgba(79, 70, 229, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  border-bottom-right-radius: 5px;
+  transform-origin: 100% 100%;
+}
+.bubble.model {
+  align-self: flex-start;
+  background-color: var(--surface);
+  background-image: var(--frost);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow);
+  border-bottom-left-radius: 5px;
+  transform-origin: 0 100%;
+}
+@media (prefers-color-scheme: dark) {
   .bubble.user {
-    align-self: flex-end;
-    background: var(--accent);
-    color: var(--on-accent);
-    border-bottom-right-radius: 5px;
+    background-image: var(--frost), linear-gradient(135deg, rgba(129, 140, 248, 0.92), rgba(113, 124, 245, 0.85));
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 14px 30px -14px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.22);
   }
-  .bubble.model {
-    align-self: flex-start;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-bottom-left-radius: 5px;
-  }
-  .bubble.model.markdown { white-space: normal; }
-  .markdown > :first-child { margin-top: 0; }
-  .markdown > :last-child { margin-bottom: 0; }
-  .markdown p { margin: 8px 0; }
-  .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 {
-    margin: 14px 0 6px;
-    line-height: 1.3;
-  }
-  .markdown h1 { font-size: 20px; } .markdown h2 { font-size: 19px; } .markdown h3 { font-size: 17px; }
-  .markdown h4 { font-size: 15px; } .markdown h5 { font-size: 14px; } .markdown h6 { font-size: 13px; }
-  .markdown ul, .markdown ol { margin: 6px 0; padding-left: 24px; }
-  .markdown li { margin: 3px 0; }
-  .markdown code {
-    font-family: var(--mono);
-    font-size: 12.5px;
-    background: var(--surface-soft);
-    padding: 1px 5px;
-    border-radius: 5px;
-  }
-  .markdown pre {
-    background: var(--surface-soft);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 10px 12px;
-    overflow-x: auto;
-    margin: 8px 0;
-  }
-  .markdown pre code { background: none; padding: 0; font-size: 12px; }
-  .markdown table {
-    border-collapse: collapse;
-    display: block;
-    max-width: 100%;
-    overflow-x: auto;
-    margin: 8px 0;
-    font-size: 13px;
-  }
-  .markdown th, .markdown td {
-    border: 1px solid var(--border);
-    padding: 4px 10px;
-    text-align: left;
-  }
-  .markdown th { background: var(--surface-soft); }
-  .markdown a { color: var(--accent); }
-  .markdown blockquote {
-    border-left: 3px solid var(--border);
-    padding-left: 10px;
-    margin: 6px 0;
-    color: var(--muted);
-  }
-  .markdown hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
-  .queued-tag {
-    align-self: flex-end;
-    font-size: 11px;
-    color: var(--muted);
-    margin: -6px 4px 0 0;
-  }
+}
 
-  .tool-row {
-    align-self: flex-start;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 9px;
-    max-width: 85%;
-    font-size: 13px;
-    color: var(--muted);
-    padding: 3px 2px;
-  }
-  .tool-icon {
-    flex: none;
-    width: 26px; height: 26px;
-    border-radius: 50%;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    display: grid;
-    place-items: center;
-  }
-  .tool-icon svg { width: 13px; height: 13px; stroke: var(--muted); }
-  .tool-text { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
-  .tool-row.running .tool-text::after {
-    content: " ...";
-    animation: blink 1.2s infinite;
-  }
-  @keyframes blink { 50% { opacity: 0.2; } }
-  .tool-row.toggleable { cursor: pointer; }
-  .tool-row pre {
-    flex-basis: 100%;
-    display: none;
-    margin-top: 6px;
-    padding: 8px 10px;
-    background: var(--surface-soft);
-    border-radius: 10px;
-    font-family: var(--mono);
-    font-size: 12px;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    max-height: 240px;
-    overflow-y: auto;
-  }
-  .tool-row.open pre { display: block; }
+.bubble.model.markdown { white-space: normal; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p { margin: 8px 0; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 {
+  margin: 14px 0 6px;
+  line-height: 1.3;
+}
+.markdown h1 { font-size: 20px; } .markdown h2 { font-size: 19px; } .markdown h3 { font-size: 17px; }
+.markdown h4 { font-size: 15px; } .markdown h5 { font-size: 14px; } .markdown h6 { font-size: 13px; }
+.markdown ul, .markdown ol { margin: 6px 0; padding-left: 24px; }
+.markdown li { margin: 3px 0; }
+.markdown code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: var(--surface-soft);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+.markdown pre {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.markdown pre code { background: none; padding: 0; font-size: 12px; }
+.markdown table {
+  border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 8px 0;
+  font-size: 13px;
+}
+.markdown th, .markdown td {
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  text-align: left;
+}
+.markdown th { background: var(--surface-soft); }
+.markdown a { color: var(--accent); }
+.markdown blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 10px;
+  margin: 6px 0;
+  color: var(--muted);
+}
+.markdown hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 
-  .file-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 13px;
-    border-radius: 12px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-    text-decoration: none;
-    font-size: 14px;
-    max-width: 85%;
-  }
-  .file-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
-  .file-chip svg { flex: none; width: 17px; height: 17px; stroke: var(--accent); }
-  .file-chip .file-meta { color: var(--muted); font-size: 12px; }
-  .file-chip.outgoing { align-self: flex-end; }
-  .files-group { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-  .files-group.right { align-self: flex-end; align-items: flex-end; }
+.queued-tag {
+  font-size: 11px;
+  color: var(--muted);
+  margin: -6px 4px 0 0;
+  transition: opacity var(--dur-in) var(--ease), filter var(--dur-in) var(--ease), transform var(--dur-in) var(--ease);
+}
 
-  .event-row {
-    align-self: center;
-    font-size: 12.5px;
-    color: var(--muted);
-    background: var(--surface-soft);
-    padding: 5px 12px;
-    border-radius: 999px;
-  }
-  .event-row.error { color: var(--danger); }
+/* ---------- copy-markdown button (model messages) ---------- */
+.copy-btn {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background-color: var(--surface-strong);
+  border-color: var(--glass-line);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s var(--ease), color 0.2s ease, border-color 0.2s ease, transform 0.25s var(--ease);
+}
+.bubble.model:hover .copy-btn,
+.bubble.model:focus-within .copy-btn,
+.copy-btn:focus-visible,
+.copy-btn.copied { opacity: 1; pointer-events: auto; }
+.copy-btn:hover { color: var(--text); border-color: var(--accent-line); transform: translateY(-1px); }
+.copy-btn:active { transform: scale(0.94); }
+.copy-btn svg {
+  grid-area: 1 / 1;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: opacity 0.2s ease, transform 0.3s var(--ease);
+}
+.copy-btn .i-check { opacity: 0; transform: scale(0.6) rotate(-12deg); }
+.copy-btn.copied { color: var(--ok); }
+.copy-btn.copied .i-check { opacity: 1; transform: none; }
+.copy-btn.copied .i-copy { opacity: 0; transform: scale(0.6) rotate(12deg); }
+@media (hover: none) { .bubble.model .copy-btn { opacity: 1; pointer-events: auto; } }
 
-  .see-more, .see-less {
-    align-self: flex-start;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 5px;
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--muted);
-    cursor: pointer;
-    padding: 2px 4px;
-  }
-  .see-more:hover, .see-less:hover { color: var(--text); }
-  .jump-dots {
-    display: none;
-    align-items: flex-end;
-    gap: 3px;
-    height: 7px;
-  }
-  .see-more.thinking .jump-dots { display: inline-flex; }
-  .jump-dots i {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--muted);
-    animation: jump 1.2s infinite ease-in-out;
-  }
-  .jump-dots i:nth-child(2) { animation-delay: 0.15s; }
-  .jump-dots i:nth-child(3) { animation-delay: 0.3s; }
-  @keyframes jump {
-    0%, 60%, 100% { transform: translateY(0); opacity: 0.6; }
-    30% { transform: translateY(-5px); opacity: 1; }
-  }
+/* ---------- tool calls ---------- */
+.tool-row {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 9px; /* no row gap: the details panel owns its spacing via margin */
+  font-size: 13px;
+  color: var(--muted);
+  padding: 6px 12px;
+  border-radius: 14px;
+  transition:
+    background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease,
+    opacity var(--dur-in) var(--ease), filter var(--dur-in) var(--ease),
+    transform var(--dur-in) var(--ease), display var(--dur-in) var(--ease) allow-discrete;
+}
+.tool-row.toggleable { cursor: pointer; }
+.tool-row.toggleable:hover { border-color: var(--accent-line); }
 
-  .compaction-divider {
-    align-self: center;
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .compaction-summary {
-    align-self: center;
-    width: 85%;
-    margin: 0;
-    padding: 8px 10px;
-    background: var(--surface-soft);
-    border-radius: 10px;
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--muted);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    max-height: 240px;
-    overflow-y: auto;
-  }
+/* running state = soft glow layers underneath + slow sheen, never a blink */
+.tool-row.running { background-image: var(--frost); border-color: var(--border); }
+.tool-row.failed {
+  border-color: var(--danger-line);
+  color: var(--danger);
+  background-color: color-mix(in srgb, var(--surface), var(--danger) 12%);
+}
+.tool-row::before, .tool-row::after {
+  content: "";
+  position: absolute;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1s ease;
+}
+.tool-row::before {
+  inset: -1px;
+  z-index: -1;
+  border: 1px solid transparent;
+  background: linear-gradient(135deg, var(--warn-tint), transparent 70%);
+}
+.tool-row::after {
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.3) 50%, transparent 70%) 130% 0 / 220% 100% no-repeat;
+  mix-blend-mode: soft-light;
+}
+.tool-row.running::before, .tool-row.running::after { opacity: 1; transition-duration: 0.9s; }
+.tool-row.running::before, .tool-row.settling::before { animation: ring-breathe 3s ease-in-out infinite; }
+.tool-row.running::after, .tool-row.settling::after { animation: sheen 2.6s linear infinite; }
+@starting-style { .tool-row.running::before, .tool-row.running::after { opacity: 0; } }
+@keyframes ring-breathe {
+  0%, 100% { border-color: color-mix(in srgb, var(--warn) 14%, transparent); box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; }
+  50% { border-color: var(--warn); box-shadow: 0 0 0 4px var(--warn-tint), 0 0 22px 2px var(--warn-tint); }
+}
+@keyframes sheen { to { background-position: -30% 0; } }
 
-  footer {
-    padding: 10px 16px 16px;
-    background: var(--bg);
+.tool-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+.tool-icon svg {
+  width: 13px;
+  height: 13px;
+  stroke: var(--muted);
+  transition: stroke 0.4s ease;
+}
+.tool-row.failed .tool-icon { background: var(--danger-tint); border-color: var(--danger-line); }
+.tool-row.failed .tool-icon svg { stroke: var(--danger); }
+
+.tool-text { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.tool-text::after { content: " ..."; opacity: 0; }
+.tool-row.running .tool-text::after { animation: dots-pulse 1.8s ease-in-out infinite; }
+.tool-row.settling:not(.running) .tool-text::after { animation: dots-out 0.7s ease forwards; }
+@keyframes dots-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+@keyframes dots-out { from { opacity: 0.6; } to { opacity: 0; } }
+
+/* completion flash + icon pop */
+.tool-row.just-done { animation: done-flash 1.3s var(--ease); }
+.tool-row.just-done .tool-icon { animation: icon-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes done-flash { 0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45), var(--glass-shadow-soft); } 100% { box-shadow: 0 0 0 12px rgba(34, 197, 94, 0), var(--glass-shadow-soft); } }
+
+/* details panel: the row owns 0 row-gap, the panel owns 15px margin
+   (9px flex gap + 6px old margin) so collapsing to 0 leaves no jump */
+.tool-row pre {
+  flex-basis: 100%;
+  display: none;
+  margin-top: 15px;
+  padding: 8px 10px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow-y: auto;
+  opacity: 0;
+  filter: blur(8px);
+  transform: translateY(2px);
+  cursor: auto;
+  transition: none; /* open/close is animated from js/chat.js (height + margin + fade) */
+}
+.tool-row.open pre { display: block; opacity: 1; filter: blur(0); transform: none; }
+
+/* rows beyond MAX_VISIBLE_TOOL_CALLS collapse away; "See more" reveals them */
+.tool-row.hidden {
+  display: none;
+  opacity: 0;
+  filter: blur(12px);
+  transform: translateY(4px) scale(0.99);
+  transition-duration: 0.25s, 0.25s, 0.25s, var(--dur-out), var(--dur-out), var(--dur-out), var(--dur-out);
+}
+
+/* ---------- files ---------- */
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px;
+  border-radius: 12px;
+  border-color: var(--glass-line);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 14px;
+  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s var(--ease), box-shadow 0.2s ease;
+}
+.file-chip:hover {
+  border-color: var(--accent-line);
+  background: var(--surface-strong);
+  transform: translateY(-1px);
+}
+.file-chip svg { flex: none; width: 17px; height: 17px; stroke: var(--accent); }
+.file-chip .file-meta { color: var(--muted); font-size: 12px; }
+.file-chip.outgoing { align-self: flex-end; }
+.files-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  transition: opacity var(--dur-in) var(--ease), filter var(--dur-in) var(--ease), transform var(--dur-in) var(--ease);
+}
+.files-group.right { align-self: flex-end; align-items: flex-end; }
+
+/* ---------- events ---------- */
+.event-row {
+  font-size: 12.5px;
+  color: var(--muted);
+  padding: 6px 13px;
+  border-radius: 999px;
+  transition: opacity var(--dur-in) var(--ease), filter var(--dur-in) var(--ease), transform var(--dur-in) var(--ease);
+}
+.event-row.error {
+  color: var(--danger);
+  border-color: var(--danger-line);
+  background-image: var(--frost), linear-gradient(135deg, var(--danger-tint), var(--surface));
+}
+
+/* ---------- see more / less: one stable pill, never changes size or position ---------- */
+#chat > .see-more {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  padding: 0;
+  gap: 0;
+}
+.see-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px 0 14px;
+  font: 500 13px var(--mono);
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 999px;
+  background-color: var(--surface-strong);
+  border-color: var(--glass-line);
+  transition: border-color 0.2s ease, transform 0.25s var(--ease), box-shadow 0.25s ease;
+}
+.see-btn:hover { border-color: var(--accent-line); transform: translateY(-1px); }
+.see-btn:active { transform: scale(0.96); }
+.see-label, .see-slot { display: grid; align-items: center; }
+.see-label > span, .see-slot > * { grid-area: 1 / 1; transition: opacity 0.3s ease, transform 0.4s var(--ease); }
+.see-label .l-less { opacity: 0; transform: translateY(6px); }
+.see-more.expanded .l-more { opacity: 0; transform: translateY(-6px); }
+.see-more.expanded .l-less { opacity: 1; transform: none; }
+.see-slot { width: 21px; justify-items: center; }
+.chev {
+  width: 13px;
+  height: 13px;
+  stroke: var(--muted);
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.see-more.expanded .chev { transform: rotate(180deg); }
+#chat .see-more .jump-dots { display: inline-flex; opacity: 0; margin: 0; }
+#chat .see-more.thinking .jump-dots { opacity: 1; }
+#chat .see-more.thinking .chev { opacity: 0; }
+.jump-dots {
+  align-items: flex-end;
+  gap: 3px;
+  height: 7px;
+  margin-left: 2px;
+}
+.jump-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: jump 1.2s infinite ease-in-out;
+}
+.jump-dots i:nth-child(2) { animation-delay: 0.15s; }
+.jump-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes jump {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.6; }
+  30% { transform: translateY(-5px); opacity: 1; }
+}
+
+/* ---------- compaction ---------- */
+.compaction-divider {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0.85;
+  transition: opacity var(--dur-in) var(--ease), filter var(--dur-in) var(--ease), transform var(--dur-in) var(--ease);
+}
+.compaction-summary {
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow-y: auto;
+  transition: opacity var(--dur-in) var(--ease), filter var(--dur-in) var(--ease), transform var(--dur-in) var(--ease);
+}
+
+/* ---------- shared entrances & exits ---------- */
+@starting-style {
+  .bubble, .tool-row:not(.hidden), .event-row, .queued-tag,
+  .compaction-divider, .compaction-summary, .see-more, .files-group,
+  .inline-status, #banner.visible {
+    opacity: 0;
+    filter: blur(12px);
+    transform: translateY(10px) scale(0.985);
   }
-  .composer {
-    max-width: 720px;
-    margin: 0 auto;
-    display: flex;
-    align-items: flex-end;
-    gap: 8px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 22px;
-    padding: 8px 10px;
+  .bubble.user { transform: translate(18px, 14px) scale(0.9); }
+  .bubble.model { transform: translate(-12px, 14px) scale(0.94); }
+}
+.leaving {
+  opacity: 0 !important;
+  filter: blur(12px) !important;
+  transform: translateY(4px) scale(0.99) !important;
+  pointer-events: none !important;
+}
+
+/* ---------- scrollbars ---------- */
+#chat::-webkit-scrollbar,
+.tool-row pre::-webkit-scrollbar,
+.compaction-summary::-webkit-scrollbar,
+.markdown pre::-webkit-scrollbar,
+.markdown table::-webkit-scrollbar { width: 10px; height: 10px; }
+#chat::-webkit-scrollbar-thumb,
+.tool-row pre::-webkit-scrollbar-thumb,
+.compaction-summary::-webkit-scrollbar-thumb,
+.markdown pre::-webkit-scrollbar-thumb,
+.markdown table::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+#chat::-webkit-scrollbar-thumb:hover,
+.tool-row pre::-webkit-scrollbar-thumb:hover,
+.compaction-summary::-webkit-scrollbar-thumb:hover { background-color: var(--muted); background-clip: content-box; }
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .status-dot.working, .status-dot.working::after, .jump-dots i,
+  .tool-row.running, .tool-row::before, .tool-row::after,
+  .tool-row.running .tool-text::after, .tool-text::after, .tool-row.just-done {
+    animation: none !important;
   }
-  .composer:focus-within { border-color: var(--accent); }
-  .icon-btn {
-    flex: none;
-    width: 38px; height: 38px;
-    border: none;
-    border-radius: 50%;
-    background: transparent;
-    color: var(--muted);
-    cursor: pointer;
-    display: grid;
-    place-items: center;
+  .tool-row::before, .tool-row::after, .tool-text::after { transition: none !important; }
+  .bubble, .tool-row, .event-row, .queued-tag, .compaction-divider,
+  .compaction-summary, .see-more, .files-group, .inline-status, #banner {
+    transition: none !important;
   }
-  .icon-btn:hover { background: var(--surface-soft); color: var(--text); }
-  .icon-btn svg { width: 19px; height: 19px; }
-  #input {
-    flex: 1;
-    border: none;
-    outline: none;
-    resize: none;
-    background: transparent;
-    color: var(--text);
-    font: inherit;
-    font-size: 15px;
-    line-height: 1.45;
-    max-height: 160px;
-    padding: 8px 0;
-  }
-  #send-btn {
-    flex: none;
-    width: 38px; height: 38px;
-    border: none;
-    border-radius: 50%;
-    background: var(--accent);
-    color: var(--on-accent);
-    cursor: pointer;
-    display: grid;
-    place-items: center;
-    transition: opacity 0.2s;
-  }
-  #send-btn:disabled { opacity: 0.35; cursor: default; }
-  #send-btn:not(:disabled):hover { filter: brightness(1.08); }
-  #send-btn svg { width: 17px; height: 17px; }
-  #file-input { display: none; }
+}
+
+</style>
+<style>
+/* ==== css/composer.css ==== */
+/* ===== Syna — composer: input bar, buttons, busy halo ================================ */
+
+footer {
+  padding: 10px 12px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  position: relative;
+  z-index: 1;
+}
+
+.composer {
+  max-width: 880px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background-color: var(--surface);
+  background-image: var(--frost);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  border-radius: 24px;
+  padding: 8px 10px;
+  box-shadow: var(--glass-shadow);
+  position: relative;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.composer:focus-within {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 4px var(--accent-soft), var(--glass-shadow);
+}
+
+/* spinning halo while the model is busy */
+@property --ang { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+.composer::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.5px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  background: conic-gradient(from var(--ang), transparent 0 60%, rgb(var(--glow) / 0.95) 82%, transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: ang-spin 3.2s linear infinite;
+}
+.composer.busy::before { opacity: 1; }
+@keyframes ang-spin { to { --ang: 360deg; } }
+
+.icon-btn {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+.icon-btn:hover { background: var(--surface-soft); color: var(--text); }
+.icon-btn svg { width: 19px; height: 19px; }
+
+#input {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  max-height: 160px;
+  padding: 8px 0;
+  transition: height 0.22s var(--ease);
+}
+#input::placeholder { color: var(--muted); opacity: 0.75; }
+
+#send-btn {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6366f1, var(--accent));
+  color: var(--on-accent);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 18px -8px rgba(79, 70, 229, 0.65);
+  transition: opacity 0.2s ease, transform 0.15s var(--ease), box-shadow 0.2s ease, filter 0.2s ease;
+}
+#send-btn:disabled { opacity: 0.35; cursor: default; box-shadow: none; }
+#send-btn:not(:disabled):hover { filter: brightness(1.08); transform: translateY(-1px); }
+#send-btn:not(:disabled):active { transform: translateY(0) scale(0.96); }
+#send-btn svg { width: 17px; height: 17px; }
+#send-btn.pop svg { animation: icon-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@media (prefers-color-scheme: dark) {
+  #send-btn { background: linear-gradient(135deg, #a5b4fc, #818cf8); box-shadow: 0 8px 18px -8px rgba(129, 140, 248, 0.4); }
+}
+
+#file-input { display: none; }
+
+/* sound toggle: two stacked icons crossfade on .muted */
+#sound-btn { margin-left: auto; width: 34px; height: 34px; }
+#sound-btn svg { grid-area: 1 / 1; width: 18px; height: 18px; transition: opacity 0.3s ease, transform 0.45s var(--ease); }
+#sound-btn:not(.muted) .s-off, #sound-btn.muted .s-on { opacity: 0; transform: scale(0.6) rotate(-20deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .composer::before, #send-btn.pop svg { animation: none !important; }
+}
+
 </style>
 </head>
-<body>
+<body data-ambient="idle">
+
+<div class="ambient" aria-hidden="true">
+  <div class="field"></div>
+  <div class="grain"></div>
+</div>
 
 <header>
-  <span class="brand">Syna</span>
+  <span class="brand"><span class="brand-dot"></span>Syna</span>
+  <button id="sound-btn" class="icon-btn" title="Toggle sound" aria-label="Toggle sound"></button>
 </header>
 <div id="banner">Cannot reach the Syna server. Retrying... (start it with "uv run syna-server" and open http://127.0.0.1:8000)</div>
 
@@ -382,7 +872,359 @@
 
 <script src="vendor/markdown-it.min.js"></script>
 <script>
+/* ==== js/ambient.js ==== */
 "use strict";
+
+// Maps app activity onto the background light field:
+//   idle     -> waiting for the user
+//   thinking -> user sent a message, awaiting the model
+//   tool     -> waiting for a tool call to complete
+// Reads the global `busy` flag owned by js/chat.js.
+let ambientState = "";
+function updateAmbient() {
+  const toolActive = document.querySelector(".tool-row.running") !== null;
+  const next = !busy ? "idle" : toolActive ? "tool" : "thinking";
+  if (next === ambientState) return;
+  ambientState = next;
+  document.body.setAttribute("data-ambient", next);
+}
+
+// Glow: a bright core with a corona. The corona is ~22 stacked translucent shapes whose
+// outlines are r(theta) = R * (1 + spread * f^1.5 * (1 + amp * d(theta))), where d is a
+// smoothed sum of random sine waves. Rendered small, upscaled and blurred = heavy diffusion.
+(function () {
+  const root = document.querySelector(".ambient");
+  const field = root.querySelector(".field");
+  const cv = document.createElement("canvas");
+  cv.className = "glow";
+  field.appendChild(cv);
+  const c = cv.getContext("2d");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dark = matchMedia("(prefers-color-scheme: dark)");
+  const TAU = Math.PI * 2, N = 180, L = 22;
+  const PAL = {
+    idle: [[167, 139, 250], [240, 160, 192], [124, 196, 255]],      // violet / rose / sky, merged
+    thinking: [[255, 168, 96], [255, 207, 122], [255, 138, 122]],   // soft orange dominant
+    tool: [[91, 155, 255], [127, 208, 255], [122, 124, 255]]        // mostly blue
+  };
+  const MODE = { idle: { gain: 1, speed: 1, amp: 0.4, spread: 1 },
+    thinking: { gain: 2, speed: 2.4, amp: 0.8, spread: 1.15 },
+    tool: { gain: 1.3, speed: 1.5, amp: 0.55, spread: 1.02 } };
+  const col = PAL.idle.map((x) => x.slice());
+  const W = { idle: 1, thinking: 0, tool: 0 };
+  const cur = { gain: 1, speed: 1, amp: 0.4, spread: 1 };
+  // random harmonics: integer k so the outline closes; low k dominate (smooth), each drifts at its own pace
+  const SIN = [1, 2, 3, 5, 7, 10].map((k, i) => ({ k, i, a: 1 / k ** 0.7, w: (0.12 + Math.random() * 0.3) * (Math.random() < 0.5 ? -1 : 1), p: Math.random() * TAU }));
+  const norm = SIN.reduce((n, x) => n + x.a, 0);
+  const d = new Float32Array(N);
+  const g = (x, w) => Math.exp(-((x / w) ** 2));
+  let ks = 0, kv = 0, t = 0, last = performance.now(), pulse = 0;
+
+  function resize() {
+    cv.width = Math.max(200, Math.round(innerWidth * 0.26));
+    cv.height = Math.max(200, Math.round(innerHeight * 0.26));
+    if (reduce) draw(0.016);
+  }
+  addEventListener("resize", resize);
+
+  function ring(s) {
+    const r = document.createElement("div");
+    r.className = "pulse-ring";
+    root.appendChild(r);
+    r.animate([{ transform: "scale(0.35)", opacity: 0.55 * s }, { transform: "scale(1.9)", opacity: 0 }],
+      { duration: 1900, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }).onfinish = () => r.remove();
+  }
+  window.ambientKick = reduce ? () => {} : (k) => { kv += 4 * k; ring(k); };
+
+  function draw(dt) {
+    t += dt;
+    const st = document.body.dataset.ambient || "idle";
+    for (const k in W) W[k] += ((k === st ? 1 : 0) - W[k]) * Math.min(1, dt * 1.8);
+    const m = MODE[st], ease = 1 - Math.exp(-dt * 1.2);
+    for (const k in cur) cur[k] += (m[k] - cur[k]) * ease;
+    PAL[st].forEach((tc, i) => { for (let j = 0; j < 3; j++) col[i][j] += (tc[j] - col[i][j]) * ease; });
+    // breathing / state pulse
+    const ph = (t % 1.15) / 1.15;
+    const idle = 0.5 + 0.5 * Math.sin(t * TAU / 8);
+    const think = (0.5 + 0.5 * Math.sin(t * TAU / 2.4)) * (0.75 + 0.25 * Math.sin(t * TAU / 5.3));
+    const beat = Math.min(1, g(Math.min(ph, 1 - ph), 0.08) + 0.65 * g(ph - 0.22, 0.07));
+    pulse = W.idle * idle + W.thinking * think + W.tool * beat;
+    kv += (-90 * ks - 9 * kv) * dt; ks += kv * dt;
+    // one corona per colour. Each is the same random-sine outline, but time-shifted (tau) and
+    // radially scaled (scl) -> radial chromatic aberration; additive blend in dark mode
+    for (const h of SIN) h.p += h.w * cur.speed * dt;
+    const W_ = cv.width, H_ = cv.height, cx = W_ / 2, cy = H_ / 2;
+    const R = Math.min(W_, H_) * 0.2;
+    const sp = cur.spread * (1 + 0.13 * pulse + 0.2 * ks);
+    const isDark = dark.matches;
+    const alpha = (isDark ? 0.05 : 0.09) * (0.85 + 0.3 * pulse + 0.4 * ks);
+    const rgb = (x) => "rgb(" + (x[0] | 0) + "," + (x[1] | 0) + "," + (x[2] | 0) + ")";
+    c.clearRect(0, 0, W_, H_);
+    c.globalCompositeOperation = isDark ? "lighter" : "source-over";
+    c.globalAlpha = alpha;
+    for (let i = 0; i < 3; i++) {
+      const tau = (i - 1) * 1.1, scl = 1 + (i - 1) * 0.12;
+      d.fill(0);
+      for (const h of SIN) {
+        const amp = (h.a / norm) * (1 + (cur.gain - 1) * (h.i / 5)) * (1 + 0.4 * Math.sin(t * 0.2 + h.i * 1.7)) * 1.6;
+        const phs = h.p - h.w * cur.speed * tau;
+        for (let n = 0; n < N; n++) d[n] += amp * Math.sin(h.k * (n / N) * TAU + phs);
+      }
+      c.fillStyle = rgb(col[i]);
+      for (let j = 1; j <= L; j++) {
+        const f = j / L, ff = f ** 1.5;
+        c.beginPath();
+        for (let n = 0; n <= N; n++) {
+          const a = (n % N) / N * TAU, r = R * (1 + sp * scl * ff * (1 + cur.amp * d[n % N]));
+          const x = cx + r * Math.cos(a), y = cy + r * Math.sin(a);
+          n ? c.lineTo(x, y) : c.moveTo(x, y);
+        }
+        c.fill();
+      }
+    }
+    c.globalCompositeOperation = "source-over";
+    c.globalAlpha = 1;
+    // hot rim hugging the core
+    const hot = col[0].map((v) => v + (255 - v) * 0.6);
+    const rim = c.createRadialGradient(cx, cy, R * 0.96, cx, cy, R * 1.3);
+    rim.addColorStop(0, "rgba(" + hot.map((v) => v | 0).join(",") + "," + (0.5 + 0.2 * pulse) + ")");
+    rim.addColorStop(0.3, "rgba(" + hot.map((v) => v | 0).join(",") + ",0.16)");
+    rim.addColorStop(1, "rgba(" + hot.map((v) => v | 0).join(",") + ",0)");
+    c.fillStyle = rim; c.beginPath(); c.arc(cx, cy, R * 1.3, 0, TAU); c.fill();
+    // the bright core: a hot near-white heart tinted with the state hue, breathing with
+    // the same pulse as the corona; creamy falloff melts it into the surrounding light
+    const coreA = (isDark ? 0.95 : 0.85) * (0.86 + 0.14 * pulse);
+    const coreHi = col[0].map((v) => v + (255 - v) * 0.85);
+    const coreLo = col[0].map((v) => v + (255 - v) * 0.4);
+    const coreG = c.createRadialGradient(cx, cy, 0, cx, cy, R);
+    coreG.addColorStop(0, "rgba(" + coreHi.map((v) => v | 0).join(",") + "," + coreA + ")");
+    coreG.addColorStop(0.4, "rgba(" + coreHi.map((v) => v | 0).join(",") + "," + coreA * 0.62 + ")");
+    coreG.addColorStop(0.75, "rgba(" + coreLo.map((v) => v | 0).join(",") + "," + coreA * 0.22 + ")");
+    coreG.addColorStop(1, "rgba(" + col[0].map((v) => v | 0).join(",") + ",0)");
+    c.fillStyle = coreG; c.beginPath(); c.arc(cx, cy, R, 0, TAU); c.fill();
+  }
+  function frame(now) {
+    const dt = Math.max(0.001, Math.min((now - last) / 1000, 0.05));
+    last = now; draw(dt);
+    requestAnimationFrame(frame);
+  }
+  resize();
+  if (!reduce) requestAnimationFrame(frame);
+})();
+
+</script>
+<script>
+/* ==== js/sfx.js ==== */
+"use strict";
+
+// Synthesized UI sounds: every note is a small chord of detuned partials plus a
+// filtered noise "tick". Loudness drifts smoothly between plays, sounds in the
+// same category crossfade into each other, and the master level ramps (never cuts).
+const Sfx = (() => {
+  // Volume tiers (g): thinking < tool < user actions < sent message.
+  // Pitches stay on root / fifth / octave only, so nothing forms a tune.
+  const S = {
+    // user actions: middle
+    click:   { n: [[0, 0], [7, 0.012]], g: 0.13, d: 0.12, f: 3400, tr: 0.12, vary: 1, cat: "ui", gap: 0.03 },
+    hover:   { n: [[12, 0]], g: 0.02, d: 0.05, f: 2600, tr: 0.03, cat: "hov", gap: 0.06 },
+    open:    { n: [[0, 0], [7, 0.05]], g: 0.12, d: 0.24, f: 3200, tr: 0.08, cat: "ui", gap: 0.1 },
+    close:   { n: [[7, 0], [0, 0.05]], g: 0.11, d: 0.22, f: 2800, tr: 0.06, cat: "ui", gap: 0.1 },
+    stop:    { n: [[7, 0], [0, 0.05]], g: 0.13, d: 0.2, f: 2800, tr: 0.08, cat: "ui", gap: 0.1 },
+    // messages: sent is the loudest sound in the app
+    send:    { n: [[0, 0], [7, 0.04], [12, 0.08]], g: 0.3, d: 0.3, f: 3600, tr: 0.14, cat: "msg", gap: 0.1 },
+    receive: { n: [[12, 0], [7, 0.07]], g: 0.15, d: 0.38, f: 2800, tr: 0.04, cat: "msg", gap: 0.1 },
+    // tool events
+    tick:    { n: [[7, 0]], g: 0.06, d: 0.08, f: 2800, tr: 0.07, vary: 1, cat: "tool", gap: 0.03 },
+    done:    { n: [[0, 0], [7, 0], [12, 0.05]], g: 0.09, d: 0.45, f: 2800, tr: 0.03, cat: "tool", gap: 0.1 },
+    error:   { n: [[-5, 0], [1, 0.06]], g: 0.12, d: 0.4, f: 1800, tr: 0.03, cat: "tool", gap: 0.1 },
+    // activity layer (no category: notes overlap and ring out naturally)
+    think1:  { n: [[0, 0], [7, 0]], g: 0.03, d: 0.5, f: 2400, tr: 0.03, gap: 0 },
+    think3:  { n: [[0, 0]], g: 0.03, d: 0.3, f: 2800, tr: 0.07, vary: 1, gap: 0 },
+    beat:    { n: [[0, 0], [7, 0.17]], g: 0.055, d: 0.24, f: 2600, tr: 0.09, gap: 0 }
+  };
+  const ROOTS = { idle: 293.66, thinking: 329.63, tool: 261.63 };
+  const LEVEL = 0.55;
+  let ctx = null, master, bus, noise, level = 0.8, on = true;
+  const last = {}, active = {}, acts = {};
+  let cur = "", timer = null;
+  try { on = localStorage.getItem("syna-sound") !== "off"; } catch (e) {}
+
+  function unlock() {
+    if (!ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      ctx = new AC();
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -12; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.2;
+      master = ctx.createGain(); master.gain.value = on ? LEVEL : 0;
+      bus = ctx.createGain();
+      bus.connect(comp); comp.connect(master); master.connect(ctx.destination);
+      // soft room: filtered feedback delay
+      const dl = ctx.createDelay(); dl.delayTime.value = 0.11;
+      const fb = ctx.createGain(); fb.gain.value = 0.28;
+      const wet = ctx.createGain(); wet.gain.value = 0.22;
+      const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 2400;
+      bus.connect(dl); dl.connect(lp); lp.connect(fb); fb.connect(dl); lp.connect(wet); wet.connect(comp);
+      noise = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.06), ctx.sampleRate);
+      const d = noise.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      for (const k of ["thinking", "tool"]) { // per-state activity buses, silent until needed
+        acts[k] = ctx.createGain(); acts[k].gain.value = 0; acts[k].connect(bus);
+      }
+      cur = ""; sync();
+    }
+    if (ctx.state === "suspended") ctx.resume();
+  }
+
+  function play(name, dest) {
+    const def = S[name];
+    if (!def || !ctx || !on || ctx.state !== "running") return;
+    const now = ctx.currentTime;
+    if (now - (last[name] || 0) < def.gap) return;
+    last[name] = now;
+    level += (0.55 + 0.45 * Math.random() - level) * 0.4; // smooth loudness drift
+    const root = ROOTS[document.body.dataset.ambient || "idle"];
+    const shift = def.vary ? [0, 7, 12][(Math.random() * 3) | 0] : 0;
+    const peak = def.g * level;
+
+    const pan = ctx.createStereoPanner(); pan.pan.value = (Math.random() - 0.5) * 0.5; pan.connect(dest || bus);
+    const env = ctx.createGain(); env.connect(pan);
+    const prev = def.cat && active[def.cat];
+    if (prev) { // crossfade the previous sound of this category out
+      prev.gain.setValueAtTime(prev.gain.value, now);
+      prev.gain.setTargetAtTime(0, now, 0.03);
+    }
+    if (def.cat) active[def.cat] = env;
+    env.gain.setValueAtTime(0, now);
+    env.gain.linearRampToValueAtTime(1, now + 0.015);
+    const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = def.f; lp.Q.value = 0.5; lp.connect(env);
+
+    let end = 0;
+    for (const [semi, off] of def.n) {
+      const f0 = root * 2 ** ((semi + shift) / 12), t = now + 0.004 + off;
+      end = Math.max(end, off + def.d);
+      for (const [m, type, a] of [[1, "sine", 1], [2, "triangle", 0.28], [3.01, "sine", 0.1]]) {
+        const o = ctx.createOscillator(); o.type = type; o.frequency.value = f0 * m;
+        o.detune.value = (Math.random() - 0.5) * 10;
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(peak * a, t + 0.006);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + def.d);
+        o.connect(g); g.connect(lp); o.start(t); o.stop(t + def.d + 0.05);
+      }
+    }
+    if (def.tr) { // soft filtered noise transient = the "click"
+      const src = ctx.createBufferSource(); src.buffer = noise;
+      const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 3500 + Math.random() * 2000; bp.Q.value = 1.2;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, now);
+      g.gain.linearRampToValueAtTime(def.tr * level, now + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
+      src.connect(bp); bp.connect(g); g.connect(env); src.start(now + 0.004);
+    }
+    setTimeout(() => { pan.disconnect(); if (active[def.cat] === env) delete active[def.cat]; }, (end + 1) * 1000);
+  }
+
+  // Activity layer: clicks/polytones only while the model is working. Each state
+  // has its own bus; switching crossfades them, and idle fades everything to silence.
+  function sync() {
+    if (!ctx) return;
+    const st = document.body.dataset.ambient || "idle";
+    if (st === cur) return;
+    cur = st;
+    for (const k in acts) acts[k].gain.setTargetAtTime(k === st ? 1 : 0, ctx.currentTime, k === st ? 0.3 : 0.5);
+    clearTimeout(timer);
+    if (st !== "idle") loop();
+  }
+  function loop() {
+    if (!on || !ctx || cur === "idle") return;
+    if (ctx.state !== "running") { timer = setTimeout(loop, 500); return; }
+    if (cur === "tool") {
+      play("beat", acts.tool);
+      timer = setTimeout(loop, 1150);
+    } else {
+      play(["think1", "think3", "think3"][(Math.random() * 3) | 0], acts.thinking);
+      timer = setTimeout(loop, 450 + Math.random() * 900);
+    }
+  }
+  new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ["data-ambient"] });
+
+  function setOn(v) {
+    on = v;
+    try { localStorage.setItem("syna-sound", v ? "on" : "off"); } catch (e) {}
+    unlock();
+    if (ctx) master.gain.setTargetAtTime(v ? LEVEL : 0, ctx.currentTime, 0.12);
+    cur = ""; sync();
+    if (v && ctx) ctx.resume().then(() => play("click"));
+  }
+  return { unlock, play, setOn, get on() { return on; } };
+})();
+
+// Sound toggle button: stacks a muted/unmuted icon pair and flips between them.
+(function () {
+  const btn = document.getElementById("sound-btn");
+  const paint = () => btn.classList.toggle("muted", !Sfx.on);
+  btn.innerHTML =
+    '<svg class="s-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>' +
+    '<svg class="s-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/></svg>';
+  paint();
+  btn.addEventListener("click", () => { Sfx.setOn(!Sfx.on); paint(); });
+  ["pointerdown", "keydown"].forEach((ev) => addEventListener(ev, () => Sfx.unlock(), { capture: true }));
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#send-btn, #sound-btn, .see-btn, .tool-row")) return;
+    if (e.target.closest("button, a.file-chip")) Sfx.play("click");
+  });
+  let hovered = null;
+  document.addEventListener("pointerover", (e) => {
+    if (e.pointerType !== "mouse") return;
+    const t = e.target.closest(".see-btn, .icon-btn, .copy-btn, #send-btn:not(:disabled), .tool-row.toggleable, .file-chip");
+    if (t && t !== hovered) Sfx.play("hover");
+    hovered = t;
+  });
+})();
+
+</script>
+<script>
+/* ==== js/markdown.js ==== */
+"use strict";
+
+// Markdown rendering for model messages. Delegated to the vendored markdown-it
+// library (MIT, see assets/vendor/markdown-it.LICENSE.txt). It runs with
+// html: false, so raw HTML in model output is escaped, keeping the renderer
+// XSS-safe. When the vendor file is missing, a minimal escaped-text fallback
+// keeps messages readable.
+
+const md = typeof window.markdownit === "function"
+  ? window.markdownit({ html: false, breaks: true, linkify: false })
+  : null;
+
+function renderMarkdown(source) {
+  if (!md) {
+    const text = String(source)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    return "<p>" + text.replace(/\n/g, "<br>") + "</p>";
+  }
+  return md.render(String(source));
+}
+
+function applyLinkPolicy(container) {
+  container.querySelectorAll("a[href]").forEach((link) => {
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+  });
+}
+
+</script>
+<script>
+/* ==== js/chat.js ==== */
+"use strict";
+
+// Chat client: WebSocket transport, conversation rendering (bubbles, tool rows,
+// file chips, events, compaction) and the composer. Visual state classes are
+// styled in css/chat.css; all entrance/exit motion runs through the WAAPI
+// helpers below so nothing on the page ever snaps.
 
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
@@ -390,7 +1232,7 @@ const sendBtn = document.getElementById("send-btn");
 const attachBtn = document.getElementById("attach-btn");
 const fileInput = document.getElementById("file-input");
 const statusRow = document.createElement("div");
-statusRow.className = "inline-status";
+statusRow.className = "inline-status glass";
 statusRow.innerHTML = '<span class="status-dot"></span><span class="status-label"></span>';
 const statusDot = statusRow.querySelector(".status-dot");
 const statusLabel = statusRow.querySelector(".status-label");
@@ -417,44 +1259,29 @@ let ws = null;
 let reconnectDelay = 1000;
 let busy = false;
 
-// markdown-renderer-start
-// Rendering is delegated to the vendored markdown-it library (MIT, see
-// assets/vendor/markdown-it.LICENSE.txt). It runs with html: false, so raw
-// HTML in model output is escaped, keeping the renderer XSS-safe.
-const md = typeof window.markdownit === "function"
-  ? window.markdownit({ html: false, breaks: true, linkify: false })
-  : null;
+const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
+const EASE_IN = "cubic-bezier(0.65, 0, 0.35, 1)";
 
-function renderMarkdown(source) {
-  if (!md) {
-    const text = String(source)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-    return "<p>" + text.replace(/\n/g, "<br>") + "</p>";
-  }
-  return md.render(String(source));
-}
-
-function applyLinkPolicy(container) {
-  container.querySelectorAll("a[href]").forEach((link) => {
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-  });
-}
-// markdown-renderer-end
+// ---------- icons ----------
+// All line icons share one attribute block; stroke color comes from CSS.
+// Icons that get stacked/crossfaded inside a button take a class (cls).
+const I = (inner, cls) =>
+  '<svg ' + (cls ? 'class="' + cls + '" ' : '') + 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + inner + "</svg>";
 
 const ICONS = {
-  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>',
+  send: I('<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/>'),
   stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
-  clip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l8.57-8.57a4 4 0 1 1 5.66 5.66l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
-  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
-  terminal: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
-  search: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
-  pencil: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>',
-  eye: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
-  share: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>',
-  warn: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+  clip: I('<path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l8.57-8.57a4 4 0 1 1 5.66 5.66l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'),
+  file: I('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
+  terminal: I('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
+  search: I('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'),
+  pencil: I('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>'),
+  eye: I('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>'),
+  share: I('<path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/>'),
+  warn: I('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
+  copy: I('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', "i-copy"),
+  check: I('<path d="M20 6 9 17l-5-5"/>', "i-check")
 };
 
 const TOOL_META = {
@@ -467,22 +1294,7 @@ const TOOL_META = {
 
 const DECODE_ERROR_PREFIX = "A tool call could not be decoded as JSON";
 
-attachBtn.innerHTML = ICONS.clip;
-setSendState();
-input.focus();
-
-function setSendState() {
-  if (busy) {
-    sendBtn.innerHTML = ICONS.stop;
-    sendBtn.title = "Stop";
-    sendBtn.disabled = false;
-  } else {
-    sendBtn.innerHTML = ICONS.send;
-    sendBtn.title = "Send";
-    sendBtn.disabled = !input.value.trim();
-  }
-}
-
+// ---------- small helpers ----------
 function formatSize(bytes) {
   if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
   if (bytes >= 1024) return (bytes / 1024).toFixed(1) + " KB";
@@ -514,9 +1326,17 @@ function append(element) {
   const stick = isAtBottom();
   if (statusRow.parentNode === chat) chat.insertBefore(element, statusRow);
   else chat.appendChild(element);
-  if (stick) scrollToBottom();
+  growIn(element);
+  if (stick) followBottom(700);
 }
 
+// Cancels a stored WAAPI animation (rows, panels and the status pill keep
+// their running animation on el._anim).
+function cancelAnim(host) {
+  if (host._anim) { host._anim.onfinish = null; host._anim.cancel(); host._anim = null; }
+}
+
+// ---------- bubbles ----------
 function addBubble(content, side, queued) {
   const bubble = document.createElement("div");
   bubble.className = "bubble " + side;
@@ -528,6 +1348,7 @@ function addBubble(content, side, queued) {
   } else {
     bubble.textContent = content;
   }
+  if (side === "model") addCopyButton(bubble, content);
   append(bubble);
   if (queued) {
     const tag = document.createElement("div");
@@ -537,6 +1358,44 @@ function addBubble(content, side, queued) {
   }
 }
 
+// ---------- copy-markdown button (top right of every model message) ----------
+// Copies the model's raw markdown source — never the rendered HTML.
+const COPY_FEEDBACK_MS = 1400;
+
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  // Fallback for non-secure contexts (e.g. plain http over the network)
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy") ? resolve() : reject(new Error("copy rejected")); }
+    catch (err) { reject(err); }
+    finally { ta.remove(); }
+  });
+}
+
+function addCopyButton(bubble, source) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "copy-btn glass";
+  btn.title = "Copy markdown";
+  btn.setAttribute("aria-label", "Copy message as markdown");
+  btn.innerHTML = ICONS.copy + ICONS.check;
+  btn.addEventListener("click", () => {
+    copyText(source).then(() => {
+      btn.classList.add("copied");
+      clearTimeout(btn._t);
+      btn._t = setTimeout(() => btn.classList.remove("copied"), COPY_FEEDBACK_MS);
+    }).catch(() => {});
+  });
+  bubble.appendChild(btn);
+}
+
+// ---------- tool rows ----------
 function toolEventText(event) {
   const meta = TOOL_META[event.name];
   if (!meta) return truncateArg(event.signature);
@@ -566,49 +1425,145 @@ function updateToolRunThinking() {
   }
 }
 
+const CHEV = '<svg class="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>';
+
 function ensureMoreRow(run) {
   if (!run.moreRow) {
     const row = document.createElement("div");
     row.className = "see-more";
     row.innerHTML =
-      '<span class="jump-dots"><i></i><i></i><i></i></span>' +
-      "<span>See more</span>";
-    row.addEventListener("click", () => expandToolRun(run));
+      '<button type="button" class="see-btn glass"><span class="see-label"><span class="l-more">See more</span>' +
+      '<span class="l-less">See less</span></span><span class="see-slot">' + CHEV +
+      '<span class="jump-dots"><i></i><i></i><i></i></span></span></button>';
+    row.querySelector("button").addEventListener("click", () =>
+      run.expanded ? collapseToolRun(run) : expandToolRun(run));
     run.moreRow = row;
   }
   return run.moreRow;
 }
 
+// Rows animate height + margin + padding together, so everything below
+// glides instead of snapping; the toggle itself never moves or resizes.
+const rowFrame = (h, m, p, b, o, f, t) => ({
+  height: h + "px", marginTop: m + "px", paddingTop: p + "px", paddingBottom: p + "px",
+  borderTopWidth: b + "px", borderBottomWidth: b + "px", opacity: o, filter: f, transform: t
+});
+const ROW_OUT = "translateY(-6px) scale(0.985)";
+
+function revealRow(row, delay) {
+  cancelAnim(row);
+  row.style.transition = "none"; row.style.overflow = "hidden";
+  row.classList.remove("hidden");
+  const h = row.getBoundingClientRect().height;
+  const anim = row._anim = row.animate(
+    [rowFrame(0, -10, 0, 0, 0, "blur(8px)", ROW_OUT), rowFrame(h, 0, 6, 1, 1, "blur(0px)", "none")],
+    { duration: 560, delay, easing: EASE_OUT, fill: "backwards" });
+  anim.onfinish = () => { row.style.transition = ""; row.style.overflow = ""; row._anim = null; };
+}
+
+function concealRow(row, delay) {
+  if (row.classList.contains("hidden")) return;
+  cancelAnim(row);
+  row.style.transition = "none"; row.style.overflow = "hidden";
+  const h = row.getBoundingClientRect().height;
+  const anim = row._anim = row.animate(
+    [rowFrame(h, 0, 6, 1, 1, "blur(0px)", "none"), rowFrame(0, -10, 0, 0, 0, "blur(8px)", ROW_OUT)],
+    { duration: 380, delay, easing: EASE_IN, fill: "forwards" });
+  anim.onfinish = () => {
+    row.classList.add("hidden");
+    row.style.transition = ""; row.style.overflow = "";
+    anim.cancel(); row._anim = null;
+  };
+}
+
+let followUntil = 0, following = false;
+function followBottom(ms) {
+  followUntil = Math.max(followUntil, performance.now() + ms);
+  if (following) return;
+  following = true;
+  (function step() {
+    scrollToBottom();
+    if (performance.now() < followUntil) requestAnimationFrame(step); else following = false;
+  })();
+}
+
+const BOX_ZERO = { height: "0px", paddingTop: "0px", paddingBottom: "0px", borderTopWidth: "0px", borderBottomWidth: "0px" };
+const boxOf = (el, cs) => ({ height: el.getBoundingClientRect().height + "px", paddingTop: cs.paddingTop,
+  paddingBottom: cs.paddingBottom, borderTopWidth: cs.borderTopWidth, borderBottomWidth: cs.borderBottomWidth });
+
+// New elements grow from zero height so nothing around them snaps.
+function growIn(el, delay) {
+  if (REDUCE || !el.isConnected || !el.getBoundingClientRect().height) return;
+  const cs = getComputedStyle(el);
+  const gap = parseFloat(getComputedStyle(chat).rowGap) || 0;
+  el.style.overflow = "hidden";
+  const a = el.animate(
+    [{ ...BOX_ZERO, marginTop: -gap + "px" }, { ...boxOf(el, cs), marginTop: cs.marginTop }],
+    { duration: 520, delay: delay || 0, easing: EASE_OUT, fill: "backwards" });
+  a.onfinish = () => { el.style.overflow = ""; };
+}
+
+// Tool-call details: the output panel animates height + margin + fade, so the
+// row (and everything below it) resizes continuously.
+function toggleOpen(row) {
+  const pre = row.querySelector("pre");
+  if (!pre || REDUCE) { Sfx.play(row.classList.contains("open") ? "close" : "open"); row.classList.toggle("open"); return; }
+  cancelAnim(pre);
+  const opening = !row.classList.contains("open");
+  Sfx.play(opening ? "open" : "close");
+  const gap = parseFloat(getComputedStyle(row).rowGap) || 0;
+  if (opening) row.classList.add("open");
+  pre.style.overflow = "hidden";
+  const cs = getComputedStyle(pre);
+  const shown = { ...boxOf(pre, cs), marginTop: cs.marginTop, opacity: 1, filter: "blur(0px)", transform: "none" };
+  const hidden = { ...BOX_ZERO, marginTop: -gap + "px", opacity: 0, filter: "blur(8px)", transform: "translateY(3px)" };
+  const anim = pre._anim = pre.animate(opening ? [hidden, shown] : [shown, hidden],
+    { duration: opening ? 520 : 380, easing: opening ? EASE_OUT : EASE_IN, fill: opening ? "backwards" : "forwards" });
+  anim.onfinish = () => {
+    if (!opening) row.classList.remove("open");
+    pre.style.overflow = ""; anim.cancel(); pre._anim = null;
+  };
+  const stick = isAtBottom();
+  if (stick) followBottom(opening ? 560 : 420);
+}
+
+// textarea grows/shrinks with a transition (height can't animate from auto)
+function fitInput() {
+  const prev = input.offsetHeight;
+  input.style.transition = "none";
+  input.style.height = "auto";
+  const target = Math.min(input.scrollHeight, 160);
+  input.style.height = prev + "px";
+  void input.offsetHeight;
+  input.style.transition = "";
+  input.style.height = target + "px";
+}
+
 function expandToolRun(run) {
   run.expanded = true;
-  run.rows.forEach((row) => (row.style.display = ""));
-  if (run.moreRow) run.moreRow.style.display = "none";
-  run.lessRow = document.createElement("div");
-  run.lessRow.className = "see-less";
-  run.lessRow.textContent = "See less";
-  run.lessRow.addEventListener("click", () => collapseToolRun(run));
+  Sfx.play("open");
+  run.moreRow.classList.add("expanded");
   const stick = isAtBottom();
-  run.rows[run.rows.length - 1].after(run.lessRow);
-  if (stick) scrollToBottom();
+  run.rows.filter((r) => r.classList.contains("hidden"))
+    .forEach((row, i) => revealRow(row, Math.min(i * 45, 270)));
+  updateToolRunThinking();
+  if (stick) followBottom(900);
 }
 
 function collapseToolRun(run) {
   run.expanded = false;
-  run.rows.slice(MAX_VISIBLE_TOOL_CALLS).forEach((row) => {
-    row.style.display = "none";
-  });
-  if (run.moreRow) run.moreRow.style.display = "";
-  if (run.lessRow) {
-    run.lessRow.remove();
-    run.lessRow = null;
-  }
+  Sfx.play("close");
+  run.moreRow.classList.remove("expanded");
+  const stick = isAtBottom();
+  run.rows.slice(MAX_VISIBLE_TOOL_CALLS).forEach((row, i) => concealRow(row, Math.min(i * 30, 150)));
   updateToolRunThinking();
+  if (stick) followBottom(700);
 }
 
 function addToolRow(event) {
   const meta = TOOL_META[event.name];
   const row = document.createElement("div");
-  row.className = "tool-row running";
+  row.className = "tool-row glass running";
   row.id = "tool-" + event.id;
   const icon = meta ? meta.icon : ICONS.terminal;
   row.innerHTML =
@@ -617,18 +1572,30 @@ function addToolRow(event) {
     "<pre hidden></pre>";
   row.querySelector(".tool-text").textContent = toolEventText(event);
   if (!toolRun) {
-    toolRun = { rows: [], moreRow: null, lessRow: null, expanded: false };
+    toolRun = { rows: [], moreRow: null, expanded: false };
   }
   toolRun.rows.push(row);
+  const stick = isAtBottom();
   if (!toolRun.expanded && toolRun.rows.length > MAX_VISIBLE_TOOL_CALLS) {
-    row.style.display = "none";
-    append(row);
-    append(ensureMoreRow(toolRun));
+    row.classList.add("hidden");
+    const moreRow = ensureMoreRow(toolRun);
+    if (moreRow.parentNode === chat) {
+      // Insert ahead of the existing row without re-appending it, so the
+      // "See more" pill does not replay its entrance on every new call.
+      chat.insertBefore(row, moreRow);
+    } else {
+      append(row);
+      append(moreRow);
+    }
     updateToolRunThinking();
+  } else if (toolRun.expanded && toolRun.moreRow && toolRun.moreRow.parentNode === chat) {
+    chat.insertBefore(row, toolRun.moreRow);
+    growIn(row);
   } else {
     append(row);
-    if (toolRun.expanded && toolRun.lessRow) row.after(toolRun.lessRow);
   }
+  if (stick) scrollToBottom();
+  updateAmbient();
 }
 
 function finishToolRow(event) {
@@ -638,33 +1605,39 @@ function finishToolRow(event) {
     row = document.getElementById("tool-" + event.id);
   }
   row.classList.remove("running");
+  row.classList.add("settling");
+  setTimeout(() => row.classList.remove("settling"), 1200);
+  if (!event.failed) row.classList.add("just-done");
+  const icon = row.querySelector(".tool-icon");
+  const text = row.querySelector(".tool-text");
   if (event.failed) {
     row.classList.add("failed");
-    row.querySelector(".tool-icon").innerHTML = ICONS.warn;
-    row.querySelector(".tool-text").textContent =
-      "Tool call failed: " + toolEventText(event);
+    icon.innerHTML = ICONS.warn;
+    text.textContent = "Tool call failed: " + toolEventText(event);
   } else {
-    row.querySelector(".tool-text").textContent = toolEventText(event);
+    text.textContent = toolEventText(event);
   }
   const preview = (event.output_preview || "").trim();
   if (preview) {
     row.classList.add("toggleable");
-    row.addEventListener("click", () => row.classList.toggle("open"));
-    row.querySelector("pre").hidden = false;
-    row.querySelector("pre").textContent = preview;
+    row.addEventListener("click", () => toggleOpen(row));
+    const pre = row.querySelector("pre");
+    pre.hidden = false;
+    pre.textContent = preview;
   }
+  updateAmbient();
 }
 
 function addDecodeErrorRow(detail) {
   const row = document.createElement("div");
-  row.className = "tool-row failed toggleable";
+  row.className = "tool-row glass failed toggleable";
   row.innerHTML =
     '<span class="tool-icon">' + ICONS.warn + "</span>" +
     '<span class="tool-text">Tool call failed: "' + DECODE_ERROR_PREFIX +
     '"</span>' +
     "<pre hidden></pre>";
   row.querySelector("pre").textContent = detail;
-  row.addEventListener("click", () => row.classList.toggle("open"));
+  row.addEventListener("click", () => toggleOpen(row));
   append(row);
 }
 
@@ -674,7 +1647,7 @@ function addFileChip(event) {
   chipHost.className =
     "files-group open" + (event.type === "file_sent" ? " right" : "");
   const chip = document.createElement("a");
-  chip.className = "file-chip" + (event.type === "file_sent" ? " outgoing" : "");
+  chip.className = "file-chip glass" + (event.type === "file_sent" ? " outgoing" : "");
   chip.href = event.url ? API_BASE + event.url : "#";
   if (event.url) chip.setAttribute("download", event.name);
   chip.innerHTML = ICONS.file +
@@ -687,7 +1660,7 @@ function addFileChip(event) {
 
 function addEventRow(text, isError) {
   const row = document.createElement("div");
-  row.className = "event-row" + (isError ? " error" : "");
+  row.className = "event-row glass" + (isError ? " error" : "");
   row.textContent = text;
   append(row);
 }
@@ -698,24 +1671,59 @@ function addCompactionRow(event) {
   divider.textContent = "----- Compaction -----";
   append(divider);
   const box = document.createElement("pre");
-  box.className = "compaction-summary";
+  box.className = "compaction-summary glass";
   box.textContent = event.summary;
   append(box);
 }
+
+let statusHideTimer = null;
 
 function setStatus(kind, label) {
   statusDot.className = "status-dot " + kind;
   statusLabel.textContent = label;
   const show = kind === "working";
-  if (show && statusRow.parentNode !== chat) {
-    chat.appendChild(statusRow);
-    if (isAtBottom()) scrollToBottom();
-  } else if (!show && statusRow.parentNode === chat) {
-    statusRow.remove();
+  if (show) {
+    if (statusHideTimer) {
+      clearTimeout(statusHideTimer);
+      statusHideTimer = null;
+    }
+    statusRow.classList.remove("leaving");
+    cancelAnim(statusRow);
+    statusRow.style.overflow = "";
+    if (statusRow.parentNode !== chat) {
+      const stick = isAtBottom();
+      chat.appendChild(statusRow);
+      growIn(statusRow);
+      if (stick) followBottom(700);
+    }
+  } else if (statusRow.parentNode === chat) {
+    statusRow.classList.add("leaving");
+    if (!REDUCE && !statusRow._anim) {
+      const cs = getComputedStyle(statusRow);
+      statusRow.style.overflow = "hidden";
+      statusRow._anim = statusRow.animate(
+        [{ ...boxOf(statusRow, cs), marginTop: "0px" }, { ...BOX_ZERO, marginTop: "-10px" }],
+        { duration: 480, easing: EASE_IN, fill: "forwards" });
+    }
+    if (statusHideTimer) clearTimeout(statusHideTimer);
+    statusHideTimer = setTimeout(() => {
+      statusHideTimer = null;
+      statusRow.classList.remove("leaving");
+      cancelAnim(statusRow);
+      statusRow.style.overflow = "";
+      statusRow.remove();
+    }, 480);
   }
 }
 
+// ---------- event dispatch ----------
 function render(event) {
+  const kick = { user_message: 1, model_message: 0.8, busy: 0.6, ready: 0.7, error: 1,
+    tool_call: event.status === "started" ? 0.35 : 0.5 }[event.type];
+  if (kick && window.ambientKick) window.ambientKick(kick);
+  const snd = { model_message: "receive", error: "error",
+    tool_call: event.status === "started" ? "tick" : event.failed ? "error" : "done" }[event.type];
+  if (snd) Sfx.play(snd);
   if (event.type !== "file" && event.type !== "file_sent") closeFileGroup();
   if (
     event.type !== "tool_call" &&
@@ -751,12 +1759,14 @@ function render(event) {
       setStatus("working", "Working...");
       setSendState();
       updateToolRunThinking();
+      updateAmbient();
       break;
     case "ready":
       busy = false;
       setStatus("ready", "Ready");
       setSendState();
       updateToolRunThinking();
+      updateAmbient();
       break;
     case "error":
       if (event.text.startsWith(DECODE_ERROR_PREFIX)) {
@@ -765,10 +1775,12 @@ function render(event) {
         addEventRow(event.text, true);
       }
       setStatus("error", "Error");
+      updateAmbient();
       break;
   }
 }
 
+// ---------- transport ----------
 function connect() {
   ws = new WebSocket(WS_BASE + "/ws/" + clientId);
 
@@ -778,6 +1790,7 @@ function connect() {
     chat.innerHTML = "";
     toolRun = null;
     setStatus("ready", "Ready");
+    updateAmbient();
   };
 
   ws.onmessage = (message) => {
@@ -788,6 +1801,7 @@ function connect() {
     busy = false;
     setSendState();
     setStatus("", "Connecting...");
+    updateAmbient();
     banner.classList.add("visible");
     setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, 10000);
@@ -796,12 +1810,32 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
+// ---------- composer ----------
+function setSendState() {
+  const mode = busy ? "stop" : "send";
+  if (sendBtn.dataset.mode !== mode) {
+    sendBtn.dataset.mode = mode;
+    sendBtn.classList.remove("pop"); void sendBtn.offsetWidth; sendBtn.classList.add("pop");
+  }
+  document.querySelector(".composer").classList.toggle("busy", busy);
+  if (busy) {
+    sendBtn.innerHTML = ICONS.stop;
+    sendBtn.title = "Stop";
+    sendBtn.disabled = false;
+  } else {
+    sendBtn.innerHTML = ICONS.send;
+    sendBtn.title = "Send";
+    sendBtn.disabled = !input.value.trim();
+  }
+}
+
 function sendMessage() {
   const content = input.value.trim();
   if (!content || !ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "message", content: content }));
+  Sfx.play("send");
   input.value = "";
-  input.style.height = "auto";
+  fitInput();
   setSendState();
   input.focus();
 }
@@ -824,7 +1858,12 @@ function uploadFiles(files) {
   }
 }
 
-sendBtn.addEventListener("click", () => (busy ? sendStop() : sendMessage()));
+// ---------- wiring & boot ----------
+attachBtn.innerHTML = ICONS.clip;
+setSendState();
+input.focus();
+
+sendBtn.addEventListener("click", () => (busy ? (Sfx.play("stop"), sendStop()) : sendMessage()));
 attachBtn.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", () => {
   uploadFiles(fileInput.files);
@@ -832,8 +1871,7 @@ fileInput.addEventListener("change", () => {
 });
 
 input.addEventListener("input", () => {
-  input.style.height = "auto";
-  input.style.height = Math.min(input.scrollHeight, 160) + "px";
+  fitInput();
   setSendState();
 });
 input.addEventListener("keydown", (keyEvent) => {
@@ -844,6 +1882,7 @@ input.addEventListener("keydown", (keyEvent) => {
 });
 
 connect();
+
 </script>
 </body>
 </html>
