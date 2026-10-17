@@ -9,6 +9,11 @@
       "text": "$(play) Run server",
       "command": "uv run syna-server",
       "color": "#93ebeb"
-    }
+    },
+    {
+      "text": "$(build) Build",
+      "command": "uv run build.py",
+      "color": "#eb93eb"
+    },
   ]
 }
