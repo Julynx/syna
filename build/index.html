@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<!-- GENERATED FILE — edit the css/ and js/ sources in build/, then rebuild with: python build.py -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Syna</title>
+<link rel="icon" type="image/png" href="vendor/syna-logo.png">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f5f7">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f1114">
+<link rel="stylesheet" href="vendor/katex.min.css">
+{{CSS}}
+{{CSS}}
+{{CSS}}
+{{CSS}}
+{{CSS}}
+</head>
+<body data-ambient="idle">
+
+<div class="ambient" aria-hidden="true">
+  <div class="field"></div>
+  <div class="grain"></div>
+</div>
+
+<header>
+  <span class="brand"><img class="brand-logo" src="vendor/syna-logo.png" alt="Syna"></span>
+  <button id="newchat-btn" class="icon-btn" title="New chat" aria-label="Start a new chat"></button>
+  <button id="sound-btn" class="icon-btn" title="Toggle sound" aria-label="Toggle sound"></button>
+</header>
+<div id="banner">Cannot reach the Syna server. Retrying... (start it with "uv run syna-server" and open http://127.0.0.1:8000)</div>
+
+<main id="chat"></main>
+
+<footer>
+  <div class="composer">
+    <button id="attach-btn" class="icon-btn" title="Attach files" aria-label="Attach files"></button>
+    <textarea id="input" rows="1" placeholder="Message Syna..." aria-label="Message"></textarea>
+    <button id="send-btn" title="Send" aria-label="Send" disabled></button>
+    <input id="file-input" type="file" multiple>
+  </div>
+</footer>
+
+<script src="vendor/markdown-it.min.js"></script>
+<script src="vendor/katex.min.js"></script>
+<script src="vendor/auto-render.min.js"></script>
+{{JS}}
+{{JS}}
+{{JS}}
+{{JS}}
+</body>
+</html>

@@ -1,0 +1,63 @@
+/* ===== Syna — ambient background light field ========================================= */
+
+/* Registered so the state colors can crossfade smoothly (custom properties
+   are only transitionable when registered with a syntax). */
+@property --c3 { syntax: "<color>"; inherits: true; initial-value: #ffbf9f; }
+@property --bgA { syntax: "<color>"; inherits: true; initial-value: #b9a8ff; }
+@property --bgB { syntax: "<color>"; inherits: true; initial-value: #9ccfff; }
+
+body {
+  --glow: 99 102 241;   /* accent rgb triplet for rings & the composer halo */
+  --tp: 24%;            /* tint percentage of the corner color washes */
+  transition: --bgA 2.4s ease, --bgB 2.4s ease, --c3 2.4s ease;
+}
+body[data-ambient="thinking"] { --glow: 255 168 96; --bgA: #ffa860; --bgB: #ffcf7a; --c3: #ff8a7a; }
+body[data-ambient="tool"] { --glow: 91 155 255; --bgA: #5b9bff; --bgB: #7fd0ff; --c3: #7a7cff; }
+@media (prefers-color-scheme: dark) { body { --tp: 17%; } }
+
+/* The whole light field sits at reduced opacity so every layer (corner tints,
+   glow canvas, pulse rings, grain) fades uniformly toward the base --bg. */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.9;
+  background:
+    radial-gradient(95% 75% at 12% 8%, color-mix(in srgb, var(--bgA) var(--tp), transparent), transparent 70%),
+    radial-gradient(85% 75% at 92% 96%, color-mix(in srgb, var(--bgB) var(--tp), transparent), transparent 70%),
+    radial-gradient(60% 50% at 75% 28%, color-mix(in srgb, var(--c3) calc(var(--tp) * 0.6), transparent), transparent 70%),
+    linear-gradient(160deg, color-mix(in srgb, var(--bgA) 6%, var(--bg)), var(--bg) 55%, color-mix(in srgb, var(--bgB) 8%, var(--bg)));
+}
+
+.field { position: absolute; inset: 0; }
+
+/* Canvas painted by js/ambient.js: bright core + corona. Rendered small,
+   upscaled and blurred = heavy diffusion. */
+.glow { position: absolute; left: -4%; top: -4%; width: 108%; height: 108%; filter: blur(12px); }
+
+/* Expanding ring on every ambientKick (message sent, tool finished, ...) */
+.pulse-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46vmax;
+  height: 46vmax;
+  margin: -23vmax 0 0 -23vmax;
+  border-radius: 50%;
+  border: 2px solid rgb(var(--glow) / 0.45);
+  box-shadow: 0 0 5vmax rgb(var(--glow) / 0.22), inset 0 0 5vmax rgb(var(--glow) / 0.14);
+  filter: blur(3px);
+  opacity: 0;
+}
+
+.grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.025;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='1' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+}
+@media (prefers-color-scheme: dark) { .grain { opacity: 0.035; mix-blend-mode: soft-light; } }
