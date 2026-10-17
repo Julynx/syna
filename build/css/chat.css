@@ -16,6 +16,12 @@
 }
 #chat > * { max-width: 880px; width: 100%; margin: 0 auto; }
 
+/* PC: widen the column to trim the centered side margins; mobile keeps the
+   880px reading measure. Must stay in sync with .composer (composer.css). */
+@media (min-width: 1024px) {
+  #chat > * { max-width: 1060px; }
+}
+
 /* ---------- bubbles ---------- */
 .bubble {
   position: relative;

@@ -47,8 +47,10 @@ const EASE_IN = "cubic-bezier(0.65, 0, 0.35, 1)";
 // ---------- icons ----------
 // All line icons share one attribute block; stroke color comes from CSS.
 // Icons that get stacked/crossfaded inside a button take a class (cls).
-const I = (inner, cls) =>
-  '<svg ' + (cls ? 'class="' + cls + '" ' : '') + 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + inner + "</svg>";
+// An optional viewBox (vb) recenters glyphs that don't fill their 24-box
+// symmetrically (see the newchat icon below).
+const I = (inner, cls, vb) =>
+  '<svg ' + (cls ? 'class="' + cls + '" ' : '') + 'viewBox="' + (vb || "0 0 24 24") + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + inner + "</svg>";
 
 const ICONS = {
   send: I('<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/>'),
@@ -57,7 +59,10 @@ const ICONS = {
   file: I('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
   terminal: I('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
   globe: I('<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'),
-  newchat: I('<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>'),
+  // Feather's rotate-cw glyph spans x 2-24 / y 3-22 with its stroke, i.e. it
+  // sits ~1 unit right and ~0.5 unit low inside the default 0 0 24 24 box.
+  // The nudged viewBox re-centers it so it aligns with the mute icon.
+  newchat: I('<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>', null, "1 0.5 24 24"),
   search: I('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'),
   pencil: I('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>'),
   eye: I('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>'),
@@ -349,17 +354,10 @@ function collapseToolRun(run) {
   if (stick) followBottom(700);
 }
 
-function addToolRow(event) {
-  const meta = TOOL_META[event.name];
-  const row = document.createElement("div");
-  row.className = "tool-row glass running";
-  row.id = "tool-" + event.id;
-  const icon = meta ? meta.icon : ICONS.terminal;
-  row.innerHTML =
-    '<span class="tool-icon">' + icon + "</span>" +
-    '<span class="tool-text"></span>' +
-    "<pre hidden></pre>";
-  row.querySelector(".tool-text").textContent = toolEventText(event);
+// Shared placement for every tool row, successful or failed: rows always join
+// the current run and count toward the MAX_VISIBLE_TOOL_CALLS cap, so errored
+// calls are grouped behind the see-more pill exactly like the rest.
+function placeToolRow(row) {
   if (!toolRun) {
     toolRun = { rows: [], moreRow: null, expanded: false, wrap: null };
   }
@@ -380,6 +378,20 @@ function addToolRow(event) {
   }
   if (stick) scrollToBottom();
   updateAmbient();
+}
+
+function addToolRow(event) {
+  const meta = TOOL_META[event.name];
+  const row = document.createElement("div");
+  row.className = "tool-row glass running";
+  row.id = "tool-" + event.id;
+  const icon = meta ? meta.icon : ICONS.terminal;
+  row.innerHTML =
+    '<span class="tool-icon">' + icon + "</span>" +
+    '<span class="tool-text"></span>' +
+    "<pre hidden></pre>";
+  row.querySelector(".tool-text").textContent = toolEventText(event);
+  placeToolRow(row);
 }
 
 let followUntil = 0, following = false;
@@ -485,7 +497,7 @@ function addDecodeErrorRow(detail) {
     "<pre hidden></pre>";
   row.querySelector("pre").textContent = detail;
   row.addEventListener("click", () => toggleOpen(row));
-  append(row);
+  placeToolRow(row); // count errored calls toward the run's grouping cap
 }
 
 function addFileChip(event) {
@@ -572,11 +584,16 @@ function render(event) {
     tool_call: event.status === "started" ? "tick" : event.failed ? "error" : "done" }[event.type];
   if (snd) Sfx.play(snd);
   if (event.type !== "file" && event.type !== "file_sent") closeFileGroup();
+  // A decode error is a malformed reply of the ongoing turn, not a new one:
+  // keep the run alive so its errored row groups with the surrounding calls.
+  const isDecodeError =
+    event.type === "error" && event.text.startsWith(DECODE_ERROR_PREFIX);
   if (
     event.type !== "tool_call" &&
     event.type !== "status" &&
     event.type !== "busy" &&
-    event.type !== "ready"
+    event.type !== "ready" &&
+    !isDecodeError
   ) {
     resetToolRun();
   }

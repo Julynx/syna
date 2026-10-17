@@ -110,6 +110,7 @@ footer {
 
 /* new chat sits at the right edge, immediately left of the sound toggle */
 #newchat-btn { margin-left: auto; }
+#newchat-btn svg { width: 16px; height: 16px; }
 /* sound toggle: two stacked icons crossfade on .muted */
 #sound-btn { width: 34px; height: 34px; }
 #sound-btn svg { grid-area: 1 / 1; width: 18px; height: 18px; transition: opacity 0.3s ease, transform 0.45s var(--ease); }
@@ -117,5 +118,11 @@ footer {
 
 @media (prefers-reduced-motion: reduce) {
   .composer::before, #send-btn.pop svg { animation: none !important; }
+}
+
+/* PC: widen the composer along with the conversation column (chat.css) to
+   trim the large centered side margins. Mobile keeps the 880px column. */
+@media (min-width: 1024px) {
+  .composer { max-width: 1060px; }
 }
 
