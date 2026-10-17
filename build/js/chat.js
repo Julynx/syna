@@ -10,6 +10,7 @@ const chat = document.getElementById("chat");
 const input = document.getElementById("input");
 const sendBtn = document.getElementById("send-btn");
 const attachBtn = document.getElementById("attach-btn");
+const newchatBtn = document.getElementById("newchat-btn");
 const fileInput = document.getElementById("file-input");
 const statusRow = document.createElement("div");
 statusRow.className = "inline-status glass";
@@ -56,7 +57,7 @@ const ICONS = {
   file: I('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
   terminal: I('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
   globe: I('<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'),
-  newchat: I('<rect x="3" y="3" width="18" height="18" rx="5"/><path d="M12 8v8"/><path d="M8 12h8"/>'),
+  newchat: I('<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>'),
   search: I('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'),
   pencil: I('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>'),
   eye: I('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>'),
@@ -658,21 +659,19 @@ function connect() {
 
 // ---------- composer ----------
 function setSendState() {
+  // Icon swap (and the .pop animation) only on a send<->stop mode change,
+  // which happens when a message is sent or a turn finishes. Typing must
+  // not retrigger the animation: rewriting innerHTML on every keystroke
+  // would insert a fresh <svg> that replays the pop while .pop lingers.
   const mode = busy ? "stop" : "send";
   if (sendBtn.dataset.mode !== mode) {
     sendBtn.dataset.mode = mode;
     sendBtn.classList.remove("pop"); void sendBtn.offsetWidth; sendBtn.classList.add("pop");
+    sendBtn.innerHTML = busy ? ICONS.stop : ICONS.send;
+    sendBtn.title = busy ? "Stop" : "Send";
   }
   document.querySelector(".composer").classList.toggle("busy", busy);
-  if (busy) {
-    sendBtn.innerHTML = ICONS.stop;
-    sendBtn.title = "Stop";
-    sendBtn.disabled = false;
-  } else {
-    sendBtn.innerHTML = ICONS.send;
-    sendBtn.title = "Send";
-    sendBtn.disabled = !input.value.trim();
-  }
+  sendBtn.disabled = busy ? false : !input.value.trim();
 }
 
 function sendMessage() {
@@ -695,13 +694,19 @@ function sendStop() {
 // ---------- new chat ----------
 // Stops the running turn (the server does the same if it is still busy),
 // wipes the VM + conversation server-side, then reconnects for a fresh
-// session with a brand new container.
+// session with a brand new container. Teardown is not instant — stopping a
+// turn alone can wait up to 20s server-side, plus container cleanup — so
+// the button disables itself and the client says what is going on instead
+// of sitting silent on a clickable button.
 let newChatBusy = false;
 
 async function newChat() {
   if (newChatBusy) return;
   newChatBusy = true;
+  newchatBtn.disabled = true;
   Sfx.play("click");
+  setStatus("working", "Cleaning up, please wait...");
+  addEventRow("Cleaning up the VM, please wait...");
   try {
     if (busy && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "stop" })); // stop-then-wipe
@@ -713,12 +718,15 @@ async function newChat() {
     toolRun = null;
     busy = false;
     setSendState();
+    addEventRow("Starting a fresh session...");
     input.focus();
     connect(); // onopen clears the rest of the visual state
   } catch (err) {
     addEventRow("Could not start a new chat: " + err.message, true);
+    setStatus("ready", "Ready");
   } finally {
     newChatBusy = false;
+    newchatBtn.disabled = false;
   }
 }
 
@@ -736,13 +744,13 @@ function uploadFiles(files) {
 
 // ---------- wiring & boot ----------
 attachBtn.innerHTML = ICONS.clip;
-document.getElementById("newchat-btn").innerHTML = ICONS.newchat;
+newchatBtn.innerHTML = ICONS.newchat;
 setSendState();
 input.focus();
 
 sendBtn.addEventListener("click", () => (busy ? (Sfx.play("stop"), sendStop()) : sendMessage()));
 attachBtn.addEventListener("click", () => fileInput.click());
-document.getElementById("newchat-btn").addEventListener("click", newChat);
+newchatBtn.addEventListener("click", newChat);
 fileInput.addEventListener("change", () => {
   uploadFiles(fileInput.files);
   fileInput.value = "";

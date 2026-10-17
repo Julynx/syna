@@ -64,6 +64,7 @@ footer {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 .icon-btn:hover { background: var(--surface-soft); color: var(--text); }
+.icon-btn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
 .icon-btn svg { width: 19px; height: 19px; }
 
 #input {
@@ -107,8 +108,10 @@ footer {
 
 #file-input { display: none; }
 
+/* new chat sits at the right edge, immediately left of the sound toggle */
+#newchat-btn { margin-left: auto; }
 /* sound toggle: two stacked icons crossfade on .muted */
-#sound-btn { margin-left: auto; width: 34px; height: 34px; }
+#sound-btn { width: 34px; height: 34px; }
 #sound-btn svg { grid-area: 1 / 1; width: 18px; height: 18px; transition: opacity 0.3s ease, transform 0.45s var(--ease); }
 #sound-btn:not(.muted) .s-off, #sound-btn.muted .s-on { opacity: 0; transform: scale(0.6) rotate(-20deg); }
 
