@@ -1467,17 +1467,11 @@ footer {
   display: none;
 }
 
-/* new chat sits at the right edge, immediately left of the sound toggle */
-#newchat-btn {
-  margin-left: auto;
-  width: 34px;
-  height: 34px;
-}
-#newchat-btn .material-symbols-outlined {
-  font-size: 19px;
-}
-/* sound toggle: two stacked icons crossfade on .muted */
+/* The header button group (sound, voice, new chat) sits at the right edge:
+   the auto margin anchors the FIRST button of the group, and the flex gap
+   keeps the rest together after it. */
 #sound-btn {
+  margin-left: auto;
   width: 34px;
   height: 34px;
 }
@@ -1492,6 +1486,14 @@ footer {
 #sound-btn.muted .s-on {
   opacity: 0;
   transform: scale(0.6) rotate(-20deg);
+}
+
+#newchat-btn {
+  width: 34px;
+  height: 34px;
+}
+#newchat-btn .material-symbols-outlined {
+  font-size: 19px;
 }
 
 @media (prefers-reduced-motion: reduce) {
