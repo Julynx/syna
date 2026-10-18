@@ -41,11 +41,13 @@ const Voice = (() => {
   let playback = null;
   let playbackUrl = null;
   let speaking = false;
+  let pillEl = null;
 
   function reset() {
     enabled = initialEnabled;
     stopPlayback();
     cancelRecording();
+    hidePill();
     paint();
   }
 
@@ -70,9 +72,46 @@ const Voice = (() => {
       .trim();
   }
 
+  function showPill(label) {
+    pillEl = document.createElement("div");
+    pillEl.className = "inline-status glass voice-status";
+    pillEl.innerHTML =
+      '<span class="status-dot working"></span><span class="status-label"></span>';
+    pillEl.querySelector(".status-label").textContent = label;
+    const stick = isAtBottom();
+    chat.insertBefore(pillEl, statusRow.parentNode === chat ? statusRow : null);
+    growIn(pillEl);
+    if (stick) followBottom(700);
+  }
+
+  function hidePill() {
+    const pill = pillEl;
+    pillEl = null;
+    if (!pill || pill.parentNode !== chat) return;
+    if (REDUCE) {
+      pill.remove();
+      return;
+    }
+    // Status-pill exit pattern: cancel any entrance, then shrink the box to
+    // zero while the negative margin eats the chat gap, so removing the
+    // element afterwards shifts nothing.
+    pill.getAnimations().forEach((anim) => anim.cancel());
+    pill.style.overflow = "hidden";
+    const cs = getComputedStyle(pill);
+    const anim = pill.animate(
+      [
+        { ...boxOf(pill, cs), marginTop: cs.marginTop },
+        { ...BOX_ZERO, marginTop: "-10px" },
+      ],
+      { duration: 420, easing: EASE_IN, fill: "forwards" },
+    );
+    anim.onfinish = () => pill.remove();
+  }
+
   function setSpeaking(next) {
     if (speaking === next) return;
     speaking = next;
+    if (next) hidePill(); // the tuning-up pill has done its job
     updateAmbient();
   }
 
@@ -97,7 +136,10 @@ const Voice = (() => {
 
   async function speak(rawText) {
     const text = speakableText(String(rawText || ""));
-    if (!enabled || !TTS_AVAILABLE || !text) return;
+    if (!enabled || !TTS_AVAILABLE || !text) {
+      hidePill(); // defensive: a shown pill always dies with its speak()
+      return;
+    }
     stopPlayback();
     try {
       const response = await fetch(API_BASE + "/api/speech/synthesize", {
@@ -125,6 +167,7 @@ const Voice = (() => {
     } catch (err) {
       voiceBtn.classList.remove("speaking");
       setSpeaking(false);
+      hidePill();
       console.error(err);
       addEventRow("Speech playback failed: " + err.message, true);
     }
@@ -162,6 +205,7 @@ const Voice = (() => {
     }
     recorder = null;
     micBtn.classList.remove("recording");
+    hidePill();
   }
 
   function rmsDbfs(samples) {
@@ -228,6 +272,7 @@ const Voice = (() => {
     recordingAborted = false;
     micBtn.classList.add("recording");
     meterHandle = setInterval(meterLoop, 100);
+    showPill("Listening...");
   }
 
   function stopRecording() {
@@ -265,7 +310,7 @@ const Voice = (() => {
       addEventRow("Transcription failed: " + err.message, true);
     } finally {
       micBtn.disabled = false;
-      micBtn.title = "Talk";
+      micBtn.title = "Talk to Syna";
     }
   }
 
@@ -295,6 +340,8 @@ const Voice = (() => {
     speak,
     stopPlayback,
     reset,
+    showPill,
+    hidePill,
     willNarrate,
     get enabled() {
       return enabled;

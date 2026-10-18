@@ -758,7 +758,10 @@ function render(event) {
       break;
     case "model_message":
       addBubble(event.content, "model", false);
-      if (!replaying && window.Voice) Voice.speak(event.content);
+      if (!replaying && window.Voice) {
+        if (narrates) Voice.showPill("Tuning up, please wait...");
+        Voice.speak(event.content);
+      }
       break;
     case "history_done":
       replaying = false;
@@ -890,7 +893,7 @@ async function newChat() {
   newchatBtn.disabled = true;
   Sfx.play("click");
   setStatus("working", "Cleaning up, please wait...");
-  addEventRow("Cleaning up the VM, please wait...");
+  addEventRow("Cleaning up the pod, please wait...");
   try {
     if (busy && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "stop" })); // stop-then-wipe

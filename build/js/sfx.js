@@ -329,6 +329,12 @@ const Sfx = (() => {
   }
   function loop() {
     if (!on || !ctx || cur === "idle") return;
+    if (window.Voice && Voice.speaking) {
+      // Narration owns the soundscape: poll on, but play nothing until the
+      // voice falls quiet (the tool visuals keep running regardless).
+      timer = setTimeout(loop, 400);
+      return;
+    }
     if (ctx.state !== "running") {
       timer = setTimeout(loop, 500);
       return;
