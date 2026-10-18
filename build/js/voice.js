@@ -6,6 +6,9 @@
 // model replies are fetched from the speech endpoint and played out loud.
 // The header toggle switches both behaviors at once and is remembered
 // across visits. Tuning and model availability arrive via SYNA_CONFIG.voice.
+// The module is published as window.Voice so chat.js (a separate script
+// block) can route model messages to speak() — a top-level const alone
+// would not be visible across scripts as a window property.
 
 const Voice = (() => {
   const settings = (window.SYNA_CONFIG && window.SYNA_CONFIG.voice) || {};
@@ -281,3 +284,5 @@ const Voice = (() => {
     },
   };
 })();
+
+window.Voice = Voice;
