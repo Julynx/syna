@@ -1,0 +1,87 @@
+"""Image understanding through a dedicated single-turn vision request."""
+
+import base64
+import tempfile
+from pathlib import Path
+from posixpath import basename
+
+from dotenv import dotenv_values
+from PIL import Image
+
+from .ask_utils import ask_question
+from .config import get_logger, get_project_root
+from .state import get_container
+
+MAX_IMAGE_BOX = (1024, 1024)
+
+
+def _load_model():
+    """Return the MODEL value from .env, or None when unset."""
+    return dotenv_values(get_project_root() / ".env").get("MODEL")
+
+
+def describe_image(file_path: str, question: str):
+    """Describe one image from the pod through a dedicated vision request.
+
+    Pipeline: the image is copied from the container to a temporary host
+    folder (same mechanism as 'read_file'/'edit_file'), converted to PNG,
+    downscaled with Pillow's 'thumbnail' so it fits inside a 1024x1024
+    box, base64-encoded and sent to the model as a separate session: a
+    fresh client and a throwaway single-turn conversation.
+
+    Once the image has been described, its base64 payload is replaced in
+    the request's messages array by a compact text placeholder carrying
+    the image path and the description, so the bytes never linger in any
+    message history. The temporary folder is removed whether the call
+    succeeds or fails. Returns the description text, or an {'error': ...}
+    dict when the image cannot be read.
+    """
+    logger = get_logger()
+    model = _load_model()
+    if not model:
+        return {"error": "MODEL is not set in the .env file; cannot describe images."}
+
+    with tempfile.TemporaryDirectory(prefix="syna-vision-") as temp_dir:
+        temp_path = Path(temp_dir)
+
+        container = get_container()
+        container.copy_from(file_path, str(temp_path))
+        source_path = temp_path / basename(file_path)
+        png_path = temp_path / f"{source_path.stem or 'image'}.png"
+
+        try:
+            with Image.open(source_path) as img:
+                img_new = img
+                if img.mode == "CMYK":
+                    img_new = img.convert("RGB")
+                img_new.thumbnail(MAX_IMAGE_BOX)
+                img_new.save(png_path, format="PNG")
+        except Exception as exc:
+            return {"error": f"Could not read '{file_path}' as an image: {exc}"}
+
+        encoded = base64.b64encode(png_path.read_bytes()).decode("ascii")
+        image_data = f"data:image/png;base64,{encoded}"
+        prompt = (
+            f"Describe this image in detail. Pay particular attention to: {question}"
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_data}},
+                ],
+            }
+        ]
+
+        from .session import create_model_client  # noqa: PLC0415
+
+        with create_model_client() as client:
+            description = ask_question(client, model, messages, delay=0)
+
+    logger.info(
+        "Described image '%s' (%d chars of description)",
+        file_path,
+        len(description),
+    )
+    return description

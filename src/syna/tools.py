@@ -8,6 +8,7 @@ from .config import get_logger, truncate_command_output
 from .editor import edit_file as e_edit_file
 from .editor import read_file as e_read_file
 from .state import get_container
+from .vision import describe_image as v_describe_image
 from .web_search import search
 
 BROWSER = None
@@ -231,6 +232,19 @@ def _reset_browser():
     return "Browser session closed."
 
 
+def describe_image(file_path: str, question: str):
+    """
+    Look at an image file and get a detailed text description of it.
+    Use this tool whenever you need to see, understand or extract
+    information from an image, screenshot, diagram, chart or photo.
+
+    - 'file_path' must be an absolute path to an image file inside the pod.
+    - 'question' states exactly what information you need from the image.
+        Be specific: the description will focus on what you ask about.
+    """
+    return v_describe_image(file_path, question)
+
+
 def respond(text: str):
     """
     Send a message to the user. This will end the task and pass priority to him.
@@ -253,5 +267,6 @@ TOOL_REGISTRY = {
     "edit_file": edit_file,
     "execute_command": execute_command,
     "share_file": share_file,
+    "describe_image": describe_image,
     "respond": respond,
 }
