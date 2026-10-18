@@ -1,9 +1,10 @@
 """CLI helpers and model request plumbing."""
 
+import json
 import time
 import traceback
 
-from .config import get_logger
+from .config import get_logger, get_session_dump
 
 EMPTY_RESPONSE_MAX_ATTEMPTS = 3
 
@@ -47,12 +48,14 @@ def ask_question(client, model, messages, delay=2, effort=None):
     added to the conversation history.
     """
     logger = get_logger()
+    session_dump = get_session_dump()
     try:
         for attempt in range(1, EMPTY_RESPONSE_MAX_ATTEMPTS + 1):
             time.sleep(delay)
             request = {"model": model, "messages": messages}
             if effort:
                 request["reasoning"] = {"effort": effort}
+            session_dump.write_text(json.dumps(messages), encoding="utf-8")
             response = client.chat.send(**request)
             message = response.choices[0].message
             if message.refusal:
@@ -62,6 +65,7 @@ def ask_question(client, model, messages, delay=2, effort=None):
                 msg = {"role": "assistant", "content": content}
                 messages.append(msg)
                 logger.info(str(msg))
+                session_dump.write_text(json.dumps(messages), encoding="utf-8")
                 return content
             logger.warning(
                 "Empty model response (attempt %d of %d, finish_reason=%r)",

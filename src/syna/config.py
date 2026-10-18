@@ -37,6 +37,14 @@ def get_logger() -> logging.Logger:
     return logger
 
 
+def get_session_dump() -> Path:
+    """Get the path to the session dump file, where the messages array will be saved."""
+    config = load_config()
+    dump_file_name = config.get("session_dump_file", "message-session-log.json")
+    dump_file_path = get_project_root() / dump_file_name
+    return dump_file_path
+
+
 def truncate_command_output(output: str, max_chars: int | None = None) -> str:
     """Truncate command output exceeding character limit with an explanatory notice."""
     if not isinstance(output, str):
