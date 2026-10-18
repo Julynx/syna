@@ -22,10 +22,10 @@ _Syna, the AI agent with a pod._
 
 2. Create a `.env` file inside the `syna` folder with the following content:
 
-   ```text
+   ```sh
    OPENROUTER_API_KEY=your-openrouter-api-key
-   MODEL=model-to-use(eg:google/gemini-3.8-flash)
-   THINKING_EFFORT=thinking-effort-for-reasoning-models(optional: none|minimal|low|medium|high|xhigh|max)
+   MODEL=z-ai/glm-5.3-flash  # Or any one of your preference
+   THINKING_EFFORT=medium    # Can be either of none|minimal|low|medium|high|xhigh|max
    ```
 
 3. Install `uv` and run:
