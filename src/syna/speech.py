@@ -219,12 +219,25 @@ def synthesize_speech(text: str, settings: SpeechSettings) -> SynthesizedAudio:
     return SynthesizedAudio(content=content, media_type=media_type)
 
 
+def voice_flag(value) -> bool:
+    """Interpret a voice_mode_on config value as a boolean.
+
+    Accepts real booleans and the strings "true"/"false" (any casing, so a
+    hand-edited config.json cannot accidentally enable voice mode), and
+    defaults to off for anything else.
+    """
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() == "true"
+
+
 def client_configuration(settings: SpeechSettings, app_config: dict) -> dict:
     """Collect the settings the web client needs to run voice mode."""
     voice_config = app_config.get("voice", {})
     return {
         "stt_available": settings.stt_available,
         "tts_available": settings.tts_available,
+        "voice_mode_on": voice_flag(voice_config.get("voice_mode_on")),
         "language": settings.language,
         "silence_timeout_ms": voice_config.get(
             "silence_timeout_ms", DEFAULT_SILENCE_TIMEOUT_MS

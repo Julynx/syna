@@ -788,6 +788,7 @@ function connect() {
     chat.innerHTML = "";
     toolRun = null;
     replaying = true;
+    if (window.Voice) Voice.reset(); // every fresh session starts voice as configured
     setStatus("ready", "Ready");
     updateAmbient();
   };

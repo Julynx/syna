@@ -3201,6 +3201,7 @@ function connect() {
     chat.innerHTML = "";
     toolRun = null;
     replaying = true;
+    if (window.Voice) Voice.reset(); // every fresh session starts voice as configured
     setStatus("ready", "Ready");
     updateAmbient();
   };
@@ -3358,12 +3359,13 @@ connect();
 // Voice mode: records the microphone, stops after a stretch of silence,
 // transcribes the clip server-side and sends it as a regular message; new
 // model replies are fetched from the speech endpoint and played out loud.
-// It starts muted and only turns on through an explicit user toggle; the
-// choice is remembered across visits. Tuning and model availability arrive
-// via SYNA_CONFIG.voice. The module is published as window.Voice so chat.js
-// (a separate script block) can route model messages to speak() — a
-// top-level const alone would not be visible across scripts as a window
-// property.
+// Voice is a per-session state: it starts as configured by the server
+// (SYNA_CONFIG.voice.voice_mode_on), carries no memory across visits, and
+// every fresh session (page load, new chat, server restart) resets it. It
+// is only togglable when the .env provides a speech model. The module is
+// published as window.Voice so chat.js (a separate script block) can route
+// model messages to speak() — a top-level const alone would not be visible
+// across scripts as a window property.
 
 const Voice = (() => {
   const settings = (window.SYNA_CONFIG && window.SYNA_CONFIG.voice) || {};
@@ -3376,12 +3378,12 @@ const Voice = (() => {
   const MAX_RECORDING_MS = settings.max_recording_ms || 60000;
   const STT_AVAILABLE = !!settings.stt_available;
   const TTS_AVAILABLE = !!settings.tts_available;
-  const STORAGE_KEY = "syna-voice";
+  const initialEnabled = settings.voice_mode_on === true;
 
   const micBtn = document.getElementById("mic-btn");
   const voiceBtn = document.getElementById("voice-btn");
 
-  let enabled = readStoredEnabled();
+  let enabled = initialEnabled;
   let recorder = null;
   let recorderStream = null;
   let meterContext = null;
@@ -3393,18 +3395,11 @@ const Voice = (() => {
   let playback = null;
   let playbackUrl = null;
 
-  function readStoredEnabled() {
-    try {
-      return localStorage.getItem(STORAGE_KEY) === "on";
-    } catch (err) {
-      return false;
-    }
-  }
-
-  function persistEnabled() {
-    try {
-      localStorage.setItem(STORAGE_KEY, enabled ? "on" : "off");
-    } catch (err) {}
+  function reset() {
+    enabled = initialEnabled;
+    stopPlayback();
+    cancelRecording();
+    paint();
   }
 
   function paint() {
@@ -3615,7 +3610,6 @@ const Voice = (() => {
 
   voiceBtn.addEventListener("click", () => {
     enabled = !enabled;
-    persistEnabled();
     if (!enabled) {
       stopPlayback();
       cancelRecording();
@@ -3635,6 +3629,7 @@ const Voice = (() => {
   return {
     speak,
     stopPlayback,
+    reset,
     get enabled() {
       return enabled;
     },

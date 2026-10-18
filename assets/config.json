@@ -20,6 +20,7 @@
   "session_idle_timeout_min": 15,
   "upload_dest": "/home/user/uploads",
   "voice": {
+    "voice_mode_on": false,
     "silence_timeout_ms": 2000,
     "silence_threshold_dbfs": -45,
     "max_recording_ms": 60000
