@@ -148,15 +148,9 @@
 .copy-btn.copied { opacity: 1; pointer-events: auto; }
 .copy-btn:hover { color: var(--text); border-color: var(--accent-line); transform: translateY(-1px); }
 .copy-btn:active { transform: scale(0.94); }
-.copy-btn svg {
+.copy-btn .material-symbols-outlined {
   grid-area: 1 / 1;
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 14px;
   transition: opacity 0.2s ease, transform 0.3s var(--ease);
 }
 .copy-btn .i-check { opacity: 0; transform: scale(0.6) rotate(-12deg); }
@@ -231,14 +225,13 @@
   place-items: center;
   transition: background-color 0.25s ease, border-color 0.25s ease;
 }
-.tool-icon svg {
-  width: 13px;
-  height: 13px;
-  stroke: var(--muted);
-  transition: stroke 0.4s ease;
+.tool-icon .material-symbols-outlined {
+  font-size: 13px;
+  color: var(--muted);
+  transition: color 0.4s ease;
 }
 .tool-row.failed .tool-icon { background: var(--danger-tint); border-color: var(--danger-line); }
-.tool-row.failed .tool-icon svg { stroke: var(--danger); }
+.tool-row.failed .tool-icon .material-symbols-outlined { color: var(--danger); }
 
 .tool-text { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
 .tool-text::after { content: " ..."; opacity: 0; }
@@ -310,7 +303,7 @@
   background: var(--surface-strong);
   transform: translateY(-1px);
 }
-.file-chip svg { flex: none; width: 17px; height: 17px; stroke: var(--accent); }
+.file-chip .material-symbols-outlined { flex: none; font-size: 17px; color: var(--accent); }
 .file-chip .file-meta { color: var(--muted); font-size: 12px; }
 .file-chip.outgoing { align-self: flex-end; }
 .files-group {
@@ -369,13 +362,8 @@
 .see-more.expanded .l-less { opacity: 1; transform: none; }
 .see-slot { width: 21px; justify-items: center; }
 .chev {
-  width: 13px;
-  height: 13px;
-  stroke: var(--muted);
-  fill: none;
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 13px;
+  color: var(--muted);
 }
 .see-more.expanded .chev { transform: rotate(180deg); }
 #chat .see-more .jump-dots { display: inline-flex; opacity: 0; margin: 0; }

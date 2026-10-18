@@ -65,7 +65,7 @@ footer {
 }
 .icon-btn:hover { background: var(--surface-soft); color: var(--text); }
 .icon-btn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
-.icon-btn svg { width: 19px; height: 19px; }
+.icon-btn .material-symbols-outlined { font-size: 19px; }
 
 #input {
   flex: 1;
@@ -100,8 +100,8 @@ footer {
 #send-btn:disabled { opacity: 0.35; cursor: default; box-shadow: none; }
 #send-btn:not(:disabled):hover { filter: brightness(1.08); transform: translateY(-1px); }
 #send-btn:not(:disabled):active { transform: translateY(0) scale(0.96); }
-#send-btn svg { width: 17px; height: 17px; }
-#send-btn.pop svg { animation: icon-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+#send-btn .material-symbols-outlined { font-size: 17px; }
+#send-btn.pop .material-symbols-outlined { animation: icon-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
 @media (prefers-color-scheme: dark) {
   #send-btn { background: linear-gradient(135deg, #a5b4fc, #818cf8); box-shadow: 0 8px 18px -8px rgba(129, 140, 248, 0.4); }
 }
@@ -110,14 +110,14 @@ footer {
 
 /* new chat sits at the right edge, immediately left of the sound toggle */
 #newchat-btn { margin-left: auto; }
-#newchat-btn svg { width: 16px; height: 16px; }
+#newchat-btn .material-symbols-outlined { font-size: 19px; }
 /* sound toggle: two stacked icons crossfade on .muted */
 #sound-btn { width: 34px; height: 34px; }
-#sound-btn svg { grid-area: 1 / 1; width: 18px; height: 18px; transition: opacity 0.3s ease, transform 0.45s var(--ease); }
+#sound-btn .material-symbols-outlined { grid-area: 1 / 1; font-size: 18px; transition: opacity 0.3s ease, transform 0.45s var(--ease); }
 #sound-btn:not(.muted) .s-off, #sound-btn.muted .s-on { opacity: 0; transform: scale(0.6) rotate(-20deg); }
 
 @media (prefers-reduced-motion: reduce) {
-  .composer::before, #send-btn.pop svg { animation: none !important; }
+  .composer::before, #send-btn.pop .material-symbols-outlined { animation: none !important; }
 }
 
 /* PC: widen the composer along with the conversation column (chat.css) to

@@ -144,6 +144,36 @@ body {
   100% { transform: none; opacity: 1; }
 }
 
+
+/* ==== Icon font: Material Symbols Outlined, vendored subset ==== */
+/* The woff2 under vendor/fonts/ contains only the glyphs the UI uses (Apache
+   2.0, license alongside the font). To add a glyph, extend the icon_names
+   parameter of the css2 request on fonts.googleapis.com and replace the file. */
+@font-face {
+  font-family: "Material Symbols Outlined";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("vendor/fonts/MaterialSymbolsOutlined.woff2") format("woff2");
+}
+
+.material-symbols-outlined {
+  font-family: "Material Symbols Outlined";
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-feature-settings: "liga";
+  -webkit-font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+}
+
 </style>
 <style>
 /* ==== css/ambient.css ==== */
@@ -468,15 +498,9 @@ header {
 .copy-btn.copied { opacity: 1; pointer-events: auto; }
 .copy-btn:hover { color: var(--text); border-color: var(--accent-line); transform: translateY(-1px); }
 .copy-btn:active { transform: scale(0.94); }
-.copy-btn svg {
+.copy-btn .material-symbols-outlined {
   grid-area: 1 / 1;
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 14px;
   transition: opacity 0.2s ease, transform 0.3s var(--ease);
 }
 .copy-btn .i-check { opacity: 0; transform: scale(0.6) rotate(-12deg); }
@@ -551,14 +575,13 @@ header {
   place-items: center;
   transition: background-color 0.25s ease, border-color 0.25s ease;
 }
-.tool-icon svg {
-  width: 13px;
-  height: 13px;
-  stroke: var(--muted);
-  transition: stroke 0.4s ease;
+.tool-icon .material-symbols-outlined {
+  font-size: 13px;
+  color: var(--muted);
+  transition: color 0.4s ease;
 }
 .tool-row.failed .tool-icon { background: var(--danger-tint); border-color: var(--danger-line); }
-.tool-row.failed .tool-icon svg { stroke: var(--danger); }
+.tool-row.failed .tool-icon .material-symbols-outlined { color: var(--danger); }
 
 .tool-text { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
 .tool-text::after { content: " ..."; opacity: 0; }
@@ -630,7 +653,7 @@ header {
   background: var(--surface-strong);
   transform: translateY(-1px);
 }
-.file-chip svg { flex: none; width: 17px; height: 17px; stroke: var(--accent); }
+.file-chip .material-symbols-outlined { flex: none; font-size: 17px; color: var(--accent); }
 .file-chip .file-meta { color: var(--muted); font-size: 12px; }
 .file-chip.outgoing { align-self: flex-end; }
 .files-group {
@@ -689,13 +712,8 @@ header {
 .see-more.expanded .l-less { opacity: 1; transform: none; }
 .see-slot { width: 21px; justify-items: center; }
 .chev {
-  width: 13px;
-  height: 13px;
-  stroke: var(--muted);
-  fill: none;
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 13px;
+  color: var(--muted);
 }
 .see-more.expanded .chev { transform: rotate(180deg); }
 #chat .see-more .jump-dots { display: inline-flex; opacity: 0; margin: 0; }
@@ -864,7 +882,7 @@ footer {
 }
 .icon-btn:hover { background: var(--surface-soft); color: var(--text); }
 .icon-btn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
-.icon-btn svg { width: 19px; height: 19px; }
+.icon-btn .material-symbols-outlined { font-size: 19px; }
 
 #input {
   flex: 1;
@@ -899,8 +917,8 @@ footer {
 #send-btn:disabled { opacity: 0.35; cursor: default; box-shadow: none; }
 #send-btn:not(:disabled):hover { filter: brightness(1.08); transform: translateY(-1px); }
 #send-btn:not(:disabled):active { transform: translateY(0) scale(0.96); }
-#send-btn svg { width: 17px; height: 17px; }
-#send-btn.pop svg { animation: icon-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+#send-btn .material-symbols-outlined { font-size: 17px; }
+#send-btn.pop .material-symbols-outlined { animation: icon-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
 @media (prefers-color-scheme: dark) {
   #send-btn { background: linear-gradient(135deg, #a5b4fc, #818cf8); box-shadow: 0 8px 18px -8px rgba(129, 140, 248, 0.4); }
 }
@@ -909,14 +927,14 @@ footer {
 
 /* new chat sits at the right edge, immediately left of the sound toggle */
 #newchat-btn { margin-left: auto; }
-#newchat-btn svg { width: 16px; height: 16px; }
+#newchat-btn .material-symbols-outlined { font-size: 19px; }
 /* sound toggle: two stacked icons crossfade on .muted */
 #sound-btn { width: 34px; height: 34px; }
-#sound-btn svg { grid-area: 1 / 1; width: 18px; height: 18px; transition: opacity 0.3s ease, transform 0.45s var(--ease); }
+#sound-btn .material-symbols-outlined { grid-area: 1 / 1; font-size: 18px; transition: opacity 0.3s ease, transform 0.45s var(--ease); }
 #sound-btn:not(.muted) .s-off, #sound-btn.muted .s-on { opacity: 0; transform: scale(0.6) rotate(-20deg); }
 
 @media (prefers-reduced-motion: reduce) {
-  .composer::before, #send-btn.pop svg { animation: none !important; }
+  .composer::before, #send-btn.pop .material-symbols-outlined { animation: none !important; }
 }
 
 /* PC: widen the composer along with the conversation column (chat.css) to
@@ -932,10 +950,9 @@ footer {
 
 /* voice toggle: two stacked icons crossfade on .muted (same pattern as #sound-btn) */
 #voice-btn { width: 34px; height: 34px; }
-#voice-btn svg {
+#voice-btn .material-symbols-outlined {
   grid-area: 1 / 1;
-  width: 18px;
-  height: 18px;
+  font-size: 18px;
   transition: opacity 0.3s ease, transform 0.45s var(--ease);
 }
 #voice-btn:not(.muted) .s-off, #voice-btn.muted .s-on { opacity: 0; transform: scale(0.6) rotate(-20deg); }
@@ -1285,8 +1302,8 @@ const Sfx = (() => {
   const btn = document.getElementById("sound-btn");
   const paint = () => btn.classList.toggle("muted", !Sfx.on);
   btn.innerHTML =
-    '<svg class="s-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>' +
-    '<svg class="s-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/></svg>';
+    '<span class="material-symbols-outlined s-on">volume_up</span>' +
+    '<span class="material-symbols-outlined s-off">volume_off</span>';
   paint();
   btn.addEventListener("click", () => { Sfx.setOn(!Sfx.on); paint(); });
   ["pointerdown", "keydown"].forEach((ev) => addEventListener(ev, () => Sfx.unlock(), { capture: true }));
@@ -1494,34 +1511,30 @@ const EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
 const EASE_IN = "cubic-bezier(0.65, 0, 0.35, 1)";
 
 // ---------- icons ----------
-// All line icons share one attribute block; stroke color comes from CSS.
-// Icons that get stacked/crossfaded inside a button take a class (cls).
-// An optional viewBox (vb) recenters glyphs that don't fill their 24-box
-// symmetrically (see the newchat icon below).
-const I = (inner, cls, vb) =>
-  '<svg ' + (cls ? 'class="' + cls + '" ' : '') + 'viewBox="' + (vb || "0 0 24 24") + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + inner + "</svg>";
+// Glyphs from the vendored Material Symbols Outlined subset (see base.css for
+// the @font-face and the regeneration instructions). Icons that get
+// stacked/crossfaded inside a button take a class (cls).
+const GLYPH = (name, cls) =>
+  '<span class="material-symbols-outlined' + (cls ? " " + cls : "") + '">' + name + "</span>";
 
 const ICONS = {
-  send: I('<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/>'),
-  stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
-  clip: I('<path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l8.57-8.57a4 4 0 1 1 5.66 5.66l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'),
-  file: I('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'),
-  terminal: I('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
-  globe: I('<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'),
-  // Feather's rotate-cw glyph spans x 2-24 / y 3-22 with its stroke, i.e. it
-  // sits ~1 unit right and ~0.5 unit low inside the default 0 0 24 24 box.
-  // The nudged viewBox re-centers it so it aligns with the mute icon.
-  newchat: I('<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>', null, "1 0.5 24 24"),
-  search: I('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'),
-  pencil: I('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>'),
-  eye: I('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>'),
-  share: I('<path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/>'),
-  warn: I('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
-  copy: I('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', "i-copy"),
-  check: I('<path d="M20 6 9 17l-5-5"/>', "i-check"),
-  mic: I('<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>'),
-  speakerOn: I('<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/>'),
-  speakerOff: I('<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>')
+  send: GLYPH("send"),
+  stop: GLYPH("stop"),
+  clip: GLYPH("attach_file"),
+  file: GLYPH("insert_drive_file"),
+  terminal: GLYPH("terminal"),
+  globe: GLYPH("public"),
+  newchat: GLYPH("refresh"),
+  search: GLYPH("search"),
+  pencil: GLYPH("edit"),
+  eye: GLYPH("visibility"),
+  share: GLYPH("upload"),
+  warn: GLYPH("warning"),
+  copy: GLYPH("content_copy", "i-copy"),
+  check: GLYPH("check", "i-check"),
+  mic: GLYPH("mic"),
+  speakerOn: GLYPH("record_voice_over", "s-on"),
+  speakerOff: GLYPH("voice_over_off", "s-off")
 };
 
 const TOOL_META = {
@@ -1693,7 +1706,7 @@ function updateToolRunThinking() {
   }
 }
 
-const CHEV = '<svg class="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>';
+const CHEV = '<span class="material-symbols-outlined chev">expand_more</span>';
 
 function ensureMoreRow(run) {
   if (!run.moreRow) {
@@ -2136,7 +2149,7 @@ function setSendState() {
   // Icon swap (and the .pop animation) only on a send<->stop mode change,
   // which happens when a message is sent or a turn finishes. Typing must
   // not retrigger the animation: rewriting innerHTML on every keystroke
-  // would insert a fresh <svg> that replays the pop while .pop lingers.
+  // would insert a fresh icon that replays the pop while .pop lingers.
   const mode = busy ? "stop" : "send";
   if (sendBtn.dataset.mode !== mode) {
     sendBtn.dataset.mode = mode;

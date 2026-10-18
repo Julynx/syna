@@ -3,10 +3,9 @@
 
 /* voice toggle: two stacked icons crossfade on .muted (same pattern as #sound-btn) */
 #voice-btn { width: 34px; height: 34px; }
-#voice-btn svg {
+#voice-btn .material-symbols-outlined {
   grid-area: 1 / 1;
-  width: 18px;
-  height: 18px;
+  font-size: 18px;
   transition: opacity 0.3s ease, transform 0.45s var(--ease);
 }
 #voice-btn:not(.muted) .s-off, #voice-btn.muted .s-on { opacity: 0; transform: scale(0.6) rotate(-20deg); }
