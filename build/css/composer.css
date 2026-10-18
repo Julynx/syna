@@ -23,15 +23,23 @@ footer {
   padding: 8px 10px;
   box-shadow: var(--glass-shadow);
   position: relative;
-  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+  transition:
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
 }
 .composer:focus-within {
   border-color: var(--accent-line);
-  box-shadow: 0 0 0 4px var(--accent-soft), var(--glass-shadow);
+  box-shadow:
+    0 0 0 4px var(--accent-soft),
+    var(--glass-shadow);
 }
 
 /* spinning halo while the model is busy */
-@property --ang { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+@property --ang {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
 .composer::before {
   content: "";
   position: absolute;
@@ -41,14 +49,27 @@ footer {
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.6s ease;
-  background: conic-gradient(from var(--ang), transparent 0 60%, rgb(var(--glow) / 0.95) 82%, transparent 100%);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  background: conic-gradient(
+    from var(--ang),
+    transparent 0 60%,
+    rgb(var(--glow) / 0.95) 82%,
+    transparent 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   animation: ang-spin 3.2s linear infinite;
 }
-.composer.busy::before { opacity: 1; }
-@keyframes ang-spin { to { --ang: 360deg; } }
+.composer.busy::before {
+  opacity: 1;
+}
+@keyframes ang-spin {
+  to {
+    --ang: 360deg;
+  }
+}
 
 .icon-btn {
   flex: none;
@@ -61,11 +82,22 @@ footer {
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
-.icon-btn:hover { background: var(--surface-soft); color: var(--text); }
-.icon-btn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
-.icon-btn .material-symbols-outlined { font-size: 19px; }
+.icon-btn:hover {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+.icon-btn .material-symbols-outlined {
+  font-size: 19px;
+}
 
 #input {
   flex: 1;
@@ -81,7 +113,10 @@ footer {
   padding: 8px 0;
   transition: height 0.22s var(--ease);
 }
-#input::placeholder { color: var(--muted); opacity: 0.75; }
+#input::placeholder {
+  color: var(--muted);
+  opacity: 0.75;
+}
 
 #send-btn {
   flex: none;
@@ -95,34 +130,79 @@ footer {
   display: grid;
   place-items: center;
   box-shadow: 0 8px 18px -8px rgba(79, 70, 229, 0.65);
-  transition: opacity 0.2s ease, transform 0.15s var(--ease), box-shadow 0.2s ease, filter 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.15s var(--ease),
+    box-shadow 0.2s ease,
+    filter 0.2s ease;
 }
-#send-btn:disabled { opacity: 0.35; cursor: default; box-shadow: none; }
-#send-btn:not(:disabled):hover { filter: brightness(1.08); transform: translateY(-1px); }
-#send-btn:not(:disabled):active { transform: translateY(0) scale(0.96); }
-#send-btn .material-symbols-outlined { font-size: 17px; }
-#send-btn.pop .material-symbols-outlined { animation: icon-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+#send-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  box-shadow: none;
+}
+#send-btn:not(:disabled):hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+#send-btn:not(:disabled):active {
+  transform: translateY(0) scale(0.96);
+}
+#send-btn .material-symbols-outlined {
+  font-size: 17px;
+}
+#send-btn.pop .material-symbols-outlined {
+  animation: icon-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
 @media (prefers-color-scheme: dark) {
-  #send-btn { background: linear-gradient(135deg, #a5b4fc, #818cf8); box-shadow: 0 8px 18px -8px rgba(129, 140, 248, 0.4); }
+  #send-btn {
+    background: linear-gradient(135deg, #a5b4fc, #818cf8);
+    box-shadow: 0 8px 18px -8px rgba(129, 140, 248, 0.4);
+  }
 }
 
-#file-input { display: none; }
+#file-input {
+  display: none;
+}
 
 /* new chat sits at the right edge, immediately left of the sound toggle */
-#newchat-btn { margin-left: auto; }
-#newchat-btn .material-symbols-outlined { font-size: 19px; }
+#newchat-btn {
+  margin-left: auto;
+  width: 34px;
+  height: 34px;
+}
+#newchat-btn .material-symbols-outlined {
+  font-size: 19px;
+}
 /* sound toggle: two stacked icons crossfade on .muted */
-#sound-btn { width: 34px; height: 34px; }
-#sound-btn .material-symbols-outlined { grid-area: 1 / 1; font-size: 18px; transition: opacity 0.3s ease, transform 0.45s var(--ease); }
-#sound-btn:not(.muted) .s-off, #sound-btn.muted .s-on { opacity: 0; transform: scale(0.6) rotate(-20deg); }
+#sound-btn {
+  width: 34px;
+  height: 34px;
+}
+#sound-btn .material-symbols-outlined {
+  grid-area: 1 / 1;
+  font-size: 18px;
+  transition:
+    opacity 0.3s ease,
+    transform 0.45s var(--ease);
+}
+#sound-btn:not(.muted) .s-off,
+#sound-btn.muted .s-on {
+  opacity: 0;
+  transform: scale(0.6) rotate(-20deg);
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .composer::before, #send-btn.pop .material-symbols-outlined { animation: none !important; }
+  .composer::before,
+  #send-btn.pop .material-symbols-outlined {
+    animation: none !important;
+  }
 }
 
 /* PC: widen the composer along with the conversation column (chat.css) to
    trim the large centered side margins. Mobile keeps the 880px column. */
 @media (min-width: 1024px) {
-  .composer { max-width: 1060px; }
+  .composer {
+    max-width: 1060px;
+  }
 }
-

@@ -41,7 +41,9 @@ header {
   width: auto;
 }
 @media (prefers-color-scheme: light) {
-  .brand-logo { filter: invert(1); }
+  .brand-logo {
+    filter: invert(1);
+  }
 }
 
 /* "Working..." / "Ready" pill that lives at the bottom of the conversation */
@@ -54,9 +56,14 @@ header {
   padding: 5px 13px;
   align-self: center;
   border-radius: 999px;
-  transition: opacity var(--dur-in) var(--ease), filter var(--dur-in) var(--ease), transform var(--dur-in) var(--ease);
+  transition:
+    opacity var(--dur-in) var(--ease),
+    filter var(--dur-in) var(--ease),
+    transform var(--dur-in) var(--ease);
 }
-#chat > .inline-status { width: fit-content; }
+#chat > .inline-status {
+  width: fit-content;
+}
 
 .status-dot {
   width: 8px;
@@ -67,9 +74,16 @@ header {
   flex: none;
   position: relative;
 }
-.status-dot.working { background: var(--warn); animation: pulse 1.2s infinite; }
-.status-dot.ready { background: var(--ok); }
-.status-dot.error { background: var(--danger); }
+.status-dot.working {
+  background: var(--warn);
+  animation: pulse 1.2s infinite;
+}
+.status-dot.ready {
+  background: var(--ok);
+}
+.status-dot.error {
+  background: var(--danger);
+}
 .status-dot.working::after {
   content: "";
   position: absolute;
@@ -78,8 +92,21 @@ header {
   border: 1.5px solid var(--warn);
   animation: dot-ring 1.6s ease-out infinite;
 }
-@keyframes pulse { 50% { opacity: 0.35; } }
-@keyframes dot-ring { 0% { transform: scale(1); opacity: 0.7; } 100% { transform: scale(2.9); opacity: 0; } }
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes dot-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(2.9);
+    opacity: 0;
+  }
+}
 
 /* Connection-lost banner: always in the layout, revealed by growing max-height
    so the page below glides down instead of snapping. */
@@ -97,7 +124,14 @@ header {
   padding: 0 12px;
   overflow: hidden;
   opacity: 0;
-  transition: max-height 0.5s var(--ease), padding 0.5s var(--ease), opacity 0.5s var(--ease);
+  transition:
+    max-height 0.5s var(--ease),
+    padding 0.5s var(--ease),
+    opacity 0.5s var(--ease);
 }
-#banner.visible { max-height: 120px; padding-top: 7px; padding-bottom: 7px; opacity: 1; }
-
+#banner.visible {
+  max-height: 120px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  opacity: 1;
+}

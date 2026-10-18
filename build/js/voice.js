@@ -10,7 +10,9 @@
 const Voice = (() => {
   const settings = (window.SYNA_CONFIG && window.SYNA_CONFIG.voice) || {};
   const SILENCE_TIMEOUT_MS = settings.silence_timeout_ms || 2000;
-  const SILENCE_THRESHOLD_DBFS = Number.isFinite(settings.silence_threshold_dbfs)
+  const SILENCE_THRESHOLD_DBFS = Number.isFinite(
+    settings.silence_threshold_dbfs,
+  )
     ? settings.silence_threshold_dbfs
     : -45;
   const MAX_RECORDING_MS = settings.max_recording_ms || 60000;
@@ -41,7 +43,9 @@ const Voice = (() => {
   }
 
   function persistEnabled() {
-    try { localStorage.setItem(STORAGE_KEY, enabled ? "on" : "off"); } catch (err) {}
+    try {
+      localStorage.setItem(STORAGE_KEY, enabled ? "on" : "off");
+    } catch (err) {}
   }
 
   function paint() {
@@ -66,8 +70,14 @@ const Voice = (() => {
   }
 
   function stopPlayback() {
-    if (playback) { playback.pause(); playback = null; }
-    if (playbackUrl) { URL.revokeObjectURL(playbackUrl); playbackUrl = null; }
+    if (playback) {
+      playback.pause();
+      playback = null;
+    }
+    if (playbackUrl) {
+      URL.revokeObjectURL(playbackUrl);
+      playbackUrl = null;
+    }
     voiceBtn.classList.remove("speaking");
   }
 
@@ -81,9 +91,13 @@ const Voice = (() => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: text }),
       });
-      const payload = response.ok ? null : await response.json().catch(() => null);
+      const payload = response.ok
+        ? null
+        : await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error((payload && payload.detail) || "HTTP " + response.status);
+        throw new Error(
+          (payload && payload.detail) || "HTTP " + response.status,
+        );
       }
       playbackUrl = URL.createObjectURL(await response.blob());
       playback = new Audio(playbackUrl);
@@ -100,8 +114,11 @@ const Voice = (() => {
   function pickRecorderMime() {
     if (!window.MediaRecorder) return "";
     const candidates = [
-      "audio/webm;codecs=opus", "audio/webm",
-      "audio/ogg;codecs=opus", "audio/ogg", "audio/mp4"
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+      "audio/ogg",
+      "audio/mp4",
     ];
     return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "";
   }
@@ -116,7 +133,10 @@ const Voice = (() => {
     clearInterval(meterHandle);
     meterHandle = null;
     analyser = null;
-    if (meterContext) { meterContext.close().catch(() => {}); meterContext = null; }
+    if (meterContext) {
+      meterContext.close().catch(() => {});
+      meterContext = null;
+    }
     if (recorderStream) {
       recorderStream.getTracks().forEach((track) => track.stop());
       recorderStream = null;
@@ -147,23 +167,32 @@ const Voice = (() => {
   async function startRecording() {
     stopPlayback();
     try {
-      recorderStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recorderStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
     } catch (err) {
       console.error(err);
       addEventRow(
         err.name === "NotAllowedError"
           ? "Microphone access was denied."
           : "Could not open the microphone: " + err.message,
-        true
+        true,
       );
       return;
     }
     const mimeType = pickRecorderMime();
     const chunks = [];
-    recorder = new MediaRecorder(recorderStream, mimeType ? { mimeType: mimeType } : undefined);
-    recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+    recorder = new MediaRecorder(
+      recorderStream,
+      mimeType ? { mimeType: mimeType } : undefined,
+    );
+    recorder.ondataavailable = (event) => {
+      if (event.data.size) chunks.push(event.data);
+    };
     recorder.onstop = async () => {
-      const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
+      const blob = new Blob(chunks, {
+        type: recorder.mimeType || mimeType || "audio/webm",
+      });
       const aborted = recordingAborted;
       resetRecorderState();
       if (!aborted) await transcribeAndSend(blob);
@@ -203,7 +232,8 @@ const Voice = (() => {
         body: form,
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.detail || "HTTP " + response.status);
+      if (!response.ok)
+        throw new Error(payload.detail || "HTTP " + response.status);
       const text = (payload.text || "").trim();
       if (!text) {
         addEventRow("Nothing was heard in the recording.", true);
@@ -234,12 +264,20 @@ const Voice = (() => {
     paint();
   });
 
-  micBtn.addEventListener("click", () => (recorder ? stopRecording() : startRecording()));
+  micBtn.addEventListener("click", () =>
+    recorder ? stopRecording() : startRecording(),
+  );
 
   addEventListener("beforeunload", () => {
     cancelRecording();
     stopPlayback();
   });
 
-  return { speak, stopPlayback, get enabled() { return enabled; } };
+  return {
+    speak,
+    stopPlayback,
+    get enabled() {
+      return enabled;
+    },
+  };
 })();

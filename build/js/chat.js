@@ -14,7 +14,8 @@ const newchatBtn = document.getElementById("newchat-btn");
 const fileInput = document.getElementById("file-input");
 const statusRow = document.createElement("div");
 statusRow.className = "inline-status glass";
-statusRow.innerHTML = '<span class="status-dot"></span><span class="status-label"></span>';
+statusRow.innerHTML =
+  '<span class="status-dot"></span><span class="status-label"></span>';
 const statusDot = statusRow.querySelector(".status-dot");
 const statusLabel = statusRow.querySelector(".status-label");
 const banner = document.getElementById("banner");
@@ -30,7 +31,8 @@ if (!clientId) {
   localStorage.setItem(CLIENT_ID_KEY, clientId);
 }
 
-const isServed = location.protocol === "http:" || location.protocol === "https:";
+const isServed =
+  location.protocol === "http:" || location.protocol === "https:";
 const API_BASE = isServed ? location.origin : "http://127.0.0.1:8000";
 const WS_BASE = isServed
   ? (location.protocol === "https:" ? "wss://" : "ws://") + location.host
@@ -50,7 +52,11 @@ const EASE_IN = "cubic-bezier(0.65, 0, 0.35, 1)";
 // the @font-face and the regeneration instructions). Icons that get
 // stacked/crossfaded inside a button take a class (cls).
 const GLYPH = (name, cls) =>
-  '<span class="material-symbols-outlined' + (cls ? " " + cls : "") + '">' + name + "</span>";
+  '<span class="material-symbols-outlined' +
+  (cls ? " " + cls : "") +
+  '">' +
+  name +
+  "</span>";
 
 const ICONS = {
   send: GLYPH("send"),
@@ -69,7 +75,7 @@ const ICONS = {
   check: GLYPH("check", "i-check"),
   mic: GLYPH("mic"),
   speakerOn: GLYPH("record_voice_over", "s-on"),
-  speakerOff: GLYPH("voice_over_off", "s-off")
+  speakerOff: GLYPH("voice_over_off", "s-off"),
 };
 
 const TOOL_META = {
@@ -78,7 +84,7 @@ const TOOL_META = {
   web_search: { verb: "Searched", icon: ICONS.search, arg: 0 },
   read_file: { verb: "Read file", icon: ICONS.eye, arg: 0 },
   edit_file: { verb: "Edited file", icon: ICONS.pencil, arg: 0 },
-  share_file: { verb: "Share file", icon: ICONS.share, arg: 0 }
+  share_file: { verb: "Share file", icon: ICONS.share, arg: 0 },
 };
 
 const DECODE_ERROR_PREFIX = "A tool call could not be decoded as JSON";
@@ -122,7 +128,11 @@ function append(element) {
 // Cancels a stored WAAPI animation (rows, panels and the status pill keep
 // their running animation on el._anim).
 function cancelAnim(host) {
-  if (host._anim) { host._anim.onfinish = null; host._anim.cancel(); host._anim = null; }
+  if (host._anim) {
+    host._anim.onfinish = null;
+    host._anim.cancel();
+    host._anim = null;
+  }
 }
 
 // ---------- bubbles ----------
@@ -153,7 +163,8 @@ function addBubble(content, side, queued) {
 const COPY_FEEDBACK_MS = 1400;
 
 function copyText(text) {
-  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  if (navigator.clipboard && window.isSecureContext)
+    return navigator.clipboard.writeText(text);
   // Fallback for non-secure contexts (e.g. plain http over the network)
   return new Promise((resolve, reject) => {
     const ta = document.createElement("textarea");
@@ -162,9 +173,15 @@ function copyText(text) {
     ta.style.opacity = "0";
     document.body.appendChild(ta);
     ta.select();
-    try { document.execCommand("copy") ? resolve() : reject(new Error("copy rejected")); }
-    catch (err) { reject(err); }
-    finally { ta.remove(); }
+    try {
+      document.execCommand("copy")
+        ? resolve()
+        : reject(new Error("copy rejected"));
+    } catch (err) {
+      reject(err);
+    } finally {
+      ta.remove();
+    }
   });
 }
 
@@ -176,11 +193,16 @@ function addCopyButton(bubble, source) {
   btn.setAttribute("aria-label", "Copy message as markdown");
   btn.innerHTML = ICONS.copy + ICONS.check;
   btn.addEventListener("click", () => {
-    copyText(source).then(() => {
-      btn.classList.add("copied");
-      clearTimeout(btn._t);
-      btn._t = setTimeout(() => btn.classList.remove("copied"), COPY_FEEDBACK_MS);
-    }).catch(() => {});
+    copyText(source)
+      .then(() => {
+        btn.classList.add("copied");
+        clearTimeout(btn._t);
+        btn._t = setTimeout(
+          () => btn.classList.remove("copied"),
+          COPY_FEEDBACK_MS,
+        );
+      })
+      .catch(() => {});
   });
   bubble.appendChild(btn);
 }
@@ -192,16 +214,26 @@ function toolEventText(event) {
   if (event.name === "web_interact") return webInteractText(event.signature);
   const arg = truncateArg(firstQuotedArg(event.signature));
   let verb = meta.verb;
-  if (event.name === "web_search" && /^https?:\/\//.test(firstQuotedArg(event.signature))) verb = "Visited";
+  if (
+    event.name === "web_search" &&
+    /^https?:\/\//.test(firstQuotedArg(event.signature))
+  )
+    verb = "Visited";
   return verb + (arg ? ' "' + arg + '"' : "");
 }
 
 // web_interact rows read as actions, not raw signatures: the browser
 // command picks the verb and the most meaningful argument is shown.
 const WEB_VERBS = {
-  goto: "Visited", snapshot: "Read page", click: "Clicked", type: "Typed",
-  select: "Selected", press: "Pressed", scroll: "Scrolled", back: "Went back",
-  read: "Read"
+  goto: "Visited",
+  snapshot: "Read page",
+  click: "Clicked",
+  type: "Typed",
+  select: "Selected",
+  press: "Pressed",
+  scroll: "Scrolled",
+  back: "Went back",
+  read: "Read",
 };
 
 function webInteractText(signature) {
@@ -216,9 +248,14 @@ function webInteractText(signature) {
     return WEB_VERBS[cmd] + (ref ? " #" + ref[1] : "");
   }
   if (cmd === "back" || cmd === "snapshot") return WEB_VERBS[cmd] || "Browsed";
-  const text = arg("text") || arg("option") || arg("key") ||
+  const text =
+    arg("text") ||
+    arg("option") ||
+    arg("key") ||
     (signature.match(/'direction':\s*'([^']*)'/) || [])[1];
-  return (WEB_VERBS[cmd] || "Browsed") + (text ? ' "' + truncateArg(text) + '"' : "");
+  return (
+    (WEB_VERBS[cmd] || "Browsed") + (text ? ' "' + truncateArg(text) + '"' : "")
+  );
 }
 
 function closeFileGroup() {
@@ -249,10 +286,14 @@ function ensureMoreRow(run) {
     row.className = "see-more";
     row.innerHTML =
       '<button type="button" class="see-btn glass"><span class="see-label"><span class="l-more">See more</span>' +
-      '<span class="l-less">See less</span></span><span class="see-slot">' + CHEV +
+      '<span class="l-less">See less</span></span><span class="see-slot">' +
+      CHEV +
       '<span class="jump-dots"><i></i><i></i><i></i></span></span></button>';
-    row.querySelector("button").addEventListener("click", () =>
-      run.expanded ? collapseToolRun(run) : expandToolRun(run));
+    row
+      .querySelector("button")
+      .addEventListener("click", () =>
+        run.expanded ? collapseToolRun(run) : expandToolRun(run),
+      );
     run.moreRow = row;
   }
   return run.moreRow;
@@ -297,22 +338,42 @@ function expandToolRun(run) {
     wrap.style.overflow = "hidden";
     wrap.classList.remove("collapsed");
     const target = wrap.scrollHeight; // full content height (element is at 0 now)
-    const anim = wrap._anim = wrap.animate(
-      [{ height: "0px", marginTop: -CHAT_GAP + "px" },
-       { height: target + "px", marginTop: "0px" }],
-      { duration: 520, easing: EASE_OUT, fill: "backwards" });
-    anim.onfinish = () => { wrap.style.overflow = ""; wrap._anim = null; };
+    const anim = (wrap._anim = wrap.animate(
+      [
+        { height: "0px", marginTop: -CHAT_GAP + "px" },
+        { height: target + "px", marginTop: "0px" },
+      ],
+      { duration: 520, easing: EASE_OUT, fill: "backwards" },
+    ));
+    anim.onfinish = () => {
+      wrap.style.overflow = "";
+      wrap._anim = null;
+    };
     rows.forEach((row, i) => {
       cancelAnim(row); // a lingering collapse fade would otherwise keep opacity at 0
       row.style.opacity = "0";
       const fade = row.animate(
-        [{ opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)" }],
-        { duration: 360, delay: Math.min(i * 55, 280), easing: EASE_OUT, fill: "backwards" });
-      fade.onfinish = () => { row.style.opacity = ""; };
+        [
+          { opacity: 0, filter: "blur(6px)" },
+          { opacity: 1, filter: "blur(0px)" },
+        ],
+        {
+          duration: 360,
+          delay: Math.min(i * 55, 280),
+          easing: EASE_OUT,
+          fill: "backwards",
+        },
+      );
+      fade.onfinish = () => {
+        row.style.opacity = "";
+      };
     });
   } else if (wrap) {
     wrap.classList.remove("collapsed");
-    rows.forEach((row) => { cancelAnim(row); row.style.opacity = ""; });
+    rows.forEach((row) => {
+      cancelAnim(row);
+      row.style.opacity = "";
+    });
   }
   updateToolRunThinking();
   if (stick) followBottom(900);
@@ -329,15 +390,22 @@ function collapseToolRun(run) {
     cancelAnim(wrap);
     wrap.style.overflow = "hidden";
     const start = wrap.getBoundingClientRect().height;
-    const anim = wrap._anim = wrap.animate(
-      [{ height: start + "px", marginTop: "0px" },
-       { height: "0px", marginTop: -CHAT_GAP + "px" }],
-      { duration: 420, easing: EASE_IN, fill: "forwards" });
+    const anim = (wrap._anim = wrap.animate(
+      [
+        { height: start + "px", marginTop: "0px" },
+        { height: "0px", marginTop: -CHAT_GAP + "px" },
+      ],
+      { duration: 420, easing: EASE_IN, fill: "forwards" },
+    ));
     rows.forEach((row) => {
       cancelAnim(row);
       row._anim = row.animate(
-        [{ opacity: 1, filter: "blur(0px)" }, { opacity: 0, filter: "blur(6px)" }],
-        { duration: 280, easing: EASE_IN, fill: "forwards" });
+        [
+          { opacity: 1, filter: "blur(0px)" },
+          { opacity: 0, filter: "blur(6px)" },
+        ],
+        { duration: 280, easing: EASE_IN, fill: "forwards" },
+      );
     });
     anim.onfinish = () => {
       wrap.classList.add("collapsed");
@@ -387,27 +455,42 @@ function addToolRow(event) {
   row.id = "tool-" + event.id;
   const icon = meta ? meta.icon : ICONS.terminal;
   row.innerHTML =
-    '<span class="tool-icon">' + icon + "</span>" +
+    '<span class="tool-icon">' +
+    icon +
+    "</span>" +
     '<span class="tool-text"></span>' +
     "<pre hidden></pre>";
   row.querySelector(".tool-text").textContent = toolEventText(event);
   placeToolRow(row);
 }
 
-let followUntil = 0, following = false;
+let followUntil = 0,
+  following = false;
 function followBottom(ms) {
   followUntil = Math.max(followUntil, performance.now() + ms);
   if (following) return;
   following = true;
   (function step() {
     scrollToBottom();
-    if (performance.now() < followUntil) requestAnimationFrame(step); else following = false;
+    if (performance.now() < followUntil) requestAnimationFrame(step);
+    else following = false;
   })();
 }
 
-const BOX_ZERO = { height: "0px", paddingTop: "0px", paddingBottom: "0px", borderTopWidth: "0px", borderBottomWidth: "0px" };
-const boxOf = (el, cs) => ({ height: el.getBoundingClientRect().height + "px", paddingTop: cs.paddingTop,
-  paddingBottom: cs.paddingBottom, borderTopWidth: cs.borderTopWidth, borderBottomWidth: cs.borderBottomWidth });
+const BOX_ZERO = {
+  height: "0px",
+  paddingTop: "0px",
+  paddingBottom: "0px",
+  borderTopWidth: "0px",
+  borderBottomWidth: "0px",
+};
+const boxOf = (el, cs) => ({
+  height: el.getBoundingClientRect().height + "px",
+  paddingTop: cs.paddingTop,
+  paddingBottom: cs.paddingBottom,
+  borderTopWidth: cs.borderTopWidth,
+  borderBottomWidth: cs.borderBottomWidth,
+});
 
 // New elements grow from zero height so nothing around them snaps.
 function growIn(el, delay) {
@@ -416,16 +499,26 @@ function growIn(el, delay) {
   const gap = parseFloat(getComputedStyle(chat).rowGap) || 0;
   el.style.overflow = "hidden";
   const a = el.animate(
-    [{ ...BOX_ZERO, marginTop: -gap + "px" }, { ...boxOf(el, cs), marginTop: cs.marginTop }],
-    { duration: 520, delay: delay || 0, easing: EASE_OUT, fill: "backwards" });
-  a.onfinish = () => { el.style.overflow = ""; };
+    [
+      { ...BOX_ZERO, marginTop: -gap + "px" },
+      { ...boxOf(el, cs), marginTop: cs.marginTop },
+    ],
+    { duration: 520, delay: delay || 0, easing: EASE_OUT, fill: "backwards" },
+  );
+  a.onfinish = () => {
+    el.style.overflow = "";
+  };
 }
 
 // Tool-call details: the output panel animates height + margin + fade, so the
 // row (and everything below it) resizes continuously.
 function toggleOpen(row) {
   const pre = row.querySelector("pre");
-  if (!pre || REDUCE) { Sfx.play(row.classList.contains("open") ? "close" : "open"); row.classList.toggle("open"); return; }
+  if (!pre || REDUCE) {
+    Sfx.play(row.classList.contains("open") ? "close" : "open");
+    row.classList.toggle("open");
+    return;
+  }
   cancelAnim(pre);
   const opening = !row.classList.contains("open");
   Sfx.play(opening ? "open" : "close");
@@ -433,13 +526,33 @@ function toggleOpen(row) {
   if (opening) row.classList.add("open");
   pre.style.overflow = "hidden";
   const cs = getComputedStyle(pre);
-  const shown = { ...boxOf(pre, cs), marginTop: cs.marginTop, opacity: 1, filter: "blur(0px)", transform: "none" };
-  const hidden = { ...BOX_ZERO, marginTop: -gap + "px", opacity: 0, filter: "blur(8px)", transform: "translateY(3px)" };
-  const anim = pre._anim = pre.animate(opening ? [hidden, shown] : [shown, hidden],
-    { duration: opening ? 520 : 380, easing: opening ? EASE_OUT : EASE_IN, fill: opening ? "backwards" : "forwards" });
+  const shown = {
+    ...boxOf(pre, cs),
+    marginTop: cs.marginTop,
+    opacity: 1,
+    filter: "blur(0px)",
+    transform: "none",
+  };
+  const hidden = {
+    ...BOX_ZERO,
+    marginTop: -gap + "px",
+    opacity: 0,
+    filter: "blur(8px)",
+    transform: "translateY(3px)",
+  };
+  const anim = (pre._anim = pre.animate(
+    opening ? [hidden, shown] : [shown, hidden],
+    {
+      duration: opening ? 520 : 380,
+      easing: opening ? EASE_OUT : EASE_IN,
+      fill: opening ? "backwards" : "forwards",
+    },
+  ));
   anim.onfinish = () => {
     if (!opening) row.classList.remove("open");
-    pre.style.overflow = ""; anim.cancel(); pre._anim = null;
+    pre.style.overflow = "";
+    anim.cancel();
+    pre._anim = null;
   };
   const stick = isAtBottom();
   if (stick) followBottom(opening ? 560 : 420);
@@ -491,8 +604,11 @@ function addDecodeErrorRow(detail) {
   const row = document.createElement("div");
   row.className = "tool-row glass failed toggleable";
   row.innerHTML =
-    '<span class="tool-icon">' + ICONS.warn + "</span>" +
-    '<span class="tool-text">Tool call failed: "' + DECODE_ERROR_PREFIX +
+    '<span class="tool-icon">' +
+    ICONS.warn +
+    "</span>" +
+    '<span class="tool-text">Tool call failed: "' +
+    DECODE_ERROR_PREFIX +
     '"</span>' +
     "<pre hidden></pre>";
   row.querySelector("pre").textContent = detail;
@@ -506,11 +622,11 @@ function addFileChip(event) {
   chipHost.className =
     "files-group open" + (event.type === "file_sent" ? " right" : "");
   const chip = document.createElement("a");
-  chip.className = "file-chip glass" + (event.type === "file_sent" ? " outgoing" : "");
+  chip.className =
+    "file-chip glass" + (event.type === "file_sent" ? " outgoing" : "");
   chip.href = event.url ? API_BASE + event.url : "#";
   if (event.url) chip.setAttribute("download", event.name);
-  chip.innerHTML = ICONS.file +
-    "<span></span><span class='file-meta'></span>";
+  chip.innerHTML = ICONS.file + "<span></span><span class='file-meta'></span>";
   chip.children[1].textContent = event.name;
   chip.children[2].textContent = event.size ? formatSize(event.size) : "";
   chipHost.appendChild(chip);
@@ -561,8 +677,12 @@ function setStatus(kind, label) {
       const cs = getComputedStyle(statusRow);
       statusRow.style.overflow = "hidden";
       statusRow._anim = statusRow.animate(
-        [{ ...boxOf(statusRow, cs), marginTop: "0px" }, { ...BOX_ZERO, marginTop: "-10px" }],
-        { duration: 480, easing: EASE_IN, fill: "forwards" });
+        [
+          { ...boxOf(statusRow, cs), marginTop: "0px" },
+          { ...BOX_ZERO, marginTop: "-10px" },
+        ],
+        { duration: 480, easing: EASE_IN, fill: "forwards" },
+      );
     }
     if (statusHideTimer) clearTimeout(statusHideTimer);
     statusHideTimer = setTimeout(() => {
@@ -577,11 +697,21 @@ function setStatus(kind, label) {
 
 // ---------- event dispatch ----------
 function render(event) {
-  const kick = { user_message: 1, model_message: 0.8, busy: 0.6, ready: 0.7, error: 1,
-    tool_call: event.status === "started" ? 0.35 : 0.5 }[event.type];
+  const kick = {
+    user_message: 1,
+    model_message: 0.8,
+    busy: 0.6,
+    ready: 0.7,
+    error: 1,
+    tool_call: event.status === "started" ? 0.35 : 0.5,
+  }[event.type];
   if (kick && window.ambientKick) window.ambientKick(kick);
-  const snd = { model_message: "receive", error: "error",
-    tool_call: event.status === "started" ? "tick" : event.failed ? "error" : "done" }[event.type];
+  const snd = {
+    model_message: "receive",
+    error: "error",
+    tool_call:
+      event.status === "started" ? "tick" : event.failed ? "error" : "done",
+  }[event.type];
   if (snd) Sfx.play(snd);
   if (event.type !== "file" && event.type !== "file_sent") closeFileGroup();
   // A decode error is a malformed reply of the ongoing turn, not a new one:
@@ -663,7 +793,11 @@ function connect() {
   };
 
   ws.onmessage = (message) => {
-    try { render(JSON.parse(message.data)); } catch (err) { console.error(err); }
+    try {
+      render(JSON.parse(message.data));
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   ws.onclose = () => {
@@ -688,7 +822,9 @@ function setSendState() {
   const mode = busy ? "stop" : "send";
   if (sendBtn.dataset.mode !== mode) {
     sendBtn.dataset.mode = mode;
-    sendBtn.classList.remove("pop"); void sendBtn.offsetWidth; sendBtn.classList.add("pop");
+    sendBtn.classList.remove("pop");
+    void sendBtn.offsetWidth;
+    sendBtn.classList.add("pop");
     sendBtn.innerHTML = busy ? ICONS.stop : ICONS.send;
     sendBtn.title = busy ? "Stop" : "Send";
   }
@@ -733,9 +869,15 @@ async function newChat() {
     if (busy && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "stop" })); // stop-then-wipe
     }
-    const response = await fetch(API_BASE + "/api/new-chat/" + clientId, { method: "POST" });
+    const response = await fetch(API_BASE + "/api/new-chat/" + clientId, {
+      method: "POST",
+    });
     if (!response.ok) throw new Error("HTTP " + response.status);
-    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    if (ws) {
+      ws.onclose = null;
+      ws.close();
+      ws = null;
+    }
     chat.innerHTML = "";
     toolRun = null;
     busy = false;
@@ -758,9 +900,12 @@ function uploadFiles(files) {
     form.append("file", file);
     fetch(API_BASE + "/api/upload/" + clientId, { method: "POST", body: form })
       .then((response) => {
-        if (!response.ok) throw new Error("Upload failed (" + response.status + ")");
+        if (!response.ok)
+          throw new Error("Upload failed (" + response.status + ")");
       })
-      .catch((err) => addEventRow("Could not send " + file.name + ": " + err.message, true));
+      .catch((err) =>
+        addEventRow("Could not send " + file.name + ": " + err.message, true),
+      );
   }
 }
 
@@ -770,7 +915,9 @@ newchatBtn.innerHTML = ICONS.newchat;
 setSendState();
 input.focus();
 
-sendBtn.addEventListener("click", () => (busy ? (Sfx.play("stop"), sendStop()) : sendMessage()));
+sendBtn.addEventListener("click", () =>
+  busy ? (Sfx.play("stop"), sendStop()) : sendMessage(),
+);
 attachBtn.addEventListener("click", () => fileInput.click());
 newchatBtn.addEventListener("click", newChat);
 fileInput.addEventListener("change", () => {
@@ -790,4 +937,3 @@ input.addEventListener("keydown", (keyEvent) => {
 });
 
 connect();
-

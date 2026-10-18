@@ -7,9 +7,10 @@
 // XSS-safe. When the vendor file is missing, a minimal escaped-text fallback
 // keeps messages readable.
 
-const md = typeof window.markdownit === "function"
-  ? window.markdownit({ html: false, breaks: true, linkify: false })
-  : null;
+const md =
+  typeof window.markdownit === "function"
+    ? window.markdownit({ html: false, breaks: true, linkify: false })
+    : null;
 
 function renderMarkdown(source) {
   if (!md) {
@@ -48,11 +49,14 @@ const MATH_TOKEN_RE = /MQ(\d+)QM/g;
 const MATH_DELIMITERS = [
   { left: "$$", right: "$$", display: true },
   { left: "\\[", right: "\\]", display: true },
-  { left: "\\(", right: "\\)", display: false }
+  { left: "\\(", right: "\\)", display: false },
 ];
 
 function escapeHtml(text) {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function extractMath(source) {
@@ -87,10 +91,13 @@ function extractMath(source) {
   });
   // un-shield: back to "\$" in both the markdown text and any math span that
   // legitimately contained an escaped dollar (KaTeX renders "\$" as '$')
-  const unshieldDollars = (s) => s.replace(/\x00D(\d+)\x00/g, (_, i) => dollarStore[+i]);
+  const unshieldDollars = (s) =>
+    s.replace(/\x00D(\d+)\x00/g, (_, i) => dollarStore[+i]);
   text = unshieldDollars(text);
   text = text.replace(/\x00C(\d+)\x00/g, (_, i) => codeStore[+i]);
-  mathStore.forEach((item) => { item.src = unshieldDollars(item.src); });
+  mathStore.forEach((item) => {
+    item.src = unshieldDollars(item.src);
+  });
   return { text, mathStore };
 }
 
@@ -99,9 +106,13 @@ function extractMath(source) {
 // has to exist for auto-render. Falls back to the escaped literal when the
 // vendored KaTeX is unavailable.
 function renderInlineMath(src) {
-  if (typeof window.katex === "undefined" || !window.katex.renderToString) return null;
+  if (typeof window.katex === "undefined" || !window.katex.renderToString)
+    return null;
   try {
-    return window.katex.renderToString(src, { displayMode: false, throwOnError: false });
+    return window.katex.renderToString(src, {
+      displayMode: false,
+      throwOnError: false,
+    });
   } catch (err) {
     return null;
   }
@@ -125,9 +136,11 @@ function renderMath(container) {
     window.renderMathInElement(container, {
       delimiters: MATH_DELIMITERS,
       ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
-      throwOnError: false
+      throwOnError: false,
     });
-  } catch (err) { console.error(err); }
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 function applyLinkPolicy(container) {
@@ -136,4 +149,3 @@ function applyLinkPolicy(container) {
     link.rel = "noopener noreferrer";
   });
 }
-
