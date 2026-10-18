@@ -14,9 +14,11 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
+from . import speech
 from .config import get_logger, get_project_root, load_config
 from .session import AgentSession
 from .state import (
@@ -43,6 +45,7 @@ REPLAYED_EVENT_TYPES = {
 
 config = load_config()
 logger = get_logger()
+speech_settings = speech.load_speech_settings()
 
 _sessions: dict[str, "SessionRecord"] = {}
 _registry_lock = threading.Lock()
@@ -281,7 +284,10 @@ def index():
     """Serve the chat GUI with runtime settings injected."""
     chat_path = get_project_root() / "assets" / "chat.html"
     html = chat_path.read_text(encoding="utf-8")
-    gui_config = {"max_visible_tool_calls": config.get("max_visible_tool_calls", 3)}
+    gui_config = {
+        "max_visible_tool_calls": config.get("max_visible_tool_calls", 3),
+        "voice": speech.client_configuration(speech_settings, config),
+    }
     script = f"<script>window.SYNA_CONFIG = {json.dumps(gui_config)};</script>"
     return HTMLResponse(html.replace("</head>", script + "</head>"))
 
@@ -350,6 +356,47 @@ def download_file(client_id: str, token: str):
     return FileResponse(info["path"], filename=info["name"])
 
 
+class SynthesisRequest(BaseModel):
+    """Body of a speech synthesis request."""
+
+    text: str
+
+
+@app.post("/api/speech/transcribe")
+async def transcribe_speech(file: UploadFile):
+    """Transcribe a recorded voice clip into text."""
+    audio_format = speech.audio_format_for(file.content_type)
+    if audio_format is None:
+        raise HTTPException(
+            status_code=415, detail=f"Unsupported audio type: {file.content_type}"
+        )
+    audio_bytes = await file.read()
+    try:
+        text = await asyncio.to_thread(
+            speech.transcribe_audio, audio_bytes, audio_format, speech_settings
+        )
+    except speech.SpeechError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"text": text}
+
+
+@app.post("/api/speech/synthesize")
+async def synthesize_speech(request: SynthesisRequest):
+    """Synthesize spoken audio for one passage of text."""
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(
+            status_code=400, detail="Nothing to synthesize: the text is empty."
+        )
+    try:
+        audio_bytes = await asyncio.to_thread(
+            speech.synthesize_speech, text, speech_settings
+        )
+    except speech.SpeechError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(content=audio_bytes, media_type="audio/mpeg")
+
+
 async def _pump_events(record: SessionRecord, websocket: WebSocket):
     """Forward queued session events to the connected WebSocket client."""
     while True:
@@ -385,6 +432,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     try:
         for event in history:
             await websocket.send_json(event)
+        await websocket.send_json({"type": "history_done"})
     except Exception:
         record.connected = False
         return

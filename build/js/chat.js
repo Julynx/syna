@@ -39,6 +39,7 @@ const WS_BASE = isServed
 let ws = null;
 let reconnectDelay = 1000;
 let busy = false;
+let replaying = true;
 
 const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
@@ -69,7 +70,10 @@ const ICONS = {
   share: I('<path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/>'),
   warn: I('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
   copy: I('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', "i-copy"),
-  check: I('<path d="M20 6 9 17l-5-5"/>', "i-check")
+  check: I('<path d="M20 6 9 17l-5-5"/>', "i-check"),
+  mic: I('<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>'),
+  speakerOn: I('<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/>'),
+  speakerOff: I('<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>')
 };
 
 const TOOL_META = {
@@ -603,6 +607,10 @@ function render(event) {
       break;
     case "model_message":
       addBubble(event.content, "model", false);
+      if (!replaying && window.Voice) Voice.speak(event.content);
+      break;
+    case "history_done":
+      replaying = false;
       break;
     case "tool_call":
       if (event.status === "started") addToolRow(event);
@@ -653,6 +661,7 @@ function connect() {
     banner.classList.remove("visible");
     chat.innerHTML = "";
     toolRun = null;
+    replaying = true;
     setStatus("ready", "Ready");
     updateAmbient();
   };

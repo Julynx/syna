@@ -28,6 +28,15 @@ _Syna, the AI agent with a pod._
    THINKING_EFFORT=medium    # Can be either of none|minimal|low|medium|high|xhigh|max
    ```
 
+   Voice mode is enabled by adding speech models to the same `.env` file:
+
+   ```sh
+   STT_MODEL=google/chirp-3                    # Transcribes microphone recordings
+   TTS_MODEL=google/gemini-3.8-flash-lite-tts  # Reads the answers out loud
+   TTS_VOICE=Kore                              # Optional: voice of the TTS model
+   SPEECH_LANGUAGE=en                          # Optional: ISO-639-1 code, English by default
+   ```
+
 3. Install `uv` and run:
 
    ```bash

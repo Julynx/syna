@@ -10,8 +10,15 @@ inline <script> block from build/js/. The block order is fixed below.
 
 from pathlib import Path
 
-CSS_FILES = ["base.css", "ambient.css", "chrome.css", "chat.css", "composer.css"]
-JS_FILES = ["ambient.js", "sfx.js", "markdown.js", "chat.js"]
+CSS_FILES = [
+    "base.css",
+    "ambient.css",
+    "chrome.css",
+    "chat.css",
+    "composer.css",
+    "voice.css",
+]
+JS_FILES = ["ambient.js", "sfx.js", "markdown.js", "chat.js", "voice.js"]
 
 
 def build() -> None:

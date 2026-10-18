@@ -3,8 +3,17 @@
 import json
 import logging
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from dotenv import dotenv_values
+
+
+@lru_cache(maxsize=1)
+def get_env() -> dict[str, str]:
+    """Read the project .env file once and return its values."""
+    return dotenv_values(get_project_root() / ".env")
 
 
 def get_project_root() -> Path:

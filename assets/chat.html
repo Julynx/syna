@@ -926,6 +926,40 @@ footer {
 }
 
 </style>
+<style>
+/* ==== css/voice.css ==== */
+/* ===== Syna — voice mode: header toggle, composer mic, speaking & recording states ===== */
+
+/* voice toggle: two stacked icons crossfade on .muted (same pattern as #sound-btn) */
+#voice-btn { width: 34px; height: 34px; }
+#voice-btn svg {
+  grid-area: 1 / 1;
+  width: 18px;
+  height: 18px;
+  transition: opacity 0.3s ease, transform 0.45s var(--ease);
+}
+#voice-btn:not(.muted) .s-off, #voice-btn.muted .s-on { opacity: 0; transform: scale(0.6) rotate(-20deg); }
+#voice-btn.speaking:not(.muted) .s-on { animation: pulse 1.4s ease-in-out infinite; }
+
+/* microphone in the composer: visible only while voice mode is on */
+#mic-btn { position: relative; }
+#mic-btn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
+body.voice-off #mic-btn { display: none; }
+#mic-btn.recording { color: var(--danger); }
+#mic-btn.recording::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  border: 2px solid var(--danger);
+  animation: dot-ring 1.6s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #voice-btn.speaking:not(.muted) .s-on, #mic-btn.recording::after { animation: none !important; }
+}
+
+</style>
 </head>
 <body data-ambient="idle">
 
@@ -938,6 +972,7 @@ footer {
   <span class="brand"><img class="brand-logo" src="vendor/syna-logo.png" alt="Syna"></span>
   <button id="newchat-btn" class="icon-btn" title="New chat" aria-label="Start a new chat"></button>
   <button id="sound-btn" class="icon-btn" title="Toggle sound" aria-label="Toggle sound"></button>
+  <button id="voice-btn" class="icon-btn" title="Voice mode" aria-label="Toggle voice mode"></button>
 </header>
 <div id="banner">Cannot reach the Syna server. Retrying... (start it with "uv run syna-server" and open http://127.0.0.1:8000)</div>
 
@@ -947,6 +982,7 @@ footer {
   <div class="composer">
     <button id="attach-btn" class="icon-btn" title="Attach files" aria-label="Attach files"></button>
     <textarea id="input" rows="1" placeholder="Message Syna..." aria-label="Message"></textarea>
+    <button id="mic-btn" class="icon-btn" title="Talk" aria-label="Record a voice message"></button>
     <button id="send-btn" title="Send" aria-label="Send" disabled></button>
     <input id="file-input" type="file" multiple>
   </div>
@@ -1451,6 +1487,7 @@ const WS_BASE = isServed
 let ws = null;
 let reconnectDelay = 1000;
 let busy = false;
+let replaying = true;
 
 const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
@@ -1481,7 +1518,10 @@ const ICONS = {
   share: I('<path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/>'),
   warn: I('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
   copy: I('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', "i-copy"),
-  check: I('<path d="M20 6 9 17l-5-5"/>', "i-check")
+  check: I('<path d="M20 6 9 17l-5-5"/>', "i-check"),
+  mic: I('<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>'),
+  speakerOn: I('<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/>'),
+  speakerOff: I('<path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>')
 };
 
 const TOOL_META = {
@@ -2015,6 +2055,10 @@ function render(event) {
       break;
     case "model_message":
       addBubble(event.content, "model", false);
+      if (!replaying && window.Voice) Voice.speak(event.content);
+      break;
+    case "history_done":
+      replaying = false;
       break;
     case "tool_call":
       if (event.status === "started") addToolRow(event);
@@ -2065,6 +2109,7 @@ function connect() {
     banner.classList.remove("visible");
     chat.innerHTML = "";
     toolRun = null;
+    replaying = true;
     setStatus("ready", "Ready");
     updateAmbient();
   };
@@ -2197,6 +2242,254 @@ input.addEventListener("keydown", (keyEvent) => {
 });
 
 connect();
+
+</script>
+<script>
+/* ==== js/voice.js ==== */
+"use strict";
+
+// Voice mode: records the microphone, stops after a stretch of silence,
+// transcribes the clip server-side and sends it as a regular message; new
+// model replies are fetched from the speech endpoint and played out loud.
+// The header toggle switches both behaviors at once and is remembered
+// across visits. Tuning and model availability arrive via SYNA_CONFIG.voice.
+
+const Voice = (() => {
+  const settings = (window.SYNA_CONFIG && window.SYNA_CONFIG.voice) || {};
+  const SILENCE_TIMEOUT_MS = settings.silence_timeout_ms || 2000;
+  const SILENCE_THRESHOLD_DBFS = Number.isFinite(settings.silence_threshold_dbfs)
+    ? settings.silence_threshold_dbfs
+    : -45;
+  const MAX_RECORDING_MS = settings.max_recording_ms || 60000;
+  const STT_AVAILABLE = !!settings.stt_available;
+  const TTS_AVAILABLE = !!settings.tts_available;
+  const STORAGE_KEY = "syna-voice";
+
+  const micBtn = document.getElementById("mic-btn");
+  const voiceBtn = document.getElementById("voice-btn");
+
+  let enabled = readStoredEnabled();
+  let recorder = null;
+  let recorderStream = null;
+  let meterContext = null;
+  let analyser = null;
+  let meterHandle = null;
+  let recordingStartedAt = 0;
+  let silenceStartedAt = 0;
+  let recordingAborted = false;
+  let playback = null;
+  let playbackUrl = null;
+
+  function readStoredEnabled() {
+    try {
+      if (localStorage.getItem(STORAGE_KEY) === "off") return false;
+    } catch (err) {}
+    return STT_AVAILABLE || TTS_AVAILABLE;
+  }
+
+  function persistEnabled() {
+    try { localStorage.setItem(STORAGE_KEY, enabled ? "on" : "off"); } catch (err) {}
+  }
+
+  function paint() {
+    voiceBtn.classList.toggle("muted", !enabled);
+    voiceBtn.disabled = !(STT_AVAILABLE || TTS_AVAILABLE);
+    voiceBtn.title = enabled ? "Disable voice mode" : "Enable voice mode";
+    document.body.classList.toggle("voice-off", !enabled || !STT_AVAILABLE);
+  }
+
+  function speakableText(markdown) {
+    return markdown
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+      .replace(/^\s*[-*+]\s+/gm, "")
+      .replace(/^\s*\|.*\|\s*$/gm, "")
+      .replace(/(\*\*|__|\*|_|~~)/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function stopPlayback() {
+    if (playback) { playback.pause(); playback = null; }
+    if (playbackUrl) { URL.revokeObjectURL(playbackUrl); playbackUrl = null; }
+    voiceBtn.classList.remove("speaking");
+  }
+
+  async function speak(rawText) {
+    const text = speakableText(String(rawText || ""));
+    if (!enabled || !TTS_AVAILABLE || !text) return;
+    stopPlayback();
+    try {
+      const response = await fetch(API_BASE + "/api/speech/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text }),
+      });
+      const payload = response.ok ? null : await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error((payload && payload.detail) || "HTTP " + response.status);
+      }
+      playbackUrl = URL.createObjectURL(await response.blob());
+      playback = new Audio(playbackUrl);
+      playback.onended = () => voiceBtn.classList.remove("speaking");
+      voiceBtn.classList.add("speaking");
+      await playback.play();
+    } catch (err) {
+      voiceBtn.classList.remove("speaking");
+      console.error(err);
+      addEventRow("Speech playback failed: " + err.message, true);
+    }
+  }
+
+  function pickRecorderMime() {
+    if (!window.MediaRecorder) return "";
+    const candidates = [
+      "audio/webm;codecs=opus", "audio/webm",
+      "audio/ogg;codecs=opus", "audio/ogg", "audio/mp4"
+    ];
+    return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+  }
+
+  function extensionFor(mime) {
+    if (String(mime).includes("ogg")) return "ogg";
+    if (String(mime).includes("mp4")) return "m4a";
+    return "webm";
+  }
+
+  function resetRecorderState() {
+    clearInterval(meterHandle);
+    meterHandle = null;
+    analyser = null;
+    if (meterContext) { meterContext.close().catch(() => {}); meterContext = null; }
+    if (recorderStream) {
+      recorderStream.getTracks().forEach((track) => track.stop());
+      recorderStream = null;
+    }
+    recorder = null;
+    micBtn.classList.remove("recording");
+  }
+
+  function rmsDbfs(samples) {
+    let sum = 0;
+    for (const sample of samples) sum += sample * sample;
+    return 20 * Math.log10(Math.sqrt(sum / samples.length) || 1e-10);
+  }
+
+  function meterLoop() {
+    const buffer = new Float32Array(analyser.fftSize);
+    analyser.getFloatTimeDomainData(buffer);
+    const now = performance.now();
+    if (now - recordingStartedAt >= MAX_RECORDING_MS) return stopRecording();
+    if (rmsDbfs(buffer) < SILENCE_THRESHOLD_DBFS) {
+      if (!silenceStartedAt) silenceStartedAt = now;
+      else if (now - silenceStartedAt >= SILENCE_TIMEOUT_MS) stopRecording();
+    } else {
+      silenceStartedAt = 0;
+    }
+  }
+
+  async function startRecording() {
+    stopPlayback();
+    try {
+      recorderStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      console.error(err);
+      addEventRow(
+        err.name === "NotAllowedError"
+          ? "Microphone access was denied."
+          : "Could not open the microphone: " + err.message,
+        true
+      );
+      return;
+    }
+    const mimeType = pickRecorderMime();
+    const chunks = [];
+    recorder = new MediaRecorder(recorderStream, mimeType ? { mimeType: mimeType } : undefined);
+    recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+    recorder.onstop = async () => {
+      const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
+      const aborted = recordingAborted;
+      resetRecorderState();
+      if (!aborted) await transcribeAndSend(blob);
+    };
+    meterContext = new AudioContext();
+    const source = meterContext.createMediaStreamSource(recorderStream);
+    analyser = meterContext.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    meterContext.resume().catch(() => {});
+    recorder.start();
+    recordingStartedAt = performance.now();
+    silenceStartedAt = 0;
+    recordingAborted = false;
+    micBtn.classList.add("recording");
+    meterHandle = setInterval(meterLoop, 100);
+  }
+
+  function stopRecording() {
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+  }
+
+  function cancelRecording() {
+    if (!recorder) return;
+    recordingAborted = true;
+    stopRecording();
+  }
+
+  async function transcribeAndSend(blob) {
+    micBtn.disabled = true;
+    micBtn.title = "Transcribing...";
+    try {
+      const form = new FormData();
+      form.append("file", blob, "voice-note." + extensionFor(blob.type));
+      const response = await fetch(API_BASE + "/api/speech/transcribe", {
+        method: "POST",
+        body: form,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || "HTTP " + response.status);
+      const text = (payload.text || "").trim();
+      if (!text) {
+        addEventRow("Nothing was heard in the recording.", true);
+        return;
+      }
+      input.value = text;
+      sendMessage();
+    } catch (err) {
+      console.error(err);
+      addEventRow("Transcription failed: " + err.message, true);
+    } finally {
+      micBtn.disabled = false;
+      micBtn.title = "Talk";
+    }
+  }
+
+  micBtn.innerHTML = ICONS.mic;
+  voiceBtn.innerHTML = ICONS.speakerOn + ICONS.speakerOff;
+  paint();
+
+  voiceBtn.addEventListener("click", () => {
+    enabled = !enabled;
+    persistEnabled();
+    if (!enabled) {
+      stopPlayback();
+      cancelRecording();
+    }
+    paint();
+  });
+
+  micBtn.addEventListener("click", () => (recorder ? stopRecording() : startRecording()));
+
+  addEventListener("beforeunload", () => {
+    cancelRecording();
+    stopPlayback();
+  });
+
+  return { speak, stopPlayback, get enabled() { return enabled; } };
+})();
 
 </script>
 </body>

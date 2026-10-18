@@ -1,0 +1,31 @@
+/* ==== css/voice.css ==== */
+/* ===== Syna — voice mode: header toggle, composer mic, speaking & recording states ===== */
+
+/* voice toggle: two stacked icons crossfade on .muted (same pattern as #sound-btn) */
+#voice-btn { width: 34px; height: 34px; }
+#voice-btn svg {
+  grid-area: 1 / 1;
+  width: 18px;
+  height: 18px;
+  transition: opacity 0.3s ease, transform 0.45s var(--ease);
+}
+#voice-btn:not(.muted) .s-off, #voice-btn.muted .s-on { opacity: 0; transform: scale(0.6) rotate(-20deg); }
+#voice-btn.speaking:not(.muted) .s-on { animation: pulse 1.4s ease-in-out infinite; }
+
+/* microphone in the composer: visible only while voice mode is on */
+#mic-btn { position: relative; }
+#mic-btn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
+body.voice-off #mic-btn { display: none; }
+#mic-btn.recording { color: var(--danger); }
+#mic-btn.recording::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  border: 2px solid var(--danger);
+  animation: dot-ring 1.6s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #voice-btn.speaking:not(.muted) .s-on, #mic-btn.recording::after { animation: none !important; }
+}

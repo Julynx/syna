@@ -18,5 +18,10 @@
   "server_host": "127.0.0.1",
   "server_port": 8000,
   "session_idle_timeout_min": 15,
-  "upload_dest": "/home/user/uploads"
+  "upload_dest": "/home/user/uploads",
+  "voice": {
+    "silence_timeout_ms": 2000,
+    "silence_threshold_dbfs": -45,
+    "max_recording_ms": 60000
+  }
 }

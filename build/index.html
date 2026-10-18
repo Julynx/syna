@@ -14,6 +14,7 @@
 {{CSS}}
 {{CSS}}
 {{CSS}}
+{{CSS}}
 </head>
 <body data-ambient="idle">
 
@@ -26,6 +27,7 @@
   <span class="brand"><img class="brand-logo" src="vendor/syna-logo.png" alt="Syna"></span>
   <button id="newchat-btn" class="icon-btn" title="New chat" aria-label="Start a new chat"></button>
   <button id="sound-btn" class="icon-btn" title="Toggle sound" aria-label="Toggle sound"></button>
+  <button id="voice-btn" class="icon-btn" title="Voice mode" aria-label="Toggle voice mode"></button>
 </header>
 <div id="banner">Cannot reach the Syna server. Retrying... (start it with "uv run syna-server" and open http://127.0.0.1:8000)</div>
 
@@ -35,6 +37,7 @@
   <div class="composer">
     <button id="attach-btn" class="icon-btn" title="Attach files" aria-label="Attach files"></button>
     <textarea id="input" rows="1" placeholder="Message Syna..." aria-label="Message"></textarea>
+    <button id="mic-btn" class="icon-btn" title="Talk" aria-label="Record a voice message"></button>
     <button id="send-btn" title="Send" aria-label="Send" disabled></button>
     <input id="file-input" type="file" multiple>
   </div>
@@ -43,6 +46,7 @@
 <script src="vendor/markdown-it.min.js"></script>
 <script src="vendor/katex.min.js"></script>
 <script src="vendor/auto-render.min.js"></script>
+{{JS}}
 {{JS}}
 {{JS}}
 {{JS}}
