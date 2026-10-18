@@ -18,13 +18,9 @@
     />
     <link rel="stylesheet" href="vendor/katex.min.css" />
     <style>
-/* ==== css/base.css ==== */
-/* ===== Syna — design tokens & base =================================================== */
 :root {
   color-scheme: light dark;
   --bg: #f4f5f7;
-  /* Solid foreground glass. Darker and more opaque than pure white glass so
-     text stays readable over the bright parts of the ambient light field. */
   --surface: rgba(239, 241, 245, 0.8);
   --surface-strong: rgba(235, 238, 243, 0.92);
   --surface-soft: rgba(24, 28, 38, 0.075);
@@ -58,7 +54,6 @@
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --dur-in: 0.5s;
   --dur-out: 0.32s;
-  /* fine frost texture layered over every glass surface */
   --frost: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='1' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.07'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23g)'/%3E%3C/svg%3E");
 }
 @media (prefers-color-scheme: dark) {
@@ -114,8 +109,6 @@ body {
   flex-direction: column;
 }
 
-/* ---------- Lora (vendored, OFL) — the serif voice of the model ----------
-   Two subsets per style; unicode-range lets the browser pick per glyph. */
 @font-face {
   font-family: "Lora";
   src: url("vendor/fonts/lora-latin-400-normal.woff2") format("woff2");
@@ -188,9 +181,6 @@ body {
   outline-offset: 2px;
 }
 
-/* Shared glass recipe: one source of truth for every floating surface
-   (status pill, tool rows, event rows, file chips, see-more pill, copy button,
-   compaction summary). Elements add .glass and override specifics in their own rules. */
 .glass {
   background-color: var(--surface);
   background-image: var(--frost);
@@ -200,7 +190,6 @@ body {
   box-shadow: var(--glass-shadow-soft);
 }
 
-/* Shared keyframe: used by tool-row completion icons and the send button */
 @keyframes icon-pop {
   0% {
     transform: scale(0.4) rotate(-90deg);
@@ -212,10 +201,6 @@ body {
   }
 }
 
-/* ==== Icon font: Material Symbols Outlined, vendored subset ==== */
-/* The woff2 under vendor/fonts/ contains only the glyphs the UI uses (Apache
-   2.0, license alongside the font). To add a glyph, extend the icon_names
-   parameter of the css2 request on fonts.googleapis.com and replace the file. */
 @font-face {
   font-family: "Material Symbols Outlined";
   font-style: normal;
@@ -242,11 +227,7 @@ body {
 }
 
 </style> <style>
-/* ==== css/ambient.css ==== */
-/* ===== Syna — ambient background light field ========================================= */
 
-/* Registered so the state colors can crossfade smoothly (custom properties
-   are only transitionable when registered with a syntax). */
 @property --c3 {
   syntax: "<color>";
   inherits: true;
@@ -264,8 +245,8 @@ body {
 }
 
 body {
-  --glow: 99 102 241; /* accent rgb triplet for rings & the composer halo */
-  --tp: 24%; /* tint percentage of the corner color washes */
+  --glow: 99 102 241;
+  --tp: 24%;
   transition:
     --bgA 2.4s ease,
     --bgB 2.4s ease,
@@ -289,8 +270,6 @@ body[data-ambient="tool"] {
   }
 }
 
-/* The whole light field sits at reduced opacity so every layer (corner tints,
-   glow canvas, pulse rings, grain) fades uniformly toward the base --bg. */
 .ambient {
   position: fixed;
   inset: 0;
@@ -327,8 +306,6 @@ body[data-ambient="tool"] {
   inset: 0;
 }
 
-/* Canvas painted by js/ambient.js: bright core + corona. Rendered small,
-   upscaled and blurred = heavy diffusion. */
 .glow {
   position: absolute;
   left: -4%;
@@ -338,7 +315,6 @@ body[data-ambient="tool"] {
   filter: blur(12px);
 }
 
-/* Expanding ring on every ambientKick (message sent, tool finished, ...) */
 .pulse-ring {
   position: absolute;
   left: 50%;
@@ -371,8 +347,6 @@ body[data-ambient="tool"] {
 }
 
 </style> <style>
-/* ==== css/chrome.css ==== */
-/* ===== Syna — chrome: header, status pill, banner ==================================== */
 
 header {
   display: flex;
@@ -405,8 +379,6 @@ header {
   box-shadow: 0 0 10px 1px rgba(99, 102, 241, 0.55);
 }
 
-/* Wordmark logo (white glyphs, transparent background). The dark scheme
-   shows it as-is; light mode inverts it to black for contrast. */
 .brand-logo {
   display: block;
   height: 28px;
@@ -419,7 +391,6 @@ header {
   }
 }
 
-/* "Working..." / "Ready" pill that lives at the bottom of the conversation */
 .inline-status {
   display: flex;
   align-items: center;
@@ -481,8 +452,6 @@ header {
   }
 }
 
-/* Connection-lost banner: always in the layout, revealed by growing max-height
-   so the page below glides down instead of snapping. */
 #banner {
   display: block;
   position: relative;
@@ -509,8 +478,6 @@ header {
   opacity: 1;
 }
 
-/* Drag-and-drop overlay: revealed while files are dragged over the window.
-   Purely visual (pointer-events: none) so the drop lands on the page below. */
 #drop-overlay {
   position: fixed;
   inset: 0;
@@ -548,8 +515,6 @@ body.dragging #drop-overlay {
 }
 
 </style> <style>
-/* ==== css/chat.css ==== */
-/* ===== Syna — conversation: bubbles, tool rows, files, events, copy button =========== */
 
 #chat {
   flex: 1;
@@ -570,15 +535,12 @@ body.dragging #drop-overlay {
   margin: 0 auto;
 }
 
-/* PC: widen the column to trim the centered side margins; mobile keeps the
-   880px reading measure. Must stay in sync with .composer (composer.css). */
 @media (min-width: 1024px) {
   #chat > * {
     max-width: 1060px;
   }
 }
 
-/* ---------- bubbles ---------- */
 .bubble {
   position: relative;
   padding: 11px 15px;
@@ -615,7 +577,6 @@ body.dragging #drop-overlay {
   box-shadow: var(--glass-shadow);
   border-bottom-left-radius: 5px;
   transform-origin: 0 100%;
-  /* the agent's voice speaks in serif; UI chrome and user bubbles stay sans */
   font-family: var(--serif);
   font-size: 15.5px;
   line-height: 1.65;
@@ -745,7 +706,6 @@ body.dragging #drop-overlay {
     transform var(--dur-in) var(--ease);
 }
 
-/* ---------- copy-markdown button (model messages) ---------- */
 .copy-btn {
   position: absolute;
   top: 7px;
@@ -812,13 +772,12 @@ body.dragging #drop-overlay {
   }
 }
 
-/* ---------- tool calls ---------- */
 .tool-row {
   position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0 9px; /* no row gap: the details panel owns its spacing via margin */
+  gap: 0 9px;
   font-size: 13px;
   color: var(--muted);
   padding: 6px 12px;
@@ -839,7 +798,6 @@ body.dragging #drop-overlay {
   border-color: var(--accent-line);
 }
 
-/* running state = soft glow layers underneath + slow sheen, never a blink */
 .tool-row.running {
   background-image: var(--frost);
   border-color: var(--border);
@@ -976,7 +934,6 @@ body.dragging #drop-overlay {
   }
 }
 
-/* completion flash + icon pop */
 .tool-row.just-done {
   animation: done-flash 1.3s var(--ease);
 }
@@ -996,8 +953,6 @@ body.dragging #drop-overlay {
   }
 }
 
-/* details panel: the row owns 0 row-gap, the panel owns 15px margin
-   (9px flex gap + 6px old margin) so collapsing to 0 leaves no jump */
 .tool-row pre {
   flex-basis: 100%;
   display: none;
@@ -1016,7 +971,7 @@ body.dragging #drop-overlay {
   filter: blur(8px);
   transform: translateY(2px);
   cursor: auto;
-  transition: none; /* open/close is animated from js/chat.js (height + margin + fade) */
+  transition: none;
 }
 .tool-row.open pre {
   display: block;
@@ -1025,25 +980,18 @@ body.dragging #drop-overlay {
   transform: none;
 }
 
-/* rows beyond MAX_VISIBLE_TOOL_CALLS live inside a wrapper; the pill expands
-   and collapses THE WRAPPER (one height animation = one layout change), and
-   rows inside only crossfade — opacity/blur never touch layout, so nothing
-   janks or jumps while the run opens and closes. */
 .tool-overflow {
   display: flex;
   flex-direction: column;
-  gap: 10px; /* keep inner spacing identical to #chat */
+  gap: 10px;
 }
-/* '#chat > *' sets 'margin: 0 auto' with ID specificity, so this override
-   must carry an ID too or the negative margin silently loses the cascade. */
 #chat > .tool-overflow.collapsed {
   height: 0;
-  margin-top: -10px; /* cancels the #chat gap on both sides while collapsed */
+  margin-top: -10px;
   overflow: hidden;
-  visibility: hidden; /* out of the tab order once fully collapsed */
+  visibility: hidden;
 }
 
-/* ---------- files ---------- */
 .file-chip {
   display: inline-flex;
   align-items: center;
@@ -1092,7 +1040,6 @@ body.dragging #drop-overlay {
   align-items: flex-end;
 }
 
-/* ---------- events ---------- */
 .event-row {
   font-size: 12.5px;
   color: var(--muted);
@@ -1110,7 +1057,6 @@ body.dragging #drop-overlay {
     var(--frost), linear-gradient(135deg, var(--danger-tint), var(--surface));
 }
 
-/* ---------- see more / less: one stable pill, never changes size or position ---------- */
 #chat > .see-more {
   display: flex;
   flex-direction: row;
@@ -1222,7 +1168,6 @@ body.dragging #drop-overlay {
   }
 }
 
-/* ---------- compaction ---------- */
 .compaction-divider {
   font-family: var(--mono);
   font-size: 12px;
@@ -1249,7 +1194,6 @@ body.dragging #drop-overlay {
     transform var(--dur-in) var(--ease);
 }
 
-/* ---------- shared entrances & exits ---------- */
 @starting-style {
   .bubble,
   .tool-row,
@@ -1279,7 +1223,6 @@ body.dragging #drop-overlay {
   pointer-events: none !important;
 }
 
-/* ---------- scrollbars ---------- */
 #chat::-webkit-scrollbar,
 .tool-row pre::-webkit-scrollbar,
 .compaction-summary::-webkit-scrollbar,
@@ -1305,7 +1248,6 @@ body.dragging #drop-overlay {
   background-clip: content-box;
 }
 
-/* ---------- reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {
   .status-dot.working,
   .status-dot.working::after,
@@ -1338,8 +1280,6 @@ body.dragging #drop-overlay {
 }
 
 </style> <style>
-/* ==== css/composer.css ==== */
-/* ===== Syna — composer: input bar, buttons, busy halo ================================ */
 
 footer {
   padding: 10px 12px;
@@ -1374,7 +1314,6 @@ footer {
     var(--glass-shadow);
 }
 
-/* spinning halo while the model is busy */
 @property --ang {
   syntax: "<angle>";
   initial-value: 0deg;
@@ -1505,9 +1444,6 @@ footer {
   display: none;
 }
 
-/* The header button group (sound, voice, new chat) sits at the right edge:
-   the auto margin anchors the FIRST button of the group, and the flex gap
-   keeps the rest together after it. */
 #sound-btn {
   margin-left: auto;
   width: 34px;
@@ -1541,8 +1477,6 @@ footer {
   }
 }
 
-/* PC: widen the composer along with the conversation column (chat.css) to
-   trim the large centered side margins. Mobile keeps the 880px column. */
 @media (min-width: 1024px) {
   .composer {
     max-width: 1060px;
@@ -1550,10 +1484,7 @@ footer {
 }
 
 </style> <style>
-/* ==== css/voice.css ==== */
-/* ===== Syna — voice mode: header toggle, composer mic, speaking & recording states ===== */
 
-/* voice toggle: two stacked icons crossfade on .muted (same pattern as #sound-btn) */
 #voice-btn {
   width: 34px;
   height: 34px;
@@ -1574,7 +1505,6 @@ footer {
   animation: pulse 1.4s ease-in-out infinite;
 }
 
-/* microphone in the composer: visible only while voice mode is on */
 #mic-btn {
   position: relative;
 }
@@ -1674,17 +1604,8 @@ body.voice-off #mic-btn {
     <script src="vendor/katex.min.js"></script>
     <script src="vendor/auto-render.min.js"></script>
     <script>
-/* ==== js/ambient.js ==== */
 "use strict";
 
-// Maps app activity onto the background light field:
-//   idle     -> waiting for the user
-//   thinking -> user sent a message, awaiting the model
-//   tool     -> waiting for a tool call to complete
-// The same tool visuals play while the model narrates aloud (voice.js): the
-// state keeps blending through the W weights, so entering and leaving
-// narration is as fluid as any other state change.
-// Reads the global `busy` flag owned by js/chat.js.
 let ambientState = "";
 function updateAmbient() {
   const narrating = window.Voice ? Voice.speaking : false;
@@ -1701,9 +1622,6 @@ function updateAmbient() {
   document.body.setAttribute("data-ambient", next);
 }
 
-// Glow: a bright core with a corona. The corona is ~22 stacked translucent shapes whose
-// outlines are r(theta) = R * (1 + spread * f^1.5 * (1 + amp * d(theta))), where d is a
-// smoothed sum of random sine waves. Rendered small, upscaled and blurred = heavy diffusion.
 (function () {
   const root = document.querySelector(".ambient");
   const field = root.querySelector(".field");
@@ -1721,17 +1639,17 @@ function updateAmbient() {
       [167, 139, 250],
       [240, 160, 192],
       [124, 196, 255],
-    ], // violet / rose / sky, merged
+    ],
     thinking: [
       [255, 168, 96],
       [255, 207, 122],
       [255, 138, 122],
-    ], // soft orange dominant
+    ],
     tool: [
       [91, 155, 255],
       [127, 208, 255],
       [122, 124, 255],
-    ], // mostly blue
+    ],
   };
   const MODE = {
     idle: { gain: 1, speed: 1, amp: 0.4, spread: 1 },
@@ -1741,7 +1659,6 @@ function updateAmbient() {
   const col = PAL.idle.map((x) => x.slice());
   const W = { idle: 1, thinking: 0, tool: 0 };
   const cur = { gain: 1, speed: 1, amp: 0.4, spread: 1 };
-  // random harmonics: integer k so the outline closes; low k dominate (smooth), each drifts at its own pace
   const SIN = [1, 2, 3, 5, 7, 10].map((k, i) => ({
     k,
     i,
@@ -1795,7 +1712,6 @@ function updateAmbient() {
     PAL[st].forEach((tc, i) => {
       for (let j = 0; j < 3; j++) col[i][j] += (tc[j] - col[i][j]) * ease;
     });
-    // breathing / state pulse
     const ph = (t % 1.15) / 1.15;
     const idle = 0.5 + 0.5 * Math.sin((t * TAU) / 8);
     const think =
@@ -1808,8 +1724,6 @@ function updateAmbient() {
     pulse = W.idle * idle + W.thinking * think + W.tool * beat;
     kv += (-90 * ks - 9 * kv) * dt;
     ks += kv * dt;
-    // one corona per colour. Each is the same random-sine outline, but time-shifted (tau) and
-    // radially scaled (scl) -> radial chromatic aberration; additive blend in dark mode
     for (const h of SIN) h.p += h.w * cur.speed * dt;
     const W_ = cv.width,
       H_ = cv.height,
@@ -1855,7 +1769,6 @@ function updateAmbient() {
     }
     c.globalCompositeOperation = "source-over";
     c.globalAlpha = 1;
-    // hot rim hugging the core
     const hot = col[0].map((v) => v + (255 - v) * 0.6);
     const rim = c.createRadialGradient(cx, cy, R * 0.96, cx, cy, R * 1.3);
     rim.addColorStop(
@@ -1872,8 +1785,6 @@ function updateAmbient() {
     c.beginPath();
     c.arc(cx, cy, R * 1.3, 0, TAU);
     c.fill();
-    // the bright core: a hot near-white heart tinted with the state hue, breathing with
-    // the same pulse as the corona; creamy falloff melts it into the surrounding light
     const coreA = (isDark ? 0.95 : 0.85) * (0.86 + 0.14 * pulse);
     const coreHi = col[0].map((v) => v + (255 - v) * 0.85);
     const coreLo = col[0].map((v) => v + (255 - v) * 0.4);
@@ -1907,17 +1818,10 @@ function updateAmbient() {
 })();
 
 </script> <script>
-/* ==== js/sfx.js ==== */
 "use strict";
 
-// Synthesized UI sounds: every note is a small chord of detuned partials plus a
-// filtered noise "tick". Loudness drifts smoothly between plays, sounds in the
-// same category crossfade into each other, and the master level ramps (never cuts).
 const Sfx = (() => {
-  // Volume tiers (g): thinking < tool < user actions < sent message.
-  // Pitches stay on root / fifth / octave only, so nothing forms a tune.
   const S = {
-    // user actions: middle
     click: {
       n: [
         [0, 0],
@@ -1976,7 +1880,6 @@ const Sfx = (() => {
       cat: "ui",
       gap: 0.1,
     },
-    // messages: sent is the loudest sound in the app
     send: {
       n: [
         [0, 0],
@@ -2002,7 +1905,6 @@ const Sfx = (() => {
       cat: "msg",
       gap: 0.1,
     },
-    // tool events
     tick: {
       n: [[7, 0]],
       g: 0.06,
@@ -2038,7 +1940,6 @@ const Sfx = (() => {
       cat: "tool",
       gap: 0.1,
     },
-    // activity layer (no category: notes overlap and ring out naturally)
     think1: {
       n: [
         [0, 0],
@@ -2104,7 +2005,6 @@ const Sfx = (() => {
       bus.connect(comp);
       comp.connect(master);
       master.connect(ctx.destination);
-      // soft room: filtered feedback delay
       const dl = ctx.createDelay();
       dl.delayTime.value = 0.11;
       const fb = ctx.createGain();
@@ -2128,7 +2028,6 @@ const Sfx = (() => {
       const d = noise.getChannelData(0);
       for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
       for (const k of ["thinking", "tool"]) {
-        // per-state activity buses, silent until needed
         acts[k] = ctx.createGain();
         acts[k].gain.value = 0;
         acts[k].connect(bus);
@@ -2145,7 +2044,7 @@ const Sfx = (() => {
     const now = ctx.currentTime;
     if (now - (last[name] || 0) < def.gap) return;
     last[name] = now;
-    level += (0.55 + 0.45 * Math.random() - level) * 0.4; // smooth loudness drift
+    level += (0.55 + 0.45 * Math.random() - level) * 0.4;
     const root = ROOTS[document.body.dataset.ambient || "idle"];
     const shift = def.vary ? [0, 7, 12][(Math.random() * 3) | 0] : 0;
     const peak = def.g * level;
@@ -2157,7 +2056,6 @@ const Sfx = (() => {
     env.connect(pan);
     const prev = def.cat && active[def.cat];
     if (prev) {
-      // crossfade the previous sound of this category out
       prev.gain.setValueAtTime(prev.gain.value, now);
       prev.gain.setTargetAtTime(0, now, 0.03);
     }
@@ -2195,7 +2093,6 @@ const Sfx = (() => {
       }
     }
     if (def.tr) {
-      // soft filtered noise transient = the "click"
       const src = ctx.createBufferSource();
       src.buffer = noise;
       const bp = ctx.createBiquadFilter();
@@ -2220,8 +2117,6 @@ const Sfx = (() => {
     );
   }
 
-  // Activity layer: clicks/polytones only while the model is working. Each state
-  // has its own bus; switching crossfades them, and idle fades everything to silence.
   function sync() {
     if (!ctx) return;
     const st = document.body.dataset.ambient || "idle";
@@ -2239,8 +2134,6 @@ const Sfx = (() => {
   function loop() {
     if (!on || !ctx || cur === "idle") return;
     if (window.Voice && Voice.speaking) {
-      // Narration owns the soundscape: poll on, but play nothing until the
-      // voice falls quiet (the tool visuals keep running regardless).
       timer = setTimeout(loop, 400);
       return;
     }
@@ -2285,7 +2178,6 @@ const Sfx = (() => {
   };
 })();
 
-// Sound toggle button: stacks a muted/unmuted icon pair and flips between them.
 (function () {
   const btn = document.getElementById("sound-btn");
   const paint = () => btn.classList.toggle("muted", !Sfx.on);
@@ -2316,14 +2208,8 @@ const Sfx = (() => {
 })();
 
 </script> <script>
-/* ==== js/markdown.js ==== */
 "use strict";
 
-// Markdown rendering for model messages. Delegated to the vendored markdown-it
-// library (MIT, see assets/vendor/markdown-it.LICENSE.txt). It runs with
-// html: false, so raw HTML in model output is escaped, keeping the renderer
-// XSS-safe. When the vendor file is missing, a minimal escaped-text fallback
-// keeps messages readable.
 
 const md =
   typeof window.markdownit === "function"
@@ -2342,25 +2228,7 @@ function renderMarkdown(source) {
   return restoreMath(md.render(extracted.text), extracted.mathStore);
 }
 
-// ---------- LaTeX math inside model messages ----------
-// Rendered by the vendored KaTeX after markdown. Two extra passes are needed
-// because markdown-it would otherwise eat the backslashes ("\(" comes out of
-// the parser as "("): math spans are lifted out before rendering, restored
-// verbatim (HTML-escaped) after, and KaTeX auto-render then finds them in the
-// DOM. Fenced and inline code are shielded first, so math inside code blocks
-// stays literal.
-//
-// Display math ($$..$$, \[..\]) and \(..\) go through auto-render, whose
-// delimiter list never gets a bare '$': inside auto-render any two literal
-// dollar signs in the DOM would pair up and turn prices into math. Inline
-// $..$ is instead extracted here — with pandoc-style guards — and rendered
-// directly via katex.renderToString at restore time. The guards: the opening
-// '$' is unescaped ("\$" is shielded first) and not followed by whitespace,
-// the content sits on one line with non-space edges, and the closing '$' is
-// not followed by a digit. So "$x$" renders, while "$5 and $10" or "$2+$3"
-// stay literal prices.
 const MATH_RE = /\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)/g;
-// Inline $..$: one line, non-space edges, no digit right after the closing '$'.
 const INLINE_DOLLAR_RE = /\$([^\s$](?:[^$\n]*?[^\s$])?)\$(?!\d)/g;
 const MATH_TOKEN_RE = /MQ(\d+)QM/g;
 
@@ -2380,11 +2248,7 @@ function escapeHtml(text) {
 function extractMath(source) {
   const codeStore = [];
   const dollarStore = [];
-  const mathStore = []; // items: { src, inline }
-  // shield fenced + inline code so neither math extraction nor the placeholder
-  // rewrite touches code content, then shield escaped dollars so a literal
-  // "\$" can never open a $..$ span (restored before markdown runs, so "\$"
-  // still renders as a plain '$' outside math)
+  const mathStore = [];
   let text = String(source)
     .replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, (m) => {
       codeStore.push(m);
@@ -2400,15 +2264,13 @@ function extractMath(source) {
     });
   text = text.replace(MATH_RE, (m) => {
     mathStore.push({ src: m, inline: false });
-    return "MQ" + (mathStore.length - 1) + "QM"; // plain-word token survives markdown
+    return "MQ" + (mathStore.length - 1) + "QM";
   });
   text = text.replace(INLINE_DOLLAR_RE, (m, inner) => {
-    if (/^\d+(?:[.,]\d+)?$/.test(inner)) return m; // "$19.99$" is currency, not math
+    if (/^\d+(?:[.,]\d+)?$/.test(inner)) return m;
     mathStore.push({ src: "$" + inner + "$", inline: true });
     return "MQ" + (mathStore.length - 1) + "QM";
   });
-  // un-shield: back to "\$" in both the markdown text and any math span that
-  // legitimately contained an escaped dollar (KaTeX renders "\$" as '$')
   const unshieldDollars = (s) =>
     s.replace(/\x00D(\d+)\x00/g, (_, i) => dollarStore[+i]);
   text = unshieldDollars(text);
@@ -2419,10 +2281,6 @@ function extractMath(source) {
   return { text, mathStore };
 }
 
-// Inline spans are rendered directly instead of going through auto-render:
-// katex.renderToString returns finished HTML, so no bare '$' delimiter ever
-// has to exist for auto-render. Falls back to the escaped literal when the
-// vendored KaTeX is unavailable.
 function renderInlineMath(src) {
   if (typeof window.katex === "undefined" || !window.katex.renderToString)
     return null;
@@ -2469,13 +2327,8 @@ function applyLinkPolicy(container) {
 }
 
 </script> <script>
-/* ==== js/chat.js ==== */
 "use strict";
 
-// Chat client: WebSocket transport, conversation rendering (bubbles, tool rows,
-// file chips, events, compaction) and the composer. Visual state classes are
-// styled in css/chat.css; all entrance/exit motion runs through the WAAPI
-// helpers below so nothing on the page ever snaps.
 
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
@@ -2518,10 +2371,6 @@ const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
 const EASE_IN = "cubic-bezier(0.65, 0, 0.35, 1)";
 
-// ---------- icons ----------
-// Glyphs from the vendored Material Symbols Outlined subset (see base.css for
-// the @font-face and the regeneration instructions). Icons that get
-// stacked/crossfaded inside a button take a class (cls).
 const GLYPH = (name, cls) =>
   '<span class="material-symbols-outlined' +
   (cls ? " " + cls : "") +
@@ -2560,7 +2409,6 @@ const TOOL_META = {
 
 const DECODE_ERROR_PREFIX = "A tool call could not be decoded as JSON";
 
-// ---------- small helpers ----------
 function formatSize(bytes) {
   if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
   if (bytes >= 1024) return (bytes / 1024).toFixed(1) + " KB";
@@ -2596,8 +2444,6 @@ function append(element) {
   if (stick) followBottom(700);
 }
 
-// Cancels a stored WAAPI animation (rows, panels and the status pill keep
-// their running animation on el._anim).
 function cancelAnim(host) {
   if (host._anim) {
     host._anim.onfinish = null;
@@ -2606,7 +2452,6 @@ function cancelAnim(host) {
   }
 }
 
-// ---------- bubbles ----------
 function addBubble(content, side, queued) {
   const bubble = document.createElement("div");
   bubble.className = "bubble " + side;
@@ -2629,14 +2474,11 @@ function addBubble(content, side, queued) {
   }
 }
 
-// ---------- copy-markdown button (top right of every model message) ----------
-// Copies the model's raw markdown source — never the rendered HTML.
 const COPY_FEEDBACK_MS = 1400;
 
 function copyText(text) {
   if (navigator.clipboard && window.isSecureContext)
     return navigator.clipboard.writeText(text);
-  // Fallback for non-secure contexts (e.g. plain http over the network)
   return new Promise((resolve, reject) => {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -2678,7 +2520,6 @@ function addCopyButton(bubble, source) {
   bubble.appendChild(btn);
 }
 
-// ---------- tool rows ----------
 function toolEventText(event) {
   const meta = TOOL_META[event.name];
   if (!meta) return truncateArg(event.signature);
@@ -2693,8 +2534,6 @@ function toolEventText(event) {
   return verb + (arg ? ' "' + arg + '"' : "");
 }
 
-// web_interact rows read as actions, not raw signatures: the browser
-// command picks the verb and the most meaningful argument is shown.
 const WEB_VERBS = {
   goto: "Visited",
   snapshot: "Read page",
@@ -2770,16 +2609,8 @@ function ensureMoreRow(run) {
   return run.moreRow;
 }
 
-// ---------- see more / less (structural fix) ----------
-// Every row past MAX_VISIBLE_TOOL_CALLS lives inside a .tool-overflow wrapper
-// sitting between the visible rows and the pill. Expanding/collapsing animates
-// THE WRAPPER's height (one element = one layout change per frame), while the
-// rows inside only crossfade — opacity and blur never trigger layout, so the
-// motion stays on the compositor and nothing around the run snaps. Collapsed,
-// the wrapper's negative margin cancels #chat's row gap so the spacing is
-// exactly what display:none rows used to leave behind.
 
-const CHAT_GAP = 10; // keep in sync with #chat { gap: 10px } and .tool-overflow { gap }
+const CHAT_GAP = 10;
 
 function ensureOverflowWrap(run) {
   if (!run.wrap) {
@@ -2789,7 +2620,7 @@ function ensureOverflowWrap(run) {
     if (run.moreRow && run.moreRow.parentNode === chat) {
       chat.insertBefore(wrap, run.moreRow);
     } else if (statusRow.parentNode === chat) {
-      chat.insertBefore(wrap, statusRow); // status pill always stays last
+      chat.insertBefore(wrap, statusRow);
     } else {
       chat.appendChild(wrap);
     }
@@ -2808,9 +2639,6 @@ function expandToolRun(run) {
     cancelAnim(wrap);
     wrap.style.overflow = "hidden";
     wrap.classList.remove("collapsed");
-    // Fractional target from the laid-out element (scrollHeight rounds to
-    // whole pixels and would snap against the natural height at the end),
-    // mirroring the collapse path's start measurement.
     const target = wrap.getBoundingClientRect().height;
     const anim = (wrap._anim = wrap.animate(
       [
@@ -2824,7 +2652,7 @@ function expandToolRun(run) {
       wrap._anim = null;
     };
     rows.forEach((row, i) => {
-      cancelAnim(row); // a lingering collapse fade would otherwise keep opacity at 0
+      cancelAnim(row);
       row.style.opacity = "0";
       const fade = row.animate(
         [
@@ -2885,8 +2713,8 @@ function collapseToolRun(run) {
       wrap.classList.add("collapsed");
       wrap.style.overflow = "";
       wrap._anim = null;
-      anim.cancel(); // .collapsed holds the end state; drop the fill
-      rows.forEach((row) => cancelAnim(row)); // drop the forwards fills too
+      anim.cancel();
+      rows.forEach((row) => cancelAnim(row));
     };
   } else if (wrap) {
     wrap.classList.add("collapsed");
@@ -2896,9 +2724,6 @@ function collapseToolRun(run) {
   if (stick) followBottom(700);
 }
 
-// Shared placement for every tool row, successful or failed: rows always join
-// the current run and count toward the MAX_VISIBLE_TOOL_CALLS cap, so errored
-// calls are grouped behind the see-more pill exactly like the rest.
 function placeToolRow(row) {
   if (!toolRun) {
     toolRun = { rows: [], moreRow: null, expanded: false, wrap: null };
@@ -2906,13 +2731,11 @@ function placeToolRow(row) {
   toolRun.rows.push(row);
   const stick = isAtBottom();
   if (toolRun.rows.length > MAX_VISIBLE_TOOL_CALLS) {
-    // Rows past the cap always live in the wrapper. Collapsed, the wrapper
-    // keeps its height at 0, so adding rows shifts nothing outside it.
     ensureMoreRow(toolRun);
     const wrap = ensureOverflowWrap(toolRun);
     if (toolRun.moreRow.parentNode !== chat) {
       chat.insertBefore(toolRun.moreRow, wrap.nextSibling);
-      growIn(toolRun.moreRow); // the pill must not pop in unanimated
+      growIn(toolRun.moreRow);
     }
     wrap.appendChild(row);
     if (toolRun.expanded) growIn(row);
@@ -2967,7 +2790,6 @@ const boxOf = (el, cs) => ({
   borderBottomWidth: cs.borderBottomWidth,
 });
 
-// New elements grow from zero height so nothing around them snaps.
 function growIn(el, delay) {
   if (REDUCE || !el.isConnected || !el.getBoundingClientRect().height) return;
   const cs = getComputedStyle(el);
@@ -2985,8 +2807,6 @@ function growIn(el, delay) {
   };
 }
 
-// Tool-call details: the output panel animates height + margin + fade, so the
-// row (and everything below it) resizes continuously.
 function toggleOpen(row) {
   const pre = row.querySelector("pre");
   if (!pre || REDUCE) {
@@ -3033,7 +2853,6 @@ function toggleOpen(row) {
   if (stick) followBottom(opening ? 560 : 420);
 }
 
-// textarea grows/shrinks with a transition (height can't animate from auto)
 function fitInput() {
   const prev = input.offsetHeight;
   input.style.transition = "none";
@@ -3088,7 +2907,7 @@ function addDecodeErrorRow(detail) {
     "<pre hidden></pre>";
   row.querySelector("pre").textContent = detail;
   row.addEventListener("click", () => toggleOpen(row));
-  placeToolRow(row); // count errored calls toward the run's grouping cap
+  placeToolRow(row);
 }
 
 function addFileChip(event) {
@@ -3130,8 +2949,6 @@ let statusHideTimer = null;
 
 function setStatus(kind, label) {
   statusDot.className = "status-dot " + kind;
-  // The pill hugs its text (width: fit-content): a bare text swap would
-  // snap its width, so animate old width -> new width while it is visible.
   const widthBefore =
     statusRow.parentNode === chat
       ? statusRow.getBoundingClientRect().width
@@ -3185,7 +3002,6 @@ function setStatus(kind, label) {
   }
 }
 
-// ---------- event dispatch ----------
 function render(event) {
   const kick = {
     user_message: 1,
@@ -3202,16 +3018,12 @@ function render(event) {
     tool_call:
       event.status === "started" ? "tick" : event.failed ? "error" : "done",
   }[event.type];
-  // A narrated message speaks instead of blipping: only the voice is heard
-  // while the model talks.
   const narrates =
     event.type === "model_message" &&
     window.Voice &&
     Voice.willNarrate(event.content);
   if (snd && !narrates) Sfx.play(snd);
   if (event.type !== "file" && event.type !== "file_sent") closeFileGroup();
-  // A decode error is a malformed reply of the ongoing turn, not a new one:
-  // keep the run alive so its errored row groups with the surrounding calls.
   const isDecodeError =
     event.type === "error" && event.text.startsWith(DECODE_ERROR_PREFIX);
   if (
@@ -3277,7 +3089,6 @@ function render(event) {
   }
 }
 
-// ---------- transport ----------
 function connect() {
   ws = new WebSocket(WS_BASE + "/ws/" + clientId);
 
@@ -3287,7 +3098,7 @@ function connect() {
     chat.innerHTML = "";
     toolRun = null;
     replaying = true;
-    if (window.Voice) Voice.reset(); // every fresh session starts voice as configured
+    if (window.Voice) Voice.reset();
     setStatus("ready", "Ready");
     updateAmbient();
   };
@@ -3313,12 +3124,7 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
-// ---------- composer ----------
 function setSendState() {
-  // Icon swap (and the .pop animation) only on a send<->stop mode change,
-  // which happens when a message is sent or a turn finishes. Typing must
-  // not retrigger the animation: rewriting innerHTML on every keystroke
-  // would insert a fresh icon that replays the pop while .pop lingers.
   const mode = busy ? "stop" : "send";
   if (sendBtn.dataset.mode !== mode) {
     sendBtn.dataset.mode = mode;
@@ -3349,13 +3155,6 @@ function sendStop() {
   setStatus("working", "Stopping...");
 }
 
-// ---------- new chat ----------
-// Stops the running turn (the server does the same if it is still busy),
-// wipes the VM + conversation server-side, then reconnects for a fresh
-// session with a brand new container. Teardown is not instant — stopping a
-// turn alone can wait up to 20s server-side, plus container cleanup — so
-// the button disables itself and the client says what is going on instead
-// of sitting silent on a clickable button.
 let newChatBusy = false;
 
 async function newChat() {
@@ -3367,7 +3166,7 @@ async function newChat() {
   addEventRow("Cleaning up the pod, please wait...");
   try {
     if (busy && ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "stop" })); // stop-then-wipe
+      ws.send(JSON.stringify({ type: "stop" }));
     }
     const response = await fetch(API_BASE + "/api/new-chat/" + clientId, {
       method: "POST",
@@ -3384,7 +3183,7 @@ async function newChat() {
     setSendState();
     addEventRow("Starting a fresh session...");
     input.focus();
-    connect(); // onopen clears the rest of the visual state
+    connect();
   } catch (err) {
     addEventRow("Could not start a new chat: " + err.message, true);
     setStatus("ready", "Ready");
@@ -3409,7 +3208,6 @@ function uploadFiles(files) {
   }
 }
 
-// ---------- wiring & boot ----------
 attachBtn.innerHTML = ICONS.clip;
 newchatBtn.innerHTML = ICONS.newchat;
 setSendState();
@@ -3436,11 +3234,6 @@ input.addEventListener("keydown", (keyEvent) => {
   }
 });
 
-// ---------- drag & drop / paste uploads ----------
-// Files dragged over the window or pasted into the composer take the same
-// upload path as the attach button. The drop overlay is revealed while a file
-// drag is over the page; a depth counter keeps it stable across child
-// element boundaries.
 
 let dragDepth = 0;
 
@@ -3492,20 +3285,8 @@ input.addEventListener("paste", (event) => {
 connect();
 
 </script> <script>
-/* ==== js/voice.js ==== */
 "use strict";
 
-// Voice mode: records the microphone, stops after a stretch of silence,
-// transcribes the clip server-side and sends it as a regular message; new
-// model replies are fetched from the speech endpoint and played out loud.
-// Voice is a per-session state: it starts as configured by the server
-// (SYNA_CONFIG.voice.voice_mode_on), carries no memory across visits, and
-// every fresh session (page load, new chat, server restart) resets it. It
-// is only togglable when the .env provides a speech model. While narrating,
-// the background light field borrows the tool-call animation until the
-// speech ends. The module is published as window.Voice so chat.js (a
-// separate script block) can route model messages to speak() — a top-level
-// const alone would not be visible across scripts as a window property.
 
 const Voice = (() => {
   const settings = (window.SYNA_CONFIG && window.SYNA_CONFIG.voice) || {};
@@ -3586,9 +3367,6 @@ const Voice = (() => {
       pill.remove();
       return;
     }
-    // Status-pill exit pattern: cancel any entrance, then shrink the box to
-    // zero while the negative margin eats the chat gap, so removing the
-    // element afterwards shifts nothing.
     pill.getAnimations().forEach((anim) => anim.cancel());
     pill.style.overflow = "hidden";
     const cs = getComputedStyle(pill);
@@ -3605,7 +3383,7 @@ const Voice = (() => {
   function setSpeaking(next) {
     if (speaking === next) return;
     speaking = next;
-    if (next) hidePill(); // the tuning-up pill has done its job
+    if (next) hidePill();
     updateAmbient();
   }
 
@@ -3631,7 +3409,7 @@ const Voice = (() => {
   async function speak(rawText) {
     const text = speakableText(String(rawText || ""));
     if (!enabled || !TTS_AVAILABLE || !text) {
-      hidePill(); // defensive: a shown pill always dies with its speak()
+      hidePill();
       return;
     }
     stopPlayback();

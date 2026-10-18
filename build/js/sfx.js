@@ -1,14 +1,7 @@
-/* ==== js/sfx.js ==== */
 "use strict";
 
-// Synthesized UI sounds: every note is a small chord of detuned partials plus a
-// filtered noise "tick". Loudness drifts smoothly between plays, sounds in the
-// same category crossfade into each other, and the master level ramps (never cuts).
 const Sfx = (() => {
-  // Volume tiers (g): thinking < tool < user actions < sent message.
-  // Pitches stay on root / fifth / octave only, so nothing forms a tune.
   const S = {
-    // user actions: middle
     click: {
       n: [
         [0, 0],
@@ -67,7 +60,6 @@ const Sfx = (() => {
       cat: "ui",
       gap: 0.1,
     },
-    // messages: sent is the loudest sound in the app
     send: {
       n: [
         [0, 0],
@@ -93,7 +85,6 @@ const Sfx = (() => {
       cat: "msg",
       gap: 0.1,
     },
-    // tool events
     tick: {
       n: [[7, 0]],
       g: 0.06,
@@ -129,7 +120,6 @@ const Sfx = (() => {
       cat: "tool",
       gap: 0.1,
     },
-    // activity layer (no category: notes overlap and ring out naturally)
     think1: {
       n: [
         [0, 0],
@@ -195,7 +185,6 @@ const Sfx = (() => {
       bus.connect(comp);
       comp.connect(master);
       master.connect(ctx.destination);
-      // soft room: filtered feedback delay
       const dl = ctx.createDelay();
       dl.delayTime.value = 0.11;
       const fb = ctx.createGain();
@@ -219,7 +208,6 @@ const Sfx = (() => {
       const d = noise.getChannelData(0);
       for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
       for (const k of ["thinking", "tool"]) {
-        // per-state activity buses, silent until needed
         acts[k] = ctx.createGain();
         acts[k].gain.value = 0;
         acts[k].connect(bus);
@@ -236,7 +224,7 @@ const Sfx = (() => {
     const now = ctx.currentTime;
     if (now - (last[name] || 0) < def.gap) return;
     last[name] = now;
-    level += (0.55 + 0.45 * Math.random() - level) * 0.4; // smooth loudness drift
+    level += (0.55 + 0.45 * Math.random() - level) * 0.4;
     const root = ROOTS[document.body.dataset.ambient || "idle"];
     const shift = def.vary ? [0, 7, 12][(Math.random() * 3) | 0] : 0;
     const peak = def.g * level;
@@ -248,7 +236,6 @@ const Sfx = (() => {
     env.connect(pan);
     const prev = def.cat && active[def.cat];
     if (prev) {
-      // crossfade the previous sound of this category out
       prev.gain.setValueAtTime(prev.gain.value, now);
       prev.gain.setTargetAtTime(0, now, 0.03);
     }
@@ -286,7 +273,6 @@ const Sfx = (() => {
       }
     }
     if (def.tr) {
-      // soft filtered noise transient = the "click"
       const src = ctx.createBufferSource();
       src.buffer = noise;
       const bp = ctx.createBiquadFilter();
@@ -311,8 +297,6 @@ const Sfx = (() => {
     );
   }
 
-  // Activity layer: clicks/polytones only while the model is working. Each state
-  // has its own bus; switching crossfades them, and idle fades everything to silence.
   function sync() {
     if (!ctx) return;
     const st = document.body.dataset.ambient || "idle";
@@ -330,8 +314,6 @@ const Sfx = (() => {
   function loop() {
     if (!on || !ctx || cur === "idle") return;
     if (window.Voice && Voice.speaking) {
-      // Narration owns the soundscape: poll on, but play nothing until the
-      // voice falls quiet (the tool visuals keep running regardless).
       timer = setTimeout(loop, 400);
       return;
     }
@@ -376,7 +358,6 @@ const Sfx = (() => {
   };
 })();
 
-// Sound toggle button: stacks a muted/unmuted icon pair and flips between them.
 (function () {
   const btn = document.getElementById("sound-btn");
   const paint = () => btn.classList.toggle("muted", !Sfx.on);

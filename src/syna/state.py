@@ -6,8 +6,6 @@ from contextlib import ExitStack
 
 from bollard import Container, DockerClient
 
-logging.getLogger("bollard").setLevel(logging.WARNING)
-
 CONTAINER_IMAGE = "python:3.14-trixie"
 
 _local = threading.local()
@@ -57,12 +55,17 @@ def destroy_container(container: Container) -> None:
 
 
 def init_docker_client(*args, **kwargs):
-    """Initializes the context manager globally."""
+    """Initialize the global Docker client context.
+
+    Also quiets the bollard logger, whose per-request debug output would
+    otherwise flood the syna log file.
+    """
     global _exit_stack, client
 
     if _exit_stack is not None:
         raise RuntimeError("Docker client is already initialized.")
 
+    logging.getLogger("bollard").setLevel(logging.WARNING)
     _exit_stack = ExitStack()
     client = _exit_stack.enter_context(DockerClient(*args, **kwargs))
 
@@ -77,15 +80,6 @@ def close_docker_client():
         _global_container = None
 
     if _exit_stack is not None:
-        _exit_stack.close()
-        _exit_stack = None
+        stack, _exit_stack = _exit_stack, None
         client = None
-
-
-def get_docker_client() -> DockerClient:
-    """Safely retrieves the docker client."""
-    if client is None:
-        raise RuntimeError(
-            "Docker client has not been initialized. Call init_docker_client() first."
-        )
-    return client
+        stack.close()

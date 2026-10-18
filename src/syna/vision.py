@@ -5,11 +5,10 @@ import tempfile
 from pathlib import Path
 from posixpath import basename
 
-from dotenv import dotenv_values
 from PIL import Image
 
 from .ask_utils import ask_question
-from .config import get_logger, get_project_root
+from .config import get_env, get_logger
 from .state import get_container
 
 MAX_IMAGE_BOX = (1024, 1024)
@@ -17,7 +16,7 @@ MAX_IMAGE_BOX = (1024, 1024)
 
 def _load_model():
     """Return the MODEL value from .env, or None when unset."""
-    return dotenv_values(get_project_root() / ".env").get("MODEL")
+    return get_env().get("MODEL")
 
 
 def describe_image(file_path: str, question: str):

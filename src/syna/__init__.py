@@ -6,15 +6,6 @@ from .ask import ask_loop
 from .state import close_docker_client
 
 
-def test():
-    from .web_search import search
-
-    results = search("Japan")
-    print(results)
-    page = search("https://en.wikipedia.org/wiki/History_of_Japan")
-    print(page)
-
-
 def main() -> None:
     """Start the interactive agent loop."""
     try:

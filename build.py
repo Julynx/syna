@@ -28,8 +28,7 @@ def build() -> None:
 
     for name in CSS_FILES:
         source = (build_dir / "css" / name).read_text(encoding="utf-8")
-        source = source.rstrip("\n") + "\n"  # files end with one newline; the
-        # block adds its own blank line before </style>, matching the original
+        source = source.rstrip("\n") + "\n"
         html = html.replace("{{CSS}}", "<style>\n" + source + "\n</style>", 1)
 
     for name in JS_FILES:

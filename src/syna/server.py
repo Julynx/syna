@@ -33,15 +33,6 @@ CONTAINER_START_TIMEOUT_S = 120
 EVENT_LOG_MAX_ITEMS = 500
 JANITOR_INTERVAL_S = 15
 NEW_CHAT_STOP_TIMEOUT_S = 20
-REPLAYED_EVENT_TYPES = {
-    "user_message",
-    "model_message",
-    "tool_call",
-    "file",
-    "file_sent",
-    "compaction",
-    "error",
-}
 
 config = load_config()
 logger = get_logger()
@@ -316,7 +307,7 @@ async def upload_file(client_id: str, file: UploadFile, dest: str | None = None)
 
 
 @app.post("/api/new-chat/{client_id}")
-def new_chat(client_id: str):
+async def new_chat(client_id: str):
     """Reset a session: stop any running turn, destroy the VM and drop the
     conversation so the next connection starts completely fresh.
 
@@ -335,12 +326,12 @@ def new_chat(client_id: str):
         record.session.cancel()
         deadline = time.time() + NEW_CHAT_STOP_TIMEOUT_S
         while record.busy.is_set() and time.time() < deadline:
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
     record.teardown()
-    record.worker.join(timeout=10)
+    await asyncio.to_thread(record.worker.join, 10)
     with _registry_lock:
         _sessions.pop(client_id, None)
-    _reset_browser()
+    await asyncio.to_thread(_reset_browser)
     return {"status": "ok", "reset": True}
 
 

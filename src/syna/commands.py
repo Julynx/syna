@@ -1,3 +1,5 @@
+"""User slash commands for the CLI, executed locally on the host."""
+
 import shlex
 import sys
 import tkinter as tk
@@ -44,7 +46,6 @@ def show_help(session=None):
 def parse_and_execute_command(command_str: str, session=None) -> str:
     command = shlex.split(command_str.strip())
 
-    # Ensure the command is registered
     error_msg_unreg = f"Unregistered command {command_str}"
     try:
         command_name = command[0].strip().removeprefix("/")
@@ -54,7 +55,6 @@ def parse_and_execute_command(command_str: str, session=None) -> str:
         raise ValueError(error_msg_unreg)
     reg_cmd = registered_commands[command_name]
 
-    # Ensure enough arguments are provided
     reg_cmd_n_args = reg_cmd["n_args"]
     reg_cmd_arg_help = reg_cmd["arg_help"]
     error_msg_n_args = (
@@ -64,7 +64,6 @@ def parse_and_execute_command(command_str: str, session=None) -> str:
     if len(command) - 1 != reg_cmd_n_args:
         raise ValueError(error_msg_n_args)
 
-    # Call the command and get a response
     args = command[1:]
     try:
         result = reg_cmd["callback"](*args, session=session)

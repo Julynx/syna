@@ -1,5 +1,3 @@
-/* ==== css/chat.css ==== */
-/* ===== Syna — conversation: bubbles, tool rows, files, events, copy button =========== */
 
 #chat {
   flex: 1;
@@ -20,15 +18,12 @@
   margin: 0 auto;
 }
 
-/* PC: widen the column to trim the centered side margins; mobile keeps the
-   880px reading measure. Must stay in sync with .composer (composer.css). */
 @media (min-width: 1024px) {
   #chat > * {
     max-width: 1060px;
   }
 }
 
-/* ---------- bubbles ---------- */
 .bubble {
   position: relative;
   padding: 11px 15px;
@@ -65,7 +60,6 @@
   box-shadow: var(--glass-shadow);
   border-bottom-left-radius: 5px;
   transform-origin: 0 100%;
-  /* the agent's voice speaks in serif; UI chrome and user bubbles stay sans */
   font-family: var(--serif);
   font-size: 15.5px;
   line-height: 1.65;
@@ -195,7 +189,6 @@
     transform var(--dur-in) var(--ease);
 }
 
-/* ---------- copy-markdown button (model messages) ---------- */
 .copy-btn {
   position: absolute;
   top: 7px;
@@ -262,13 +255,12 @@
   }
 }
 
-/* ---------- tool calls ---------- */
 .tool-row {
   position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0 9px; /* no row gap: the details panel owns its spacing via margin */
+  gap: 0 9px;
   font-size: 13px;
   color: var(--muted);
   padding: 6px 12px;
@@ -289,7 +281,6 @@
   border-color: var(--accent-line);
 }
 
-/* running state = soft glow layers underneath + slow sheen, never a blink */
 .tool-row.running {
   background-image: var(--frost);
   border-color: var(--border);
@@ -426,7 +417,6 @@
   }
 }
 
-/* completion flash + icon pop */
 .tool-row.just-done {
   animation: done-flash 1.3s var(--ease);
 }
@@ -446,8 +436,6 @@
   }
 }
 
-/* details panel: the row owns 0 row-gap, the panel owns 15px margin
-   (9px flex gap + 6px old margin) so collapsing to 0 leaves no jump */
 .tool-row pre {
   flex-basis: 100%;
   display: none;
@@ -466,7 +454,7 @@
   filter: blur(8px);
   transform: translateY(2px);
   cursor: auto;
-  transition: none; /* open/close is animated from js/chat.js (height + margin + fade) */
+  transition: none;
 }
 .tool-row.open pre {
   display: block;
@@ -475,25 +463,18 @@
   transform: none;
 }
 
-/* rows beyond MAX_VISIBLE_TOOL_CALLS live inside a wrapper; the pill expands
-   and collapses THE WRAPPER (one height animation = one layout change), and
-   rows inside only crossfade — opacity/blur never touch layout, so nothing
-   janks or jumps while the run opens and closes. */
 .tool-overflow {
   display: flex;
   flex-direction: column;
-  gap: 10px; /* keep inner spacing identical to #chat */
+  gap: 10px;
 }
-/* '#chat > *' sets 'margin: 0 auto' with ID specificity, so this override
-   must carry an ID too or the negative margin silently loses the cascade. */
 #chat > .tool-overflow.collapsed {
   height: 0;
-  margin-top: -10px; /* cancels the #chat gap on both sides while collapsed */
+  margin-top: -10px;
   overflow: hidden;
-  visibility: hidden; /* out of the tab order once fully collapsed */
+  visibility: hidden;
 }
 
-/* ---------- files ---------- */
 .file-chip {
   display: inline-flex;
   align-items: center;
@@ -542,7 +523,6 @@
   align-items: flex-end;
 }
 
-/* ---------- events ---------- */
 .event-row {
   font-size: 12.5px;
   color: var(--muted);
@@ -560,7 +540,6 @@
     var(--frost), linear-gradient(135deg, var(--danger-tint), var(--surface));
 }
 
-/* ---------- see more / less: one stable pill, never changes size or position ---------- */
 #chat > .see-more {
   display: flex;
   flex-direction: row;
@@ -672,7 +651,6 @@
   }
 }
 
-/* ---------- compaction ---------- */
 .compaction-divider {
   font-family: var(--mono);
   font-size: 12px;
@@ -699,7 +677,6 @@
     transform var(--dur-in) var(--ease);
 }
 
-/* ---------- shared entrances & exits ---------- */
 @starting-style {
   .bubble,
   .tool-row,
@@ -729,7 +706,6 @@
   pointer-events: none !important;
 }
 
-/* ---------- scrollbars ---------- */
 #chat::-webkit-scrollbar,
 .tool-row pre::-webkit-scrollbar,
 .compaction-summary::-webkit-scrollbar,
@@ -755,7 +731,6 @@
   background-clip: content-box;
 }
 
-/* ---------- reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {
   .status-dot.working,
   .status-dot.working::after,

@@ -113,7 +113,6 @@ def parse_and_execute_tools(
     decoder = json.JSONDecoder()
     for tool_call in grab_all(text, start="```tool", end="```"):
         try:
-            # tool = json.loads(tool_call)
             tool, idx = decoder.raw_decode(tool_call.strip())
             tool_name = next(iter(tool.keys()))
             tool_arguments = tool[tool_name]
@@ -132,9 +131,6 @@ def parse_and_execute_tools(
 
         signature = build_signature(tool_name, tool_arguments)
 
-        # Dispatch only through the whitelist: reaching for arbitrary module
-        # attributes would expose internals (editor primitives, helpers) and
-        # let the model touch the host filesystem directly.
         if tool_name not in TOOL_REGISTRY:
             output = (
                 f"Unknown tool '{tool_name}'. Available tools:"

@@ -3,7 +3,6 @@
 import json
 import threading
 
-from dotenv import dotenv_values
 from openrouter import OpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
 
@@ -14,14 +13,13 @@ from .compaction import (
     load_compaction_prompt,
 )
 from .config import (
+    get_env,
     get_logger,
     get_project_root,
     get_session_dump_path,
     load_config,
 )
 from .parse import parse_and_execute_tools
-
-dotenv = dotenv_values(get_project_root() / ".env")
 
 OUTPUT_PREVIEW_CHARS = 512
 DEFAULT_REQUEST_DELAY_S = 2
@@ -30,19 +28,18 @@ DEFAULT_ENABLE_COMPACTION = True
 MAX_NO_TOOL_RETRIES = 3
 SYSTEM_NOTE_PREFIX = "[System]: "
 
-# OpenRouter's unified reasoning control (reasoning.effort). Loaded from
-# THINKING_EFFORT in .env; unset means "leave the model's default alone".
 VALID_THINKING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 def load_thinking_effort():
     """Return the THINKING_EFFORT value from .env, or None when unset.
 
-    The value maps straight onto OpenRouter's 'reasoning.effort' parameter.
-    An invalid value raises here so a typo fails fast at session creation
-    instead of failing every model request.
+    The value maps straight onto OpenRouter's 'reasoning.effort' parameter;
+    unset means the model's default behavior is left untouched. An invalid
+    value raises here so a typo fails fast at session creation instead of
+    failing every model request.
     """
-    value = dotenv.get("THINKING_EFFORT")
+    value = get_env().get("THINKING_EFFORT")
     if not value:
         return None
     effort = value.strip().lower()
@@ -126,7 +123,7 @@ def create_model_client():
         ),
         retry_connection_errors=retry_settings["retry_connection_errors"],
     )
-    api_key = dotenv.get("OPENROUTER_API_KEY")
+    api_key = get_env().get("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OPENROUTER_API_KEY not found in .env file.")
 
@@ -169,8 +166,6 @@ class AgentSession:
         )
         self.compaction_prompt = load_compaction_prompt()
         self.messages: list[dict] = []
-        # Session dump target: woven with 'session_id' so concurrent server
-        # sessions never overwrite each other's dump files.
         self.dump_path = get_session_dump_path(session_id)
         self._cancel_event = threading.Event()
         self._tool_call_seq = 0
@@ -313,8 +308,6 @@ class AgentSession:
         logger = get_logger()
         self._emit({"type": "status", "text": "Compacting history..."})
         try:
-            # No dump_path: the compaction request is not part of the live
-            # conversation and must not overwrite its dump file.
             summary = ask_question(
                 self.client,
                 self.model,
@@ -476,7 +469,7 @@ class AgentSession:
         self.on_event(event)
 
     def _require_model(self):
-        model = dotenv.get("MODEL")
+        model = get_env().get("MODEL")
         if not model:
             raise ValueError("MODEL not found in .env file.")
         return model

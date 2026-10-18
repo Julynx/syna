@@ -1,3 +1,15 @@
+"""Headless-browser page fetcher that renders JavaScript pages and converts
+the DOM to Markdown.
+
+The page is loaded with DrissionPage the way a person would: random pauses,
+cookie-banner dismissal, gradual scrolling for lazy-loading and a wait for
+automatic anti-bot challenges to clear. The rendered HTML is cleaned,
+links and images are absolutized, and the main content node is converted
+to Markdown with markdownify.
+
+Runnable as a CLI: python -m syna.web_to_markdown <url> [options]
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -48,7 +60,7 @@ CHROME_REMOVE = ("nav", "footer", "aside", "header", "form")
 
 
 class FetchError(RuntimeError):
-    """Error controlado al obtener o convertir la página."""
+    """Raised when fetching or converting a page fails."""
 
 
 @dataclass
@@ -58,6 +70,7 @@ class Config:
     retries: int = 3
     backoff: float = 3.0
     user_agent: str = DEFAULT_UA
+    lang: str = "en-US"
     max_scroll_steps: int = 40
     challenge_wait: float = 20.0
     full_page: bool = False
@@ -70,7 +83,7 @@ def _build_options(cfg: Config) -> ChromiumOptions:
     co.auto_port()
     co.headless(cfg.headless)
     co.set_user_agent(cfg.user_agent)
-    co.set_argument("--lang=es-ES")
+    co.set_argument(f"--lang={cfg.lang}")
     co.set_argument("--window-size=1366,768")
     co.set_argument("--disable-blink-features=AutomationControlled")
     co.set_argument("--no-first-run")
@@ -100,20 +113,20 @@ def _is_blocked(page: ChromiumPage) -> bool:
 
 
 def _wait_past_challenge(page: ChromiumPage, max_wait: float) -> None:
-    """Espera a que desaparezcan desafíos automáticos (p. ej. Cloudflare)."""
+    """Wait for automatic challenges (e.g. Cloudflare) to disappear."""
     if not _is_blocked(page):
         return
-    log.warning("Posible página de desafío/bloqueo; esperando hasta %.0fs...", max_wait)
+    log.warning("Possible challenge/block page; waiting up to %.0fs...", max_wait)
     deadline = time.monotonic() + max_wait
     while time.monotonic() < deadline:
         time.sleep(1.0)
         if not _is_blocked(page):
-            log.info("Desafío superado.")
+            log.info("Challenge cleared.")
             _pause(0.5, 1.2)
             return
     raise FetchError(
-        "La web sigue mostrando un desafío/bloqueo anti-bot. "
-        "Prueba con --no-headless o resuélvelo manualmente."
+        "The page still shows an anti-bot challenge/block. "
+        "Try --no-headless or solve it manually."
     )
 
 
@@ -127,14 +140,14 @@ def _dismiss_cookie_banner(page: ChromiumPage) -> None:
     """
     try:
         if page.run_js(js):
-            log.debug("Banner de cookies cerrado.")
+            log.debug("Cookie banner dismissed.")
             _pause(0.4, 0.9)
     except Exception:
         pass
 
 
 def _human_scroll(page: ChromiumPage, max_steps: int) -> None:
-    """Scroll gradual con pausas aleatorias para disparar lazy-loading."""
+    """Scroll gradually with random pauses to trigger lazy-loading."""
     try:
         height = page.run_js("return document.documentElement.scrollHeight") or 0
         pos, steps = 0, 0
@@ -153,11 +166,11 @@ def _human_scroll(page: ChromiumPage, max_steps: int) -> None:
         page.run_js("window.scrollTo({top: 0, behavior: 'smooth'});")
         _pause(0.4, 0.8)
     except Exception as exc:
-        log.debug("Scroll interrumpido: %s", exc)
+        log.debug("Scroll interrupted: %s", exc)
 
 
 def _wait_dom_stable(page: ChromiumPage, max_wait: float = 8.0) -> None:
-    """Espera a que el texto visible deje de cambiar (contenido dinámico)."""
+    """Wait until the visible text stops changing (dynamic content)."""
     deadline = time.monotonic() + max_wait
     last, stable = -1, 0
     while time.monotonic() < deadline and stable < 3:
@@ -168,18 +181,18 @@ def _wait_dom_stable(page: ChromiumPage, max_wait: float = 8.0) -> None:
 
 
 def _load_rendered_html(url: str, cfg: Config) -> tuple[str, str, str]:
-    """Abre el navegador, carga la URL y devuelve (html, url_final, título)."""
+    """Open the browser, load the URL and return (html, final_url, title)."""
     page = ChromiumPage(addr_or_opts=_build_options(cfg))
     try:
         page.set.timeouts(base=10, page_load=cfg.timeout)
         _pause(0.3, 0.8)
         ok = page.get(url, retry=1, interval=1, timeout=cfg.timeout)
         if ok is False:
-            raise FetchError(f"No se pudo cargar la página: {url}")
+            raise FetchError(f"Could not load the page: {url}")
         try:
             page.wait.doc_loaded(timeout=cfg.timeout)
         except Exception:
-            log.debug("doc_loaded expiró; se continúa con lo cargado.")
+            log.debug("doc_loaded timed out; continuing with what was loaded.")
 
         _pause(0.8, 1.6)
         _wait_past_challenge(page, cfg.challenge_wait)
@@ -189,7 +202,7 @@ def _load_rendered_html(url: str, cfg: Config) -> tuple[str, str, str]:
 
         html = page.html
         if not html or len(html) < 200:
-            raise FetchError("El HTML obtenido está vacío o es demasiado corto.")
+            raise FetchError("The fetched HTML is empty or too short.")
         return html, page.url or url, page.title or ""
     finally:
         try:
@@ -272,7 +285,7 @@ def html_to_markdown(
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     if not text:
-        raise FetchError("La conversión a Markdown produjo contenido vacío.")
+        raise FetchError("Markdown conversion produced empty content.")
 
     if title and not re.match(r"^#\s", text):
         text = f"# {title.strip()}\n\n{text}"
@@ -285,19 +298,19 @@ def _normalize_url(url: str) -> str:
         url = "https://" + url
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ValueError(f"URL no válida: {url!r}")
+        raise ValueError(f"Invalid URL: {url!r}")
     return url
 
 
 def fetch_markdown(url: str, cfg: Config | None = None) -> str:
-    """Carga `url` como lo haría una persona y devuelve su contenido en Markdown."""
+    """Load `url` the way a person would and return its content as Markdown."""
     cfg = cfg or Config()
     url = _normalize_url(url)
 
     last_exc: Exception | None = None
     for attempt in range(1, cfg.retries + 1):
         try:
-            log.info("Intento %d/%d: %s", attempt, cfg.retries, url)
+            log.info("Attempt %d/%d: %s", attempt, cfg.retries, url)
             html, final_url, title = _load_rendered_html(url, cfg)
             return html_to_markdown(
                 html,
@@ -308,27 +321,27 @@ def fetch_markdown(url: str, cfg: Config | None = None) -> str:
             )
         except Exception as exc:
             last_exc = exc
-            log.warning("Intento %d falló: %s", attempt, exc)
+            log.warning("Attempt %d failed: %s", attempt, exc)
             if attempt < cfg.retries:
                 time.sleep(cfg.backoff * attempt + random.uniform(0, 1.5))
 
     raise FetchError(
-        f"No se pudo obtener {url} tras {cfg.retries} intentos: {last_exc}"
+        f"Could not fetch {url} after {cfg.retries} attempts: {last_exc}"
     )
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Web -> Markdown con DrissionPage")
+    p = argparse.ArgumentParser(description="Web -> Markdown with DrissionPage")
     p.add_argument("url")
-    p.add_argument("-o", "--output", help="Archivo de salida (por defecto stdout)")
-    p.add_argument("--no-headless", action="store_true", help="Mostrar el navegador")
+    p.add_argument("-o", "--output", help="Output file (defaults to stdout)")
+    p.add_argument("--no-headless", action="store_true", help="Show the browser")
     p.add_argument(
-        "--full-page", action="store_true", help="No filtrar nav/footer/aside"
+        "--full-page", action="store_true", help="Do not filter nav/footer/aside"
     )
-    p.add_argument("--no-images", action="store_true", help="Omitir imágenes")
+    p.add_argument("--no-images", action="store_true", help="Skip images")
     p.add_argument("--timeout", type=float, default=30.0)
     p.add_argument("--retries", type=int, default=3)
-    p.add_argument("--browser-path", help="Ruta al ejecutable de Chrome/Chromium")
+    p.add_argument("--browser-path", help="Path to the Chrome/Chromium executable")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args(argv)
 
@@ -358,7 +371,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(markdown)
-        log.info("Guardado en %s (%d caracteres)", args.output, len(markdown))
+        log.info("Saved to %s (%d characters)", args.output, len(markdown))
     else:
         sys.stdout.write(markdown)
     return 0

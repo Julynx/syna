@@ -44,6 +44,10 @@ def _write_dump(dump_path: Path | None, payload: dict) -> None:
     the model request itself. Writes go through a temp file plus
     'os.replace', so readers never see a half-written file and a crash
     mid-write cannot corrupt the previous dump.
+
+    Callers may pass a payload whose 'messages' value aliases the live
+    conversation list; a later write of the same dict then reflects any
+    messages appended in between.
     """
     if dump_path is None:
         return
@@ -94,8 +98,6 @@ def ask_question(client, model, messages, delay=2, effort=None, dump_path=None):
                 msg = {"role": "assistant", "content": content}
                 messages.append(msg)
                 logger.info(str(msg))
-                # request["messages"] aliases 'messages', so this dump now
-                # also carries the assistant reply alongside model and effort.
                 _write_dump(dump_path, request)
                 return content
             logger.warning(

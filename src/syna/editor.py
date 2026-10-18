@@ -1,6 +1,6 @@
-from pathlib import Path
-
 """Line-based file reading and editing helpers shared by the agent tools."""
+
+from pathlib import Path
 
 
 def with_line_numbers(text, start=1, limit=200):

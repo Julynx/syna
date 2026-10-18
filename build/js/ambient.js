@@ -1,14 +1,5 @@
-/* ==== js/ambient.js ==== */
 "use strict";
 
-// Maps app activity onto the background light field:
-//   idle     -> waiting for the user
-//   thinking -> user sent a message, awaiting the model
-//   tool     -> waiting for a tool call to complete
-// The same tool visuals play while the model narrates aloud (voice.js): the
-// state keeps blending through the W weights, so entering and leaving
-// narration is as fluid as any other state change.
-// Reads the global `busy` flag owned by js/chat.js.
 let ambientState = "";
 function updateAmbient() {
   const narrating = window.Voice ? Voice.speaking : false;
@@ -25,9 +16,6 @@ function updateAmbient() {
   document.body.setAttribute("data-ambient", next);
 }
 
-// Glow: a bright core with a corona. The corona is ~22 stacked translucent shapes whose
-// outlines are r(theta) = R * (1 + spread * f^1.5 * (1 + amp * d(theta))), where d is a
-// smoothed sum of random sine waves. Rendered small, upscaled and blurred = heavy diffusion.
 (function () {
   const root = document.querySelector(".ambient");
   const field = root.querySelector(".field");
@@ -45,17 +33,17 @@ function updateAmbient() {
       [167, 139, 250],
       [240, 160, 192],
       [124, 196, 255],
-    ], // violet / rose / sky, merged
+    ],
     thinking: [
       [255, 168, 96],
       [255, 207, 122],
       [255, 138, 122],
-    ], // soft orange dominant
+    ],
     tool: [
       [91, 155, 255],
       [127, 208, 255],
       [122, 124, 255],
-    ], // mostly blue
+    ],
   };
   const MODE = {
     idle: { gain: 1, speed: 1, amp: 0.4, spread: 1 },
@@ -65,7 +53,6 @@ function updateAmbient() {
   const col = PAL.idle.map((x) => x.slice());
   const W = { idle: 1, thinking: 0, tool: 0 };
   const cur = { gain: 1, speed: 1, amp: 0.4, spread: 1 };
-  // random harmonics: integer k so the outline closes; low k dominate (smooth), each drifts at its own pace
   const SIN = [1, 2, 3, 5, 7, 10].map((k, i) => ({
     k,
     i,
@@ -119,7 +106,6 @@ function updateAmbient() {
     PAL[st].forEach((tc, i) => {
       for (let j = 0; j < 3; j++) col[i][j] += (tc[j] - col[i][j]) * ease;
     });
-    // breathing / state pulse
     const ph = (t % 1.15) / 1.15;
     const idle = 0.5 + 0.5 * Math.sin((t * TAU) / 8);
     const think =
@@ -132,8 +118,6 @@ function updateAmbient() {
     pulse = W.idle * idle + W.thinking * think + W.tool * beat;
     kv += (-90 * ks - 9 * kv) * dt;
     ks += kv * dt;
-    // one corona per colour. Each is the same random-sine outline, but time-shifted (tau) and
-    // radially scaled (scl) -> radial chromatic aberration; additive blend in dark mode
     for (const h of SIN) h.p += h.w * cur.speed * dt;
     const W_ = cv.width,
       H_ = cv.height,
@@ -179,7 +163,6 @@ function updateAmbient() {
     }
     c.globalCompositeOperation = "source-over";
     c.globalAlpha = 1;
-    // hot rim hugging the core
     const hot = col[0].map((v) => v + (255 - v) * 0.6);
     const rim = c.createRadialGradient(cx, cy, R * 0.96, cx, cy, R * 1.3);
     rim.addColorStop(
@@ -196,8 +179,6 @@ function updateAmbient() {
     c.beginPath();
     c.arc(cx, cy, R * 1.3, 0, TAU);
     c.fill();
-    // the bright core: a hot near-white heart tinted with the state hue, breathing with
-    // the same pulse as the corona; creamy falloff melts it into the surrounding light
     const coreA = (isDark ? 0.95 : 0.85) * (0.86 + 0.14 * pulse);
     const coreHi = col[0].map((v) => v + (255 - v) * 0.85);
     const coreLo = col[0].map((v) => v + (255 - v) * 0.4);

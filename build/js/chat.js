@@ -1,10 +1,5 @@
-/* ==== js/chat.js ==== */
 "use strict";
 
-// Chat client: WebSocket transport, conversation rendering (bubbles, tool rows,
-// file chips, events, compaction) and the composer. Visual state classes are
-// styled in css/chat.css; all entrance/exit motion runs through the WAAPI
-// helpers below so nothing on the page ever snaps.
 
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
@@ -47,10 +42,6 @@ const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
 const EASE_IN = "cubic-bezier(0.65, 0, 0.35, 1)";
 
-// ---------- icons ----------
-// Glyphs from the vendored Material Symbols Outlined subset (see base.css for
-// the @font-face and the regeneration instructions). Icons that get
-// stacked/crossfaded inside a button take a class (cls).
 const GLYPH = (name, cls) =>
   '<span class="material-symbols-outlined' +
   (cls ? " " + cls : "") +
@@ -89,7 +80,6 @@ const TOOL_META = {
 
 const DECODE_ERROR_PREFIX = "A tool call could not be decoded as JSON";
 
-// ---------- small helpers ----------
 function formatSize(bytes) {
   if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
   if (bytes >= 1024) return (bytes / 1024).toFixed(1) + " KB";
@@ -125,8 +115,6 @@ function append(element) {
   if (stick) followBottom(700);
 }
 
-// Cancels a stored WAAPI animation (rows, panels and the status pill keep
-// their running animation on el._anim).
 function cancelAnim(host) {
   if (host._anim) {
     host._anim.onfinish = null;
@@ -135,7 +123,6 @@ function cancelAnim(host) {
   }
 }
 
-// ---------- bubbles ----------
 function addBubble(content, side, queued) {
   const bubble = document.createElement("div");
   bubble.className = "bubble " + side;
@@ -158,14 +145,11 @@ function addBubble(content, side, queued) {
   }
 }
 
-// ---------- copy-markdown button (top right of every model message) ----------
-// Copies the model's raw markdown source — never the rendered HTML.
 const COPY_FEEDBACK_MS = 1400;
 
 function copyText(text) {
   if (navigator.clipboard && window.isSecureContext)
     return navigator.clipboard.writeText(text);
-  // Fallback for non-secure contexts (e.g. plain http over the network)
   return new Promise((resolve, reject) => {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -207,7 +191,6 @@ function addCopyButton(bubble, source) {
   bubble.appendChild(btn);
 }
 
-// ---------- tool rows ----------
 function toolEventText(event) {
   const meta = TOOL_META[event.name];
   if (!meta) return truncateArg(event.signature);
@@ -222,8 +205,6 @@ function toolEventText(event) {
   return verb + (arg ? ' "' + arg + '"' : "");
 }
 
-// web_interact rows read as actions, not raw signatures: the browser
-// command picks the verb and the most meaningful argument is shown.
 const WEB_VERBS = {
   goto: "Visited",
   snapshot: "Read page",
@@ -299,16 +280,8 @@ function ensureMoreRow(run) {
   return run.moreRow;
 }
 
-// ---------- see more / less (structural fix) ----------
-// Every row past MAX_VISIBLE_TOOL_CALLS lives inside a .tool-overflow wrapper
-// sitting between the visible rows and the pill. Expanding/collapsing animates
-// THE WRAPPER's height (one element = one layout change per frame), while the
-// rows inside only crossfade — opacity and blur never trigger layout, so the
-// motion stays on the compositor and nothing around the run snaps. Collapsed,
-// the wrapper's negative margin cancels #chat's row gap so the spacing is
-// exactly what display:none rows used to leave behind.
 
-const CHAT_GAP = 10; // keep in sync with #chat { gap: 10px } and .tool-overflow { gap }
+const CHAT_GAP = 10;
 
 function ensureOverflowWrap(run) {
   if (!run.wrap) {
@@ -318,7 +291,7 @@ function ensureOverflowWrap(run) {
     if (run.moreRow && run.moreRow.parentNode === chat) {
       chat.insertBefore(wrap, run.moreRow);
     } else if (statusRow.parentNode === chat) {
-      chat.insertBefore(wrap, statusRow); // status pill always stays last
+      chat.insertBefore(wrap, statusRow);
     } else {
       chat.appendChild(wrap);
     }
@@ -337,9 +310,6 @@ function expandToolRun(run) {
     cancelAnim(wrap);
     wrap.style.overflow = "hidden";
     wrap.classList.remove("collapsed");
-    // Fractional target from the laid-out element (scrollHeight rounds to
-    // whole pixels and would snap against the natural height at the end),
-    // mirroring the collapse path's start measurement.
     const target = wrap.getBoundingClientRect().height;
     const anim = (wrap._anim = wrap.animate(
       [
@@ -353,7 +323,7 @@ function expandToolRun(run) {
       wrap._anim = null;
     };
     rows.forEach((row, i) => {
-      cancelAnim(row); // a lingering collapse fade would otherwise keep opacity at 0
+      cancelAnim(row);
       row.style.opacity = "0";
       const fade = row.animate(
         [
@@ -414,8 +384,8 @@ function collapseToolRun(run) {
       wrap.classList.add("collapsed");
       wrap.style.overflow = "";
       wrap._anim = null;
-      anim.cancel(); // .collapsed holds the end state; drop the fill
-      rows.forEach((row) => cancelAnim(row)); // drop the forwards fills too
+      anim.cancel();
+      rows.forEach((row) => cancelAnim(row));
     };
   } else if (wrap) {
     wrap.classList.add("collapsed");
@@ -425,9 +395,6 @@ function collapseToolRun(run) {
   if (stick) followBottom(700);
 }
 
-// Shared placement for every tool row, successful or failed: rows always join
-// the current run and count toward the MAX_VISIBLE_TOOL_CALLS cap, so errored
-// calls are grouped behind the see-more pill exactly like the rest.
 function placeToolRow(row) {
   if (!toolRun) {
     toolRun = { rows: [], moreRow: null, expanded: false, wrap: null };
@@ -435,13 +402,11 @@ function placeToolRow(row) {
   toolRun.rows.push(row);
   const stick = isAtBottom();
   if (toolRun.rows.length > MAX_VISIBLE_TOOL_CALLS) {
-    // Rows past the cap always live in the wrapper. Collapsed, the wrapper
-    // keeps its height at 0, so adding rows shifts nothing outside it.
     ensureMoreRow(toolRun);
     const wrap = ensureOverflowWrap(toolRun);
     if (toolRun.moreRow.parentNode !== chat) {
       chat.insertBefore(toolRun.moreRow, wrap.nextSibling);
-      growIn(toolRun.moreRow); // the pill must not pop in unanimated
+      growIn(toolRun.moreRow);
     }
     wrap.appendChild(row);
     if (toolRun.expanded) growIn(row);
@@ -496,7 +461,6 @@ const boxOf = (el, cs) => ({
   borderBottomWidth: cs.borderBottomWidth,
 });
 
-// New elements grow from zero height so nothing around them snaps.
 function growIn(el, delay) {
   if (REDUCE || !el.isConnected || !el.getBoundingClientRect().height) return;
   const cs = getComputedStyle(el);
@@ -514,8 +478,6 @@ function growIn(el, delay) {
   };
 }
 
-// Tool-call details: the output panel animates height + margin + fade, so the
-// row (and everything below it) resizes continuously.
 function toggleOpen(row) {
   const pre = row.querySelector("pre");
   if (!pre || REDUCE) {
@@ -562,7 +524,6 @@ function toggleOpen(row) {
   if (stick) followBottom(opening ? 560 : 420);
 }
 
-// textarea grows/shrinks with a transition (height can't animate from auto)
 function fitInput() {
   const prev = input.offsetHeight;
   input.style.transition = "none";
@@ -617,7 +578,7 @@ function addDecodeErrorRow(detail) {
     "<pre hidden></pre>";
   row.querySelector("pre").textContent = detail;
   row.addEventListener("click", () => toggleOpen(row));
-  placeToolRow(row); // count errored calls toward the run's grouping cap
+  placeToolRow(row);
 }
 
 function addFileChip(event) {
@@ -659,8 +620,6 @@ let statusHideTimer = null;
 
 function setStatus(kind, label) {
   statusDot.className = "status-dot " + kind;
-  // The pill hugs its text (width: fit-content): a bare text swap would
-  // snap its width, so animate old width -> new width while it is visible.
   const widthBefore =
     statusRow.parentNode === chat
       ? statusRow.getBoundingClientRect().width
@@ -714,7 +673,6 @@ function setStatus(kind, label) {
   }
 }
 
-// ---------- event dispatch ----------
 function render(event) {
   const kick = {
     user_message: 1,
@@ -731,16 +689,12 @@ function render(event) {
     tool_call:
       event.status === "started" ? "tick" : event.failed ? "error" : "done",
   }[event.type];
-  // A narrated message speaks instead of blipping: only the voice is heard
-  // while the model talks.
   const narrates =
     event.type === "model_message" &&
     window.Voice &&
     Voice.willNarrate(event.content);
   if (snd && !narrates) Sfx.play(snd);
   if (event.type !== "file" && event.type !== "file_sent") closeFileGroup();
-  // A decode error is a malformed reply of the ongoing turn, not a new one:
-  // keep the run alive so its errored row groups with the surrounding calls.
   const isDecodeError =
     event.type === "error" && event.text.startsWith(DECODE_ERROR_PREFIX);
   if (
@@ -806,7 +760,6 @@ function render(event) {
   }
 }
 
-// ---------- transport ----------
 function connect() {
   ws = new WebSocket(WS_BASE + "/ws/" + clientId);
 
@@ -816,7 +769,7 @@ function connect() {
     chat.innerHTML = "";
     toolRun = null;
     replaying = true;
-    if (window.Voice) Voice.reset(); // every fresh session starts voice as configured
+    if (window.Voice) Voice.reset();
     setStatus("ready", "Ready");
     updateAmbient();
   };
@@ -842,12 +795,7 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
-// ---------- composer ----------
 function setSendState() {
-  // Icon swap (and the .pop animation) only on a send<->stop mode change,
-  // which happens when a message is sent or a turn finishes. Typing must
-  // not retrigger the animation: rewriting innerHTML on every keystroke
-  // would insert a fresh icon that replays the pop while .pop lingers.
   const mode = busy ? "stop" : "send";
   if (sendBtn.dataset.mode !== mode) {
     sendBtn.dataset.mode = mode;
@@ -878,13 +826,6 @@ function sendStop() {
   setStatus("working", "Stopping...");
 }
 
-// ---------- new chat ----------
-// Stops the running turn (the server does the same if it is still busy),
-// wipes the VM + conversation server-side, then reconnects for a fresh
-// session with a brand new container. Teardown is not instant — stopping a
-// turn alone can wait up to 20s server-side, plus container cleanup — so
-// the button disables itself and the client says what is going on instead
-// of sitting silent on a clickable button.
 let newChatBusy = false;
 
 async function newChat() {
@@ -896,7 +837,7 @@ async function newChat() {
   addEventRow("Cleaning up the pod, please wait...");
   try {
     if (busy && ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "stop" })); // stop-then-wipe
+      ws.send(JSON.stringify({ type: "stop" }));
     }
     const response = await fetch(API_BASE + "/api/new-chat/" + clientId, {
       method: "POST",
@@ -913,7 +854,7 @@ async function newChat() {
     setSendState();
     addEventRow("Starting a fresh session...");
     input.focus();
-    connect(); // onopen clears the rest of the visual state
+    connect();
   } catch (err) {
     addEventRow("Could not start a new chat: " + err.message, true);
     setStatus("ready", "Ready");
@@ -938,7 +879,6 @@ function uploadFiles(files) {
   }
 }
 
-// ---------- wiring & boot ----------
 attachBtn.innerHTML = ICONS.clip;
 newchatBtn.innerHTML = ICONS.newchat;
 setSendState();
@@ -965,11 +905,6 @@ input.addEventListener("keydown", (keyEvent) => {
   }
 });
 
-// ---------- drag & drop / paste uploads ----------
-// Files dragged over the window or pasted into the composer take the same
-// upload path as the attach button. The drop overlay is revealed while a file
-// drag is over the page; a depth counter keeps it stable across child
-// element boundaries.
 
 let dragDepth = 0;
 

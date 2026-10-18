@@ -21,8 +21,13 @@ def get_project_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
+@lru_cache(maxsize=1)
 def load_config() -> dict[str, Any]:
-    """Load configuration values from assets/config.json."""
+    """Load configuration values from assets/config.json.
+
+    The configuration is cached after the first read; treat the returned
+    dict as read-only and expect a server restart to pick up edits.
+    """
     config_path = get_project_root() / "assets" / "config.json"
     with open(config_path, "r", encoding="utf-8") as config_file:
         return json.load(config_file)

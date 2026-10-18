@@ -1,7 +1,7 @@
 [project]
 name = "syna"
 version = "0.1.0"
-description = "Add your description here"
+description = "Terminal and web AI agent that answers requests by driving an LLM in a tool-call loop inside a sandboxed Docker pod."
 readme = "README.md"
 authors = [
     { name = "Julynx", email = "julicabria@outlook.com" }

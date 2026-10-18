@@ -1,10 +1,6 @@
-/* ==== css/base.css ==== */
-/* ===== Syna — design tokens & base =================================================== */
 :root {
   color-scheme: light dark;
   --bg: #f4f5f7;
-  /* Solid foreground glass. Darker and more opaque than pure white glass so
-     text stays readable over the bright parts of the ambient light field. */
   --surface: rgba(239, 241, 245, 0.8);
   --surface-strong: rgba(235, 238, 243, 0.92);
   --surface-soft: rgba(24, 28, 38, 0.075);
@@ -38,7 +34,6 @@
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --dur-in: 0.5s;
   --dur-out: 0.32s;
-  /* fine frost texture layered over every glass surface */
   --frost: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='1' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.07'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23g)'/%3E%3C/svg%3E");
 }
 @media (prefers-color-scheme: dark) {
@@ -94,8 +89,6 @@ body {
   flex-direction: column;
 }
 
-/* ---------- Lora (vendored, OFL) — the serif voice of the model ----------
-   Two subsets per style; unicode-range lets the browser pick per glyph. */
 @font-face {
   font-family: "Lora";
   src: url("vendor/fonts/lora-latin-400-normal.woff2") format("woff2");
@@ -168,9 +161,6 @@ body {
   outline-offset: 2px;
 }
 
-/* Shared glass recipe: one source of truth for every floating surface
-   (status pill, tool rows, event rows, file chips, see-more pill, copy button,
-   compaction summary). Elements add .glass and override specifics in their own rules. */
 .glass {
   background-color: var(--surface);
   background-image: var(--frost);
@@ -180,7 +170,6 @@ body {
   box-shadow: var(--glass-shadow-soft);
 }
 
-/* Shared keyframe: used by tool-row completion icons and the send button */
 @keyframes icon-pop {
   0% {
     transform: scale(0.4) rotate(-90deg);
@@ -192,10 +181,6 @@ body {
   }
 }
 
-/* ==== Icon font: Material Symbols Outlined, vendored subset ==== */
-/* The woff2 under vendor/fonts/ contains only the glyphs the UI uses (Apache
-   2.0, license alongside the font). To add a glyph, extend the icon_names
-   parameter of the css2 request on fonts.googleapis.com and replace the file. */
 @font-face {
   font-family: "Material Symbols Outlined";
   font-style: normal;

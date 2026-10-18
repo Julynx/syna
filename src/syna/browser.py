@@ -1,5 +1,5 @@
 """
-camoufox_harness.py - persistent stealth browser session exposed as LLM tools.
+browser.py - persistent stealth browser session exposed as LLM tools.
 
 Core idea: instead of sending HTML, run a walker inside the page that emits a
 compact, line-based "accessibility-ish" view:
@@ -21,6 +21,12 @@ Everything that is not visible text or an interactable element is dropped
 (scripts, styles, svg, hidden nodes, empty wrappers, attributes, classes...).
 Interactables get a stable numeric ref that the model passes back to click/type/etc.
 
+Camoufox runs page.evaluate() in an isolated world by default (prefix a
+script with "mw:" to run in the page's main world), so the snapshot state
+(window.__aiState) is invisible to the site's own JS. Verify on your
+version: if state does not persist between calls, refs will report
+"not found" and the model will just re-snapshot.
+
 Usage:
     async with BrowserSession() as s:
         print(await s.call("goto", {"url": "https://example.com"}))
@@ -30,7 +36,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import difflib  # noqa: F401  (kept for easy swap to a smarter differ)
 import random
 import sys
 import threading
@@ -40,18 +45,7 @@ from urllib.parse import urlparse
 from camoufox.async_api import AsyncCamoufox
 from playwright.async_api import Error as PWError
 
-# Only these URL schemes can be opened in the browser. Everything else
-# (file:, ftp:, javascript:, data:, custom protocol handlers...) is refused.
 ALLOWED_SCHEMES = {"http", "https"}
-
-# --------------------------------------------------------------------------- #
-# In-page snapshot walker
-# --------------------------------------------------------------------------- #
-# Camoufox runs page.evaluate() in an isolated world by default (prefix a
-# script with "mw:" to run in the page's main world), so the state below
-# (window.__aiState) is invisible to the site's own JS. Verify on your version;
-# if state does not persist between calls, refs will report "not found" and the
-# model will just re-snapshot.
 
 SNAPSHOT_JS = r"""
 (opts) => {
@@ -282,7 +276,6 @@ class Browser:
         self.last: str = ""
         self._s: BrowserSession = self.run(BrowserSession(**session_kwargs).start())
 
-    # -- plumbing ----------------------------------------------------------- #
     def run(self, coro):
         """
         Run any coroutine on the browser's loop,
@@ -300,7 +293,6 @@ class Browser:
         """The live Playwright page (its methods are async: wrap with b.run(...))."""
         return self._s.page
 
-    # -- tools -------------------------------------------------------------- #
     def goto(self, url: str):
         return self._tool("goto", url=url)
 
@@ -331,7 +323,6 @@ class Browser:
     def close(self) -> None:
         self.run(self._s.close())
         self._loop.call_soon_threadsafe(self._loop.stop)
-        return "closed"
 
     def __enter__(self):
         return self
@@ -353,25 +344,29 @@ class ToolError(Exception):
     """Raised for errors that should be shown to the model verbatim."""
 
 
-# --------------------------------------------------------------------------- #
-# Session
-# --------------------------------------------------------------------------- #
 class BrowserSession:
+    """One stealth browser context plus the page-driving tools.
+
+    Configuration: 'headless' accepts True, False, or "virtual" (Linux);
+    'humanize' enables Camoufox human-like cursor movement; 'user_data_dir'
+    selects a persistent profile (cookies survive restarts); 'max_chars' is
+    the hard cap on any snapshot (~3k tokens). The fingerprint OS is pinned
+    to the real host (random OS = inconsistent fingerprint); override with
+    os="macos"/..., or os=None to let Camoufox pick randomly.
+    """
+
     def __init__(
         self,
         *,
-        headless: bool | str = True,  # True | False | "virtual" (Linux)
-        humanize: bool | float = True,  # camoufox human-like cursor movement
-        user_data_dir: str
-        | None = None,  # set -> persistent profile (cookies survive restarts)
+        headless: bool | str = True,
+        humanize: bool | float = True,
+        user_data_dir: str | None = None,
         proxy: dict | None = None,
         geoip: bool = False,
-        max_chars: int = 12000,  # hard cap on any snapshot (~3k tokens)
+        max_chars: int = 12000,
         **camoufox_kwargs: Any,
     ):
         self.max_chars = max_chars
-        # Pin the fingerprint OS to the real host (random OS = inconsistent fingerprint).
-        # Override with os="macos"/..., or os=None to let Camoufox pick randomly.
         camoufox_kwargs.setdefault("os", detect_host_os())
         self._kw = dict(
             headless=headless, humanize=humanize, geoip=geoip, **camoufox_kwargs
@@ -390,7 +385,6 @@ class BrowserSession:
         self.page = None
         self._last: tuple[str, list[str]] | None = None
 
-    # -- lifecycle ---------------------------------------------------------- #
     async def start(self) -> "BrowserSession":
         self._cm = AsyncCamoufox(**self._kw)
         obj = await self._cm.__aenter__()
@@ -433,7 +427,7 @@ class BrowserSession:
         await self.close()
 
     def _on_new_page(self, p) -> None:
-        # a click opened a new tab -> follow it
+        """Follow a tab opened by a click: watch it and make it the current page."""
         self._watch_page(p)
         self.page = p
         self._last = None
@@ -446,7 +440,6 @@ class BrowserSession:
             self.page = pages[-1]
         return self.page
 
-    # -- dispatch ----------------------------------------------------------- #
     async def call(self, name: str, args: dict | None = None) -> str:
         fn = getattr(self, f"tool_{name}", None)
         if fn is None:
@@ -460,8 +453,8 @@ class BrowserSession:
         except PWError as e:
             return "ERROR: " + str(e).strip().splitlines()[0][:300]
 
-    # -- snapshot ----------------------------------------------------------- #
     async def _raw_snapshot(self, viewport_only: bool) -> dict:
+        """Run the snapshot walker, retrying once when a navigation destroys the context."""
         page = self._live_page()
         for attempt in (0, 1):
             try:
@@ -469,7 +462,6 @@ class BrowserSession:
                     SNAPSHOT_JS, {"viewportOnly": viewport_only, "maxLine": 240}
                 )
             except PWError as e:
-                # navigation in flight -> context destroyed; settle and retry once
                 if attempt == 0 and "context" in str(e).lower():
                     await self._settle()
                     continue
@@ -532,7 +524,6 @@ class BrowserSession:
             )
         return el
 
-    # -- tools -------------------------------------------------------------- #
     async def tool_goto(self, url: str) -> str:
         parsed = urlparse(url)
         if parsed.scheme.lower() not in ALLOWED_SCHEMES:
@@ -559,13 +550,18 @@ class BrowserSession:
     async def tool_type(
         self, ref: int, text: str, clear: bool = True, submit: bool = False
     ) -> str:
+        """Type text into an input/textarea, clearing it first by default.
+
+        click() above focuses the element; keys are typed with jittered
+        per-key timing. submit=True presses Enter afterwards.
+        """
         el = await self._el(ref)
         await el.scroll_into_view_if_needed(timeout=5000)
         await el.click(timeout=7000)
         if clear:
             await el.fill("")
         kb = self._live_page().keyboard
-        for ch in text:  # click() above focused the element; jittered per-key timing
+        for ch in text:
             await kb.type(ch)
             await asyncio.sleep(random.uniform(0.03, 0.12))
         if submit:
@@ -640,91 +636,9 @@ class BrowserSession:
                 else:
                     text = await el.input_value()
             else:
-                # regular elements and contenteditable regions
                 text = await el.inner_text()
         text = "\n".join(l.strip() for l in text.splitlines() if l.strip())
         return text[:max_chars] + ("\n... [truncated]" if len(text) > max_chars else "")
-
-
-# --------------------------------------------------------------------------- #
-# Tool schemas (Anthropic format; for OpenAI wrap as {"type":"function","function":{...,"parameters":input_schema}})
-# --------------------------------------------------------------------------- #
-def _t(name: str, desc: str, props: dict, required: list[str] | None = None) -> dict:
-    return {
-        "name": name,
-        "description": desc,
-        "input_schema": {
-            "type": "object",
-            "properties": props,
-            "required": required or [],
-        },
-    }
-
-
-TOOLS = [
-    _t(
-        "goto",
-        "Open a URL in the persistent browser. Returns a compact page view. "
-        'Elements like [12] button "Buy" are interactable; use the number as `ref`.',
-        {"url": {"type": "string"}},
-        ["url"],
-    ),
-    _t(
-        "snapshot",
-        "Re-read the current page. Set viewport_only to see just what is on screen.",
-        {"viewport_only": {"type": "boolean"}},
-    ),
-    _t(
-        "click",
-        "Click the element with this ref. Returns what changed on the page.",
-        {"ref": {"type": "integer"}},
-        ["ref"],
-    ),
-    _t(
-        "type",
-        "Type text into an input/textarea by ref (clears first by default). "
-        "submit=true presses Enter afterwards.",
-        {
-            "ref": {"type": "integer"},
-            "text": {"type": "string"},
-            "clear": {"type": "boolean"},
-            "submit": {"type": "boolean"},
-        },
-        ["ref", "text"],
-    ),
-    _t(
-        "select",
-        "Choose an option (by visible label or value) in a <select> by ref.",
-        {"ref": {"type": "integer"}, "option": {"type": "string"}},
-        ["ref", "option"],
-    ),
-    _t(
-        "press",
-        "Press a keyboard key, e.g. Enter, Escape, Tab, ArrowDown.",
-        {"key": {"type": "string"}},
-        ["key"],
-    ),
-    _t(
-        "scroll",
-        "Scroll the page and return the visible viewport.",
-        {
-            "direction": {"type": "string", "enum": ["down", "up", "top", "bottom"]},
-            "amount": {
-                "type": "number",
-                "description": "fraction of viewport height, default 0.8",
-            },
-        },
-    ),
-    _t("back", "Navigate back in history.", {}),
-    _t(
-        "read",
-        "Get the full plain text of one element (or the whole page if ref omitted). "
-        "Form controls report their value instead: input/textarea return the current "
-        "value, select returns the chosen option and the full option list. "
-        "Use when the snapshot truncated or shortened text you need.",
-        {"ref": {"type": "integer"}, "max_chars": {"type": "integer"}},
-    ),
-]
 
 
 if __name__ == "__main__":

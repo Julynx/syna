@@ -1,17 +1,5 @@
-/* ==== js/voice.js ==== */
 "use strict";
 
-// Voice mode: records the microphone, stops after a stretch of silence,
-// transcribes the clip server-side and sends it as a regular message; new
-// model replies are fetched from the speech endpoint and played out loud.
-// Voice is a per-session state: it starts as configured by the server
-// (SYNA_CONFIG.voice.voice_mode_on), carries no memory across visits, and
-// every fresh session (page load, new chat, server restart) resets it. It
-// is only togglable when the .env provides a speech model. While narrating,
-// the background light field borrows the tool-call animation until the
-// speech ends. The module is published as window.Voice so chat.js (a
-// separate script block) can route model messages to speak() — a top-level
-// const alone would not be visible across scripts as a window property.
 
 const Voice = (() => {
   const settings = (window.SYNA_CONFIG && window.SYNA_CONFIG.voice) || {};
@@ -92,9 +80,6 @@ const Voice = (() => {
       pill.remove();
       return;
     }
-    // Status-pill exit pattern: cancel any entrance, then shrink the box to
-    // zero while the negative margin eats the chat gap, so removing the
-    // element afterwards shifts nothing.
     pill.getAnimations().forEach((anim) => anim.cancel());
     pill.style.overflow = "hidden";
     const cs = getComputedStyle(pill);
@@ -111,7 +96,7 @@ const Voice = (() => {
   function setSpeaking(next) {
     if (speaking === next) return;
     speaking = next;
-    if (next) hidePill(); // the tuning-up pill has done its job
+    if (next) hidePill();
     updateAmbient();
   }
 
@@ -137,7 +122,7 @@ const Voice = (() => {
   async function speak(rawText) {
     const text = speakableText(String(rawText || ""));
     if (!enabled || !TTS_AVAILABLE || !text) {
-      hidePill(); // defensive: a shown pill always dies with its speak()
+      hidePill();
       return;
     }
     stopPlayback();

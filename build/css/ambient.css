@@ -1,8 +1,4 @@
-/* ==== css/ambient.css ==== */
-/* ===== Syna — ambient background light field ========================================= */
 
-/* Registered so the state colors can crossfade smoothly (custom properties
-   are only transitionable when registered with a syntax). */
 @property --c3 {
   syntax: "<color>";
   inherits: true;
@@ -20,8 +16,8 @@
 }
 
 body {
-  --glow: 99 102 241; /* accent rgb triplet for rings & the composer halo */
-  --tp: 24%; /* tint percentage of the corner color washes */
+  --glow: 99 102 241;
+  --tp: 24%;
   transition:
     --bgA 2.4s ease,
     --bgB 2.4s ease,
@@ -45,8 +41,6 @@ body[data-ambient="tool"] {
   }
 }
 
-/* The whole light field sits at reduced opacity so every layer (corner tints,
-   glow canvas, pulse rings, grain) fades uniformly toward the base --bg. */
 .ambient {
   position: fixed;
   inset: 0;
@@ -83,8 +77,6 @@ body[data-ambient="tool"] {
   inset: 0;
 }
 
-/* Canvas painted by js/ambient.js: bright core + corona. Rendered small,
-   upscaled and blurred = heavy diffusion. */
 .glow {
   position: absolute;
   left: -4%;
@@ -94,7 +86,6 @@ body[data-ambient="tool"] {
   filter: blur(12px);
 }
 
-/* Expanding ring on every ambientKick (message sent, tool finished, ...) */
 .pulse-ring {
   position: absolute;
   left: 50%;

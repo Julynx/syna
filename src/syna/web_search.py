@@ -1,11 +1,23 @@
+"""Web search and URL-to-markdown fetching for the agent tools."""
+
+import re
+
 from ddgs import DDGS
 
 from .web_to_markdown import Config, fetch_markdown
 
+_URL_PATTERN = re.compile(r"^https?://\S+$", re.IGNORECASE)
+
 
 def search(query):
+    """Return page markdown for URLs, or DuckDuckGo results for queries.
 
-    if query.startswith("https://"):
+    Queries starting with http:// or https:// are fetched, rendered in a
+    headless browser and converted to markdown; everything else goes to
+    DuckDuckGo text search.
+    """
+    query = query.strip()
+    if _URL_PATTERN.match(query):
         return fetch_markdown(query, Config(headless=True))
 
     results = DDGS().text(query, max_results=10)

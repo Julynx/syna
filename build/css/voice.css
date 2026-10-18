@@ -1,7 +1,4 @@
-/* ==== css/voice.css ==== */
-/* ===== Syna — voice mode: header toggle, composer mic, speaking & recording states ===== */
 
-/* voice toggle: two stacked icons crossfade on .muted (same pattern as #sound-btn) */
 #voice-btn {
   width: 34px;
   height: 34px;
@@ -22,7 +19,6 @@
   animation: pulse 1.4s ease-in-out infinite;
 }
 
-/* microphone in the composer: visible only while voice mode is on */
 #mic-btn {
   position: relative;
 }

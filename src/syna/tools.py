@@ -1,3 +1,12 @@
+"""The tools exposed to the model, and the whitelists that dispatch them.
+
+Both TOOL_REGISTRY and BROWSER_COMMANDS are explicit whitelists: parse.py
+dispatches through TOOL_REGISTRY instead of getattr on the module, and
+web_interact dispatches through BROWSER_COMMANDS instead of getattr on the
+Browser object. That keeps internals (editor primitives, path utilities,
+browser internals like run()/page/close()) out of the model's reach.
+"""
+
 import shlex
 import tempfile
 from pathlib import Path
@@ -14,9 +23,6 @@ from .web_search import search
 
 BROWSER = None
 
-# The only methods the model may reach through web_interact. Dispatching
-# through this whitelist (instead of getattr on the Browser object) keeps
-# internals like run(), page, close() and dunder attributes out of reach.
 BROWSER_COMMANDS = {
     "goto": Browser.goto,
     "snapshot": Browser.snapshot,
@@ -60,14 +66,9 @@ def web_interact(command: str, args: dict[str, Any]):
       > Mandatory args: "ref"
 
     "type"
-      > "Type text into an input/textarea by ref (clears first by default). "
-      > "submit=true presses Enter afterwards."
-      > "args": {
-            "ref": {"type": "integer"},
-            "text": {"type": "string"},
-            "clear": {"type": "boolean"},
-            "submit": {"type": "boolean"},
-        },
+      > Type text into an input/textarea by ref (clears first by default).
+      > submit=true presses Enter afterwards.
+      > "args": {"ref": "<int>", "text": "<str>", "clear": "<bool>", "submit": "<bool>"}
       > Mandatory args: "ref", "text"
 
     "select"
@@ -82,18 +83,12 @@ def web_interact(command: str, args: dict[str, Any]):
 
     "scroll"
       > Scroll the page and return the visible viewport.
-      > "args": {
-            "direction": {"type": "string", "enum": ["down", "up", "top", "bottom"]},
-            "amount": {
-                "type": "number",
-                "description": "fraction of viewport height, default 0.8",
-            },
-        },
+      > "args": {"direction": "<str: down|up|top|bottom>",
+            "amount": "<float fraction of viewport height, default 0.8>"}
       > Mandatory args: none
 
     "back"
       > Navigate back in history.
-      > "args": null
       > Mandatory args: none
 
     "read"
@@ -257,10 +252,6 @@ def respond(text: str):
     return text
 
 
-# The complete set of tools the model may call. parse.py dispatches through
-# this registry instead of doing getattr on the module, so module internals
-# and imported helpers (editor primitives, path utilities...) stay out of
-# the model's reach.
 TOOL_REGISTRY = {
     "web_search": web_search,
     "web_interact": web_interact,

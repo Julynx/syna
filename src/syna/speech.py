@@ -6,6 +6,9 @@ audio speech endpoint and returns the synthesized audio together with the
 MIME type the browser should receive. Both endpoints are OpenAI-compatible
 REST calls driven by the models configured in the .env file
 (STT_MODEL / TTS_MODEL / TTS_RESPONSE_FORMAT).
+
+The default TTS response format is 'pcm': Gemini TTS models only accept
+it, and wrap_pcm_in_wav makes the raw samples playable in every browser.
 """
 
 import base64
@@ -21,8 +24,6 @@ TRANSCRIPTIONS_ENDPOINT = "https://openrouter.ai/api/v1/audio/transcriptions"
 SPEECH_ENDPOINT = "https://openrouter.ai/api/v1/audio/speech"
 
 DEFAULT_TTS_VOICE = "Kore"
-# 'pcm' is the safe default: Gemini TTS models only accept it, and
-# wrap_pcm_in_wav makes the raw samples playable in every browser.
 DEFAULT_TTS_RESPONSE_FORMAT = "pcm"
 DEFAULT_SPEECH_LANGUAGE = "en"
 DEFAULT_SILENCE_TIMEOUT_MS = 2000

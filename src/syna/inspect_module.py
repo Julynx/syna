@@ -1,3 +1,5 @@
+"""Extract function names, docstrings and argument types via ast."""
+
 import ast
 
 
@@ -9,11 +11,9 @@ def get_function_metadata(file_path):
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            # Skip private/internal functions
             if node.name.startswith("_"):
                 continue
 
-            # Extract arguments and their type annotations
             args = []
             for arg in node.args.args:
                 arg_info = {
@@ -22,7 +22,6 @@ def get_function_metadata(file_path):
                 }
                 args.append(arg_info)
 
-            # Handle *args and **kwargs
             if node.args.vararg:
                 args.append(
                     {
@@ -42,10 +41,8 @@ def get_function_metadata(file_path):
                     }
                 )
 
-            # Extract return type annotation
             return_type = ast.unparse(node.returns) if node.returns else None
 
-            # Extract docstring
             docstring = ast.get_docstring(node)
 
             functions_info.append(
