@@ -10,5 +10,6 @@ wheels/
 .env
 
 *.log
+message-session-log*
 TODO.md
 technical_description.md

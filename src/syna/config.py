@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -37,12 +38,22 @@ def get_logger() -> logging.Logger:
     return logger
 
 
-def get_session_dump() -> Path:
-    """Get the path to the session dump file, where the messages array will be saved."""
+def get_session_dump_path(session_id: str | None = None) -> Path:
+    """Get the path to the session dump file, where the messages array will be saved.
+
+    When 'session_id' is given, it is woven into the file name (e.g.
+    'message-session-log-<id>.json') so that concurrent sessions in server
+    mode never overwrite each other's dumps. The id is sanitized to safe
+    file-name characters and capped in length first.
+    """
     config = load_config()
     dump_file_name = config.get("session_dump_file", "message-session-log.json")
-    dump_file_path = get_project_root() / dump_file_name
-    return dump_file_path
+    if session_id:
+        safe_id = re.sub(r"[^A-Za-z0-9_-]", "-", str(session_id))[:64]
+        configured_path = Path(dump_file_name)
+        suffix = configured_path.suffix or ".json"
+        dump_file_name = f"{configured_path.stem}-{safe_id}{suffix}"
+    return get_project_root() / dump_file_name
 
 
 def truncate_command_output(output: str, max_chars: int | None = None) -> str:

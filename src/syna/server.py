@@ -66,7 +66,9 @@ class SessionRecord:
         self.shutdown = threading.Event()
         self.last_activity = time.time()
         self.session = AgentSession(
-            on_event=self._on_session_event, emit_tool_errors=True
+            on_event=self._on_session_event,
+            emit_tool_errors=True,
+            session_id=client_id,
         )
         self.worker = threading.Thread(
             target=self._run_worker,

@@ -13,7 +13,12 @@ from .compaction import (
     build_compaction_messages,
     load_compaction_prompt,
 )
-from .config import get_logger, get_project_root, load_config
+from .config import (
+    get_logger,
+    get_project_root,
+    get_session_dump_path,
+    load_config,
+)
 from .parse import parse_and_execute_tools
 
 dotenv = dotenv_values(get_project_root() / ".env")
@@ -151,6 +156,7 @@ class AgentSession:
         on_event=None,
         request_delay: float = DEFAULT_REQUEST_DELAY_S,
         emit_tool_errors: bool = False,
+        session_id: str | None = None,
     ):
         self.on_event = on_event or (lambda event: None)
         self.request_delay = request_delay
@@ -163,6 +169,9 @@ class AgentSession:
         )
         self.compaction_prompt = load_compaction_prompt()
         self.messages: list[dict] = []
+        # Session dump target: woven with 'session_id' so concurrent server
+        # sessions never overwrite each other's dump files.
+        self.dump_path = get_session_dump_path(session_id)
         self._cancel_event = threading.Event()
         self._tool_call_seq = 0
         self._tool_errored = False
@@ -234,6 +243,7 @@ class AgentSession:
                     self.messages,
                     delay=self.request_delay,
                     effort=self.thinking_effort,
+                    dump_path=self.dump_path,
                 )
             except TurnCancelled:
                 self._finish_cancelled_turn()
@@ -303,6 +313,8 @@ class AgentSession:
         logger = get_logger()
         self._emit({"type": "status", "text": "Compacting history..."})
         try:
+            # No dump_path: the compaction request is not part of the live
+            # conversation and must not overwrite its dump file.
             summary = ask_question(
                 self.client,
                 self.model,
