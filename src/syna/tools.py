@@ -2,6 +2,7 @@ import shlex
 import tempfile
 from pathlib import Path
 from posixpath import basename, dirname
+from typing import Any
 
 from .browser import Browser
 from .config import get_logger, truncate_command_output
@@ -38,7 +39,7 @@ def web_search(query: str):
     return search(query)
 
 
-def web_interact(command: str, args: dict[str:any]):
+def web_interact(command: str, args: dict[str, Any]):
     """
     Interact with a website. Available commands:
 
@@ -121,7 +122,7 @@ def web_interact(command: str, args: dict[str:any]):
 def read_file(file_path: str, start: int = 1, limit: int = 200):
     """
     View the contents of a file with line numbers.
-    Use this tool over 'execute_command' for reading files.
+    Use this tool over 'execute_command' for reading text files.
 
     - 'file_path' must be an absolute path.
     - 'start' is the first line to be read (lines start at 1).
@@ -141,7 +142,7 @@ def read_file(file_path: str, start: int = 1, limit: int = 200):
 def edit_file(file_path: str, operations: list[dict]):
     """
     Edit the contents of a file.
-    Use this tool over 'execute_command' for editing files.
+    Use this tool over 'execute_command' for editing text files.
 
     - 'file_path' must be an absolute path.
     - 'operations' is a list of dicts, each one of:
