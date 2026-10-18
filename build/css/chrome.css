@@ -135,3 +135,41 @@ header {
   padding-bottom: 7px;
   opacity: 1;
 }
+
+/* Drag-and-drop overlay: revealed while files are dragged over the window.
+   Purely visual (pointer-events: none) so the drop lands on the page below. */
+#drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-in) var(--ease);
+}
+#drop-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 16px;
+  border: 2px dashed var(--accent-line);
+  border-radius: var(--radius);
+}
+#drop-overlay::after {
+  content: "Drop to share with Syna";
+  font-weight: 650;
+  font-size: 15px;
+  color: var(--text);
+  padding: 9px 18px;
+  border-radius: 999px;
+  background-color: var(--surface);
+  background-image: var(--frost);
+  backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow);
+}
+body.dragging #drop-overlay {
+  opacity: 1;
+}

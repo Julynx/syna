@@ -965,4 +965,57 @@ input.addEventListener("keydown", (keyEvent) => {
   }
 });
 
+// ---------- drag & drop / paste uploads ----------
+// Files dragged over the window or pasted into the composer take the same
+// upload path as the attach button. The drop overlay is revealed while a file
+// drag is over the page; a depth counter keeps it stable across child
+// element boundaries.
+
+let dragDepth = 0;
+
+function transferHasFiles(dataTransfer) {
+  return dataTransfer && Array.from(dataTransfer.types).includes("Files");
+}
+
+function uploadDroppedFiles(dataTransfer) {
+  const files = Array.from(dataTransfer.files).filter(
+    (file) => file.size > 0 || file.type,
+  );
+  if (files.length) uploadFiles(files);
+}
+
+window.addEventListener("dragenter", (event) => {
+  if (!transferHasFiles(event.dataTransfer)) return;
+  event.preventDefault();
+  dragDepth += 1;
+  document.body.classList.add("dragging");
+});
+
+window.addEventListener("dragover", (event) => {
+  if (!transferHasFiles(event.dataTransfer)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+});
+
+window.addEventListener("dragleave", (event) => {
+  if (!transferHasFiles(event.dataTransfer)) return;
+  event.preventDefault();
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) document.body.classList.remove("dragging");
+});
+
+window.addEventListener("drop", (event) => {
+  dragDepth = 0;
+  document.body.classList.remove("dragging");
+  if (!transferHasFiles(event.dataTransfer)) return;
+  event.preventDefault();
+  uploadDroppedFiles(event.dataTransfer);
+});
+
+input.addEventListener("paste", (event) => {
+  if (!event.clipboardData || !event.clipboardData.files.length) return;
+  event.preventDefault();
+  uploadFiles(event.clipboardData.files);
+});
+
 connect();
