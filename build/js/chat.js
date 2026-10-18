@@ -337,7 +337,10 @@ function expandToolRun(run) {
     cancelAnim(wrap);
     wrap.style.overflow = "hidden";
     wrap.classList.remove("collapsed");
-    const target = wrap.scrollHeight; // full content height (element is at 0 now)
+    // Fractional target from the laid-out element (scrollHeight rounds to
+    // whole pixels and would snap against the natural height at the end),
+    // mirroring the collapse path's start measurement.
+    const target = wrap.getBoundingClientRect().height;
     const anim = (wrap._anim = wrap.animate(
       [
         { height: "0px", marginTop: -CHAT_GAP + "px" },
@@ -438,6 +441,7 @@ function placeToolRow(row) {
     const wrap = ensureOverflowWrap(toolRun);
     if (toolRun.moreRow.parentNode !== chat) {
       chat.insertBefore(toolRun.moreRow, wrap.nextSibling);
+      growIn(toolRun.moreRow); // the pill must not pop in unanimated
     }
     wrap.appendChild(row);
     if (toolRun.expanded) growIn(row);
@@ -655,7 +659,22 @@ let statusHideTimer = null;
 
 function setStatus(kind, label) {
   statusDot.className = "status-dot " + kind;
+  // The pill hugs its text (width: fit-content): a bare text swap would
+  // snap its width, so animate old width -> new width while it is visible.
+  const widthBefore =
+    statusRow.parentNode === chat
+      ? statusRow.getBoundingClientRect().width
+      : 0;
   statusLabel.textContent = label;
+  if (widthBefore && !REDUCE) {
+    const widthAfter = statusRow.getBoundingClientRect().width;
+    if (widthAfter !== widthBefore) {
+      statusRow.animate(
+        [{ width: widthBefore + "px" }, { width: widthAfter + "px" }],
+        { duration: 260, easing: EASE_OUT },
+      );
+    }
+  }
   const show = kind === "working";
   if (show) {
     if (statusHideTimer) {
@@ -712,7 +731,13 @@ function render(event) {
     tool_call:
       event.status === "started" ? "tick" : event.failed ? "error" : "done",
   }[event.type];
-  if (snd) Sfx.play(snd);
+  // A narrated message speaks instead of blipping: only the voice is heard
+  // while the model talks.
+  const narrates =
+    event.type === "model_message" &&
+    window.Voice &&
+    Voice.willNarrate(event.content);
+  if (snd && !narrates) Sfx.play(snd);
   if (event.type !== "file" && event.type !== "file_sent") closeFileGroup();
   // A decode error is a malformed reply of the ongoing turn, not a new one:
   // keep the run alive so its errored row groups with the surrounding calls.

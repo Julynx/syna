@@ -7,10 +7,11 @@
 // Voice is a per-session state: it starts as configured by the server
 // (SYNA_CONFIG.voice.voice_mode_on), carries no memory across visits, and
 // every fresh session (page load, new chat, server restart) resets it. It
-// is only togglable when the .env provides a speech model. The module is
-// published as window.Voice so chat.js (a separate script block) can route
-// model messages to speak() — a top-level const alone would not be visible
-// across scripts as a window property.
+// is only togglable when the .env provides a speech model. While narrating,
+// the background light field borrows the tool-call animation until the
+// speech ends. The module is published as window.Voice so chat.js (a
+// separate script block) can route model messages to speak() — a top-level
+// const alone would not be visible across scripts as a window property.
 
 const Voice = (() => {
   const settings = (window.SYNA_CONFIG && window.SYNA_CONFIG.voice) || {};
@@ -39,6 +40,7 @@ const Voice = (() => {
   let recordingAborted = false;
   let playback = null;
   let playbackUrl = null;
+  let speaking = false;
 
   function reset() {
     enabled = initialEnabled;
@@ -68,6 +70,12 @@ const Voice = (() => {
       .trim();
   }
 
+  function setSpeaking(next) {
+    if (speaking === next) return;
+    speaking = next;
+    updateAmbient();
+  }
+
   function stopPlayback() {
     if (playback) {
       playback.pause();
@@ -78,6 +86,13 @@ const Voice = (() => {
       playbackUrl = null;
     }
     voiceBtn.classList.remove("speaking");
+    setSpeaking(false);
+  }
+
+  function willNarrate(rawText) {
+    return (
+      enabled && TTS_AVAILABLE && !!speakableText(String(rawText || ""))
+    );
   }
 
   async function speak(rawText) {
@@ -100,11 +115,16 @@ const Voice = (() => {
       }
       playbackUrl = URL.createObjectURL(await response.blob());
       playback = new Audio(playbackUrl);
-      playback.onended = () => voiceBtn.classList.remove("speaking");
+      playback.onended = () => {
+        voiceBtn.classList.remove("speaking");
+        setSpeaking(false);
+      };
       voiceBtn.classList.add("speaking");
+      setSpeaking(true);
       await playback.play();
     } catch (err) {
       voiceBtn.classList.remove("speaking");
+      setSpeaking(false);
       console.error(err);
       addEventRow("Speech playback failed: " + err.message, true);
     }
@@ -275,8 +295,12 @@ const Voice = (() => {
     speak,
     stopPlayback,
     reset,
+    willNarrate,
     get enabled() {
       return enabled;
+    },
+    get speaking() {
+      return speaking;
     },
   };
 })();

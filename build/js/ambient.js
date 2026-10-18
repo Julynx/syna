@@ -5,11 +5,21 @@
 //   idle     -> waiting for the user
 //   thinking -> user sent a message, awaiting the model
 //   tool     -> waiting for a tool call to complete
+// The same tool visuals play while the model narrates aloud (voice.js): the
+// state keeps blending through the W weights, so entering and leaving
+// narration is as fluid as any other state change.
 // Reads the global `busy` flag owned by js/chat.js.
 let ambientState = "";
 function updateAmbient() {
+  const narrating = window.Voice ? Voice.speaking : false;
   const toolActive = document.querySelector(".tool-row.running") !== null;
-  const next = !busy ? "idle" : toolActive ? "tool" : "thinking";
+  const next = narrating
+    ? "tool"
+    : !busy
+      ? "idle"
+      : toolActive
+        ? "tool"
+        : "thinking";
   if (next === ambientState) return;
   ambientState = next;
   document.body.setAttribute("data-ambient", next);

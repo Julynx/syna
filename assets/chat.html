@@ -1578,12 +1578,6 @@ body.voice-off #mic-btn {
         ><img class="brand-logo" src="vendor/syna-logo.png" alt="Syna"
       /></span>
       <button
-        id="newchat-btn"
-        class="icon-btn"
-        title="New chat"
-        aria-label="Start a new chat"
-      ></button>
-      <button
         id="sound-btn"
         class="icon-btn"
         title="Toggle sound effects"
@@ -1594,6 +1588,12 @@ body.voice-off #mic-btn {
         class="icon-btn"
         title="Voice mode"
         aria-label="Toggle voice mode"
+      ></button>
+      <button
+        id="newchat-btn"
+        class="icon-btn"
+        title="New chat"
+        aria-label="Start a new chat"
       ></button>
     </header>
     <div id="banner">
@@ -1639,11 +1639,21 @@ body.voice-off #mic-btn {
 //   idle     -> waiting for the user
 //   thinking -> user sent a message, awaiting the model
 //   tool     -> waiting for a tool call to complete
+// The same tool visuals play while the model narrates aloud (voice.js): the
+// state keeps blending through the W weights, so entering and leaving
+// narration is as fluid as any other state change.
 // Reads the global `busy` flag owned by js/chat.js.
 let ambientState = "";
 function updateAmbient() {
+  const narrating = window.Voice ? Voice.speaking : false;
   const toolActive = document.querySelector(".tool-row.running") !== null;
-  const next = !busy ? "idle" : toolActive ? "tool" : "thinking";
+  const next = narrating
+    ? "tool"
+    : !busy
+      ? "idle"
+      : toolActive
+        ? "tool"
+        : "thinking";
   if (next === ambientState) return;
   ambientState = next;
   document.body.setAttribute("data-ambient", next);
@@ -2750,7 +2760,10 @@ function expandToolRun(run) {
     cancelAnim(wrap);
     wrap.style.overflow = "hidden";
     wrap.classList.remove("collapsed");
-    const target = wrap.scrollHeight; // full content height (element is at 0 now)
+    // Fractional target from the laid-out element (scrollHeight rounds to
+    // whole pixels and would snap against the natural height at the end),
+    // mirroring the collapse path's start measurement.
+    const target = wrap.getBoundingClientRect().height;
     const anim = (wrap._anim = wrap.animate(
       [
         { height: "0px", marginTop: -CHAT_GAP + "px" },
@@ -2851,6 +2864,7 @@ function placeToolRow(row) {
     const wrap = ensureOverflowWrap(toolRun);
     if (toolRun.moreRow.parentNode !== chat) {
       chat.insertBefore(toolRun.moreRow, wrap.nextSibling);
+      growIn(toolRun.moreRow); // the pill must not pop in unanimated
     }
     wrap.appendChild(row);
     if (toolRun.expanded) growIn(row);
@@ -3068,7 +3082,22 @@ let statusHideTimer = null;
 
 function setStatus(kind, label) {
   statusDot.className = "status-dot " + kind;
+  // The pill hugs its text (width: fit-content): a bare text swap would
+  // snap its width, so animate old width -> new width while it is visible.
+  const widthBefore =
+    statusRow.parentNode === chat
+      ? statusRow.getBoundingClientRect().width
+      : 0;
   statusLabel.textContent = label;
+  if (widthBefore && !REDUCE) {
+    const widthAfter = statusRow.getBoundingClientRect().width;
+    if (widthAfter !== widthBefore) {
+      statusRow.animate(
+        [{ width: widthBefore + "px" }, { width: widthAfter + "px" }],
+        { duration: 260, easing: EASE_OUT },
+      );
+    }
+  }
   const show = kind === "working";
   if (show) {
     if (statusHideTimer) {
@@ -3125,7 +3154,13 @@ function render(event) {
     tool_call:
       event.status === "started" ? "tick" : event.failed ? "error" : "done",
   }[event.type];
-  if (snd) Sfx.play(snd);
+  // A narrated message speaks instead of blipping: only the voice is heard
+  // while the model talks.
+  const narrates =
+    event.type === "model_message" &&
+    window.Voice &&
+    Voice.willNarrate(event.content);
+  if (snd && !narrates) Sfx.play(snd);
   if (event.type !== "file" && event.type !== "file_sent") closeFileGroup();
   // A decode error is a malformed reply of the ongoing turn, not a new one:
   // keep the run alive so its errored row groups with the surrounding calls.
@@ -3362,10 +3397,11 @@ connect();
 // Voice is a per-session state: it starts as configured by the server
 // (SYNA_CONFIG.voice.voice_mode_on), carries no memory across visits, and
 // every fresh session (page load, new chat, server restart) resets it. It
-// is only togglable when the .env provides a speech model. The module is
-// published as window.Voice so chat.js (a separate script block) can route
-// model messages to speak() — a top-level const alone would not be visible
-// across scripts as a window property.
+// is only togglable when the .env provides a speech model. While narrating,
+// the background light field borrows the tool-call animation until the
+// speech ends. The module is published as window.Voice so chat.js (a
+// separate script block) can route model messages to speak() — a top-level
+// const alone would not be visible across scripts as a window property.
 
 const Voice = (() => {
   const settings = (window.SYNA_CONFIG && window.SYNA_CONFIG.voice) || {};
@@ -3394,6 +3430,7 @@ const Voice = (() => {
   let recordingAborted = false;
   let playback = null;
   let playbackUrl = null;
+  let speaking = false;
 
   function reset() {
     enabled = initialEnabled;
@@ -3423,6 +3460,12 @@ const Voice = (() => {
       .trim();
   }
 
+  function setSpeaking(next) {
+    if (speaking === next) return;
+    speaking = next;
+    updateAmbient();
+  }
+
   function stopPlayback() {
     if (playback) {
       playback.pause();
@@ -3433,6 +3476,13 @@ const Voice = (() => {
       playbackUrl = null;
     }
     voiceBtn.classList.remove("speaking");
+    setSpeaking(false);
+  }
+
+  function willNarrate(rawText) {
+    return (
+      enabled && TTS_AVAILABLE && !!speakableText(String(rawText || ""))
+    );
   }
 
   async function speak(rawText) {
@@ -3455,11 +3505,16 @@ const Voice = (() => {
       }
       playbackUrl = URL.createObjectURL(await response.blob());
       playback = new Audio(playbackUrl);
-      playback.onended = () => voiceBtn.classList.remove("speaking");
+      playback.onended = () => {
+        voiceBtn.classList.remove("speaking");
+        setSpeaking(false);
+      };
       voiceBtn.classList.add("speaking");
+      setSpeaking(true);
       await playback.play();
     } catch (err) {
       voiceBtn.classList.remove("speaking");
+      setSpeaking(false);
       console.error(err);
       addEventRow("Speech playback failed: " + err.message, true);
     }
@@ -3630,8 +3685,12 @@ const Voice = (() => {
     speak,
     stopPlayback,
     reset,
+    willNarrate,
     get enabled() {
       return enabled;
+    },
+    get speaking() {
+      return speaking;
     },
   };
 })();
