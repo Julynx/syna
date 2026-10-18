@@ -120,7 +120,7 @@ def web_interact(command: str, args: dict[str:any]):
 def read_file(file_path: str, start: int = 1, limit: int = 200):
     """
     View the contents of a file with line numbers.
-    Use this tool over 'execute_command' for file reading.
+    Use this tool over 'execute_command' for reading files.
 
     - 'file_path' must be an absolute path.
     - 'start' is the first line to be read (lines start at 1).
@@ -140,7 +140,7 @@ def read_file(file_path: str, start: int = 1, limit: int = 200):
 def edit_file(file_path: str, operations: list[dict]):
     """
     Edit the contents of a file.
-    Use this tool over 'execute_command' for file editing.
+    Use this tool over 'execute_command' for editing files.
 
     - 'file_path' must be an absolute path.
     - 'operations' is a list of dicts, each one of:
@@ -164,7 +164,7 @@ def execute_command(command: str, arguments: list[str] | None = None):
     """
     Execute a command inside the container's debian machine and get its output.
     You have full control over this machine: you may install packages, create
-    and run scripts, and take any action you need to perform your task.
+    and run scripts, and take any action that is required to perform your task.
 
     Two accepted calling styles:
     - Shell style: 'command' is a full shell line, exactly as you would type it
@@ -232,12 +232,12 @@ def _reset_browser():
 
 
 def respond(text: str):
-    r"""
+    """
     Send a message to the user. This will end the task and pass priority to him.
     DO NOT include a call to this tool in the same message as other tool calls.
     If you are still working on a task, only call this tool when you have finished.
     You may use basic markdown syntax (headings, lists, links, tables, code
-    blocks) in 'text' when it helps readability.
+    blocks, latex math) in 'text' when it helps readability.
     """
     return text
 
