@@ -2,12 +2,15 @@
 
 Transcription posts a base64-encoded clip to the audio transcriptions
 endpoint and returns its text. Synthesis posts a passage of text to the
-audio speech endpoint and returns raw MP3 bytes. Both endpoints are
-OpenAI-compatible REST calls driven by the models configured in the .env
-file (STT_MODEL / TTS_MODEL).
+audio speech endpoint and returns the synthesized audio together with the
+MIME type the browser should receive. Both endpoints are OpenAI-compatible
+REST calls driven by the models configured in the .env file
+(STT_MODEL / TTS_MODEL / TTS_RESPONSE_FORMAT).
 """
 
 import base64
+import io
+import wave
 from dataclasses import dataclass
 
 import httpx
@@ -18,10 +21,26 @@ TRANSCRIPTIONS_ENDPOINT = "https://openrouter.ai/api/v1/audio/transcriptions"
 SPEECH_ENDPOINT = "https://openrouter.ai/api/v1/audio/speech"
 
 DEFAULT_TTS_VOICE = "Kore"
+# 'pcm' is the safe default: Gemini TTS models only accept it, and
+# wrap_pcm_in_wav makes the raw samples playable in every browser.
+DEFAULT_TTS_RESPONSE_FORMAT = "pcm"
 DEFAULT_SPEECH_LANGUAGE = "en"
 DEFAULT_SILENCE_TIMEOUT_MS = 2000
 DEFAULT_SILENCE_THRESHOLD_DBFS = -45
 DEFAULT_MAX_RECORDING_MS = 60000
+
+PCM_SAMPLE_RATE_HZ = 24000
+PCM_SAMPLE_WIDTH_BYTES = 2
+PCM_CHANNELS = 1
+
+MEDIA_TYPES_BY_FORMAT = {
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "pcm": "audio/wav",
+    "opus": "audio/ogg",
+    "aac": "audio/aac",
+    "flac": "audio/flac",
+}
 
 AUDIO_FORMATS = {
     "audio/webm": "webm",
@@ -44,6 +63,7 @@ class SpeechSettings:
     stt_model: str | None
     tts_model: str | None
     tts_voice: str
+    tts_response_format: str
     language: str
 
     @property
@@ -57,6 +77,14 @@ class SpeechSettings:
         return bool(self.tts_model)
 
 
+@dataclass(frozen=True)
+class SynthesizedAudio:
+    """Synthesized speech bytes plus the MIME type to serve them with."""
+
+    content: bytes
+    media_type: str
+
+
 def load_speech_settings() -> SpeechSettings:
     """Build the speech settings from the environment variables in .env."""
     env = get_env()
@@ -64,6 +92,10 @@ def load_speech_settings() -> SpeechSettings:
         stt_model=(env.get("STT_MODEL") or "").strip() or None,
         tts_model=(env.get("TTS_MODEL") or "").strip() or None,
         tts_voice=(env.get("TTS_VOICE") or "").strip() or DEFAULT_TTS_VOICE,
+        tts_response_format=(
+            env.get("TTS_RESPONSE_FORMAT") or ""
+        ).strip().lower()
+        or DEFAULT_TTS_RESPONSE_FORMAT,
         language=(env.get("SPEECH_LANGUAGE") or "").strip() or DEFAULT_SPEECH_LANGUAGE,
     )
 
@@ -139,23 +171,52 @@ def transcribe_audio(
     return text
 
 
-def synthesize_speech(text: str, settings: SpeechSettings) -> bytes:
+def wrap_pcm_in_wav(pcm_bytes: bytes, sample_rate_hz: int) -> bytes:
+    """Wrap raw 16-bit mono PCM samples in a RIFF/WAVE container.
+
+    The OpenAI-compatible speech endpoint returns headerless samples for
+    response_format 'pcm', which browsers cannot play directly; the WAV
+    header gives them the sample rate and bit depth they need. A response
+    that already carries a RIFF header is returned unchanged.
+    """
+    if pcm_bytes[:4] == b"RIFF":
+        return pcm_bytes
+    container = io.BytesIO()
+    with wave.open(container, "wb") as wav_file:
+        wav_file.setnchannels(PCM_CHANNELS)
+        wav_file.setsampwidth(PCM_SAMPLE_WIDTH_BYTES)
+        wav_file.setframerate(sample_rate_hz)
+        wav_file.writeframes(pcm_bytes)
+    return container.getvalue()
+
+
+def synthesize_speech(text: str, settings: SpeechSettings) -> SynthesizedAudio:
     """Synthesize one passage of spoken audio through the configured TTS model."""
     if not settings.tts_available:
         raise SpeechError("TTS_MODEL is not set in the .env file.")
+    audio_format = settings.tts_response_format
     response = _post_to_openrouter(
         SPEECH_ENDPOINT,
         {
             "model": settings.tts_model,
             "input": text,
             "voice": settings.tts_voice,
-            "response_format": "mp3",
+            "response_format": audio_format,
         },
     )
-    get_logger().info(
-        "Synthesized %d chars into %d bytes of speech", len(text), len(response.content)
+    content = response.content
+    if audio_format == "pcm":
+        content = wrap_pcm_in_wav(content, PCM_SAMPLE_RATE_HZ)
+    media_type = MEDIA_TYPES_BY_FORMAT.get(
+        audio_format, f"audio/{audio_format}"
     )
-    return response.content
+    get_logger().info(
+        "Synthesized %d chars into %d bytes of %s speech",
+        len(text),
+        len(content),
+        audio_format,
+    )
+    return SynthesizedAudio(content=content, media_type=media_type)
 
 
 def client_configuration(settings: SpeechSettings, app_config: dict) -> dict:

@@ -484,7 +484,9 @@
   flex-direction: column;
   gap: 10px; /* keep inner spacing identical to #chat */
 }
-.tool-overflow.collapsed {
+/* '#chat > *' sets 'margin: 0 auto' with ID specificity, so this override
+   must carry an ID too or the negative margin silently loses the cascade. */
+#chat > .tool-overflow.collapsed {
   height: 0;
   margin-top: -10px; /* cancels the #chat gap on both sides while collapsed */
   overflow: hidden;

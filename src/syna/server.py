@@ -389,12 +389,12 @@ async def synthesize_speech(request: SynthesisRequest):
             status_code=400, detail="Nothing to synthesize: the text is empty."
         )
     try:
-        audio_bytes = await asyncio.to_thread(
+        audio = await asyncio.to_thread(
             speech.synthesize_speech, text, speech_settings
         )
     except speech.SpeechError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return Response(content=audio_bytes, media_type="audio/mpeg")
+    return Response(content=audio.content, media_type=audio.media_type)
 
 
 async def _pump_events(record: SessionRecord, websocket: WebSocket):
