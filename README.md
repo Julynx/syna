@@ -40,7 +40,7 @@ _Syna, the AI agent with a pod._
 3. Install `uv` and run:
 
    ```bash
-   uv run syna
+   uv run syna-server
    ```
 
 ## Troubleshooting common problems
