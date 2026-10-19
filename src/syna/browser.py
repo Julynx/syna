@@ -39,13 +39,34 @@ import asyncio
 import random
 import sys
 import threading
+import time
 from typing import Any
 from urllib.parse import urlparse
 
 from camoufox.async_api import AsyncCamoufox
 from playwright.async_api import Error as PWError
 
+from .config import get_logger
+
 ALLOWED_SCHEMES = {"http", "https"}
+
+# Ad/identity script hosts that uBlock blocks, which makes Fandom's own error
+# handler wipe the whole document and show its report.error-report.com modal
+# ("Failed to load website due to adblock"). Fulfilling those requests with
+# empty JavaScript keeps pages intact: the bootstrapper sees success and the
+# site renders normally.
+NEUTRALIZED_SCRIPT_PATTERNS = (
+    "**://fundingchoicesmessages.google.com/**",
+    "**://*.id5-sync.com/**",
+    "**://*.criteo.net/**",
+    "**://*.aforearound.com/**",
+    "**://script.wikia.nocookie.net/fandom-ae-assets/identity-service/**",
+)
+
+# A popup is only adopted as the current page within this window after a
+# user-initiated interaction (click/type/submit); anything else is
+# malvertising and gets closed.
+POPUP_ADOPT_WINDOW_S = 10
 
 SNAPSHOT_JS = r"""
 (opts) => {
@@ -353,6 +374,11 @@ class BrowserSession:
     the hard cap on any snapshot (~3k tokens). The fingerprint OS is pinned
     to the real host (random OS = inconsistent fingerprint); override with
     os="macos"/..., or os=None to let Camoufox pick randomly.
+
+    Request routing: uBlock's blocking of certain ad/identity script hosts
+    makes sites like Fandom replace the page with an error-report modal, so
+    those hosts are fulfilled with empty JavaScript instead (see
+    NEUTRALIZED_SCRIPT_PATTERNS).
     """
 
     def __init__(
@@ -384,6 +410,8 @@ class BrowserSession:
         self.context = None
         self.page = None
         self._last: tuple[str, list[str]] | None = None
+        self._last_nav_url: str | None = None
+        self._last_click_at = 0.0
 
     async def start(self) -> "BrowserSession":
         self._cm = AsyncCamoufox(**self._kw)
@@ -392,6 +420,8 @@ class BrowserSession:
             self.context = obj
         else:
             self.context = await obj.new_context(accept_downloads=False)
+        for pattern in NEUTRALIZED_SCRIPT_PATTERNS:
+            await self.context.route(pattern, self._fulfill_empty_script)
         self.page = (
             self.context.pages[0]
             if self.context.pages
@@ -400,6 +430,18 @@ class BrowserSession:
         self._watch_page(self.page)
         self.context.on("page", self._on_new_page)
         return self
+
+    @staticmethod
+    async def _fulfill_empty_script(route) -> None:
+        """Answer a blocked ad/identity script with harmless empty JavaScript."""
+        try:
+            await route.fulfill(
+                status=200,
+                content_type="application/javascript",
+                body="/* neutralized by syna: script host blocked */",
+            )
+        except Exception:
+            pass
 
     def _on_download(self, download) -> None:
         """Belt-and-braces guard: kill any download attempt in flight.
@@ -414,6 +456,47 @@ class BrowserSession:
 
     def _watch_page(self, p) -> None:
         p.on("download", self._on_download)
+        p.on("crash", self._on_crash)
+        p.on("pageerror", self._on_page_error)
+        p.on("requestfailed", self._on_request_failed)
+
+    def _on_crash(self, page) -> None:
+        """A renderer crash must never end the session: reload transparently."""
+        get_logger().warning("Browser page crashed: %.200s", page.url)
+        self._last = None
+        asyncio.ensure_future(self._recover_from_crash(page))
+
+    def _on_page_error(self, error) -> None:
+        get_logger().debug("Page JS error: %.300s", error)
+
+    def _on_request_failed(self, request) -> None:
+        failure = str(request.failure) if request.failure else ""
+        if "ABORTED" in failure.upper():
+            return
+        get_logger().debug(
+            "Request failed: %s %.200s (%s)", request.method, request.url, failure
+        )
+
+    async def _recover_from_crash(self, page) -> None:
+        """Reload the crashed page (or open a fresh tab) so tools keep working."""
+        try:
+            await asyncio.sleep(0.5)
+            try:
+                await page.reload(wait_until="domcontentloaded", timeout=20000)
+            except PWError:
+                page = await self.context.new_page()
+                self._watch_page(page)
+                self.page = page
+                if self._last_nav_url:
+                    await page.goto(
+                        self._last_nav_url,
+                        wait_until="domcontentloaded",
+                        timeout=30000,
+                    )
+            await self._settle()
+            get_logger().info("Browser page recovered after crash")
+        except Exception as exc:
+            get_logger().warning("Browser crash recovery failed: %s", exc)
 
     async def close(self) -> None:
         if self._cm:
@@ -427,10 +510,24 @@ class BrowserSession:
         await self.close()
 
     def _on_new_page(self, p) -> None:
-        """Follow a tab opened by a click: watch it and make it the current page."""
+        """Follow a tab opened by a click; close unsolicited popups.
+
+        Fandom-style malvertising loves `window.open` spam: adopting those
+        popups as the current page silently hijacks the session.
+        """
         self._watch_page(p)
+        if time.monotonic() - self._last_click_at > POPUP_ADOPT_WINDOW_S:
+            get_logger().info("Closing unsolicited popup: %.200s", p.url)
+            asyncio.ensure_future(self._close_quietly(p))
+            return
         self.page = p
         self._last = None
+
+    async def _close_quietly(self, p) -> None:
+        try:
+            await p.close()
+        except Exception:
+            pass
 
     def _live_page(self):
         if self.page.is_closed():
@@ -533,6 +630,7 @@ class BrowserSession:
             )
         page = self._live_page()
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        self._last_nav_url = url
         await self._settle()
         self._last = None
         return await self._observe()
@@ -543,6 +641,7 @@ class BrowserSession:
     async def tool_click(self, ref: int) -> str:
         el = await self._el(ref)
         await el.scroll_into_view_if_needed(timeout=5000)
+        self._last_click_at = time.monotonic()
         await el.click(timeout=7000)
         await self._settle()
         return await self._observe(diff=True)
@@ -557,6 +656,7 @@ class BrowserSession:
         """
         el = await self._el(ref)
         await el.scroll_into_view_if_needed(timeout=5000)
+        self._last_click_at = time.monotonic()
         await el.click(timeout=7000)
         if clear:
             await el.fill("")
@@ -571,6 +671,7 @@ class BrowserSession:
 
     async def tool_select(self, ref: int, option: str) -> str:
         el = await self._el(ref)
+        self._last_click_at = time.monotonic()
         try:
             await el.select_option(label=option, timeout=3000)
         except PWError:
@@ -579,6 +680,7 @@ class BrowserSession:
         return await self._observe(diff=True)
 
     async def tool_press(self, key: str) -> str:
+        self._last_click_at = time.monotonic()
         await self._live_page().keyboard.press(key)
         await self._settle()
         return await self._observe(diff=True)
@@ -603,6 +705,7 @@ class BrowserSession:
 
     async def tool_back(self) -> str:
         await self._live_page().go_back(wait_until="domcontentloaded", timeout=15000)
+        self._last_nav_url = self._live_page().url
         await self._settle()
         self._last = None
         return await self._observe()
@@ -615,7 +718,16 @@ class BrowserSession:
         the full option list. Password fields stay masked.
         """
         if ref is None:
-            text = await self._live_page().inner_text("body")
+            page = self._live_page()
+            text = await page.inner_text("body")
+            if not text.strip():
+                await asyncio.sleep(0.4)
+                text = await page.inner_text("body")
+            if not text.strip():
+                return (
+                    "(no text returned — the document is blank. It may have been"
+                    " replaced by an overlay or crashed; call goto to reload it.)"
+                )
         else:
             el = await self._el(ref)
             info = await el.evaluate(

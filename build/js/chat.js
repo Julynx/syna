@@ -331,12 +331,19 @@ function expandToolRun(run) {
   if (wrap && !REDUCE) {
     cancelAnim(wrap);
     wrap.style.overflow = "hidden";
-    wrap.classList.remove("collapsed");
     rows.forEach((row) => {
       cancelAnim(row);
+      // Suppress the row opacity transition: changing opacity on visible
+      // rows would otherwise fade them out before the expand animation.
+      row.style.transition = "none";
       row.style.opacity = "0";
     });
-    const target = wrap.getBoundingClientRect().height;
+    const target = wrap.scrollHeight;
+    wrap.classList.remove("collapsed");
+    void wrap.offsetHeight;
+    rows.forEach((row) => {
+      row.style.transition = "";
+    });
     const anim = (wrap._anim = wrap.animate(
       [
         { height: "0px", marginTop: -CHAT_GAP + "px" },
@@ -465,7 +472,8 @@ function placeToolRow(row) {
 function addToolRow(event) {
   const meta = TOOL_META[event.name];
   const row = document.createElement("div");
-  row.className = "tool-row glass" + (event.parse_error ? " failed" : "");
+  row.className =
+    "tool-row glass " + (event.parse_error ? "failed" : "running");
   row.id = "tool-" + event.id;
   const icon = meta ? meta.icon : event.parse_error ? ICONS.warn : ICONS.terminal;
   row.innerHTML =

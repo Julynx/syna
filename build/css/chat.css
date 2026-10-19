@@ -445,7 +445,7 @@
 .detail-section {
   padding: 8px 10px;
   border-radius: 10px;
-  background: var(--surface-soft);
+  background: var(--surface-detail);
   border: 1px solid var(--border);
 }
 .detail-header {

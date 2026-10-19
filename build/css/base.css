@@ -4,6 +4,7 @@
   --surface: rgba(239, 241, 245, 0.8);
   --surface-strong: rgba(235, 238, 243, 0.92);
   --surface-soft: rgba(24, 28, 38, 0.075);
+  --surface-detail: rgba(24, 28, 38, 0.13);
   --text: #1b1e22;
   --muted: #6b7280;
   --accent: #4f46e5;
@@ -42,6 +43,7 @@
     --surface: rgba(19, 23, 29, 0.75);
     --surface-strong: rgba(13, 16, 21, 0.9);
     --surface-soft: rgba(255, 255, 255, 0.085);
+    --surface-detail: rgba(255, 255, 255, 0.14);
     --text: #e6e8eb;
     --muted: #9aa1ab;
     --accent: #818cf8;

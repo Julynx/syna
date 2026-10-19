@@ -9,8 +9,8 @@ as unicode escape sequences—is rejected by a sanitization gate.
 
 import re
 
-SENTINEL_OPEN = "\uE000"
-SENTINEL_CLOSE = "\uE001"
+SENTINEL_OPEN = "\ue000"
+SENTINEL_CLOSE = "\ue001"
 CHANNEL_PREFIX = f"{SENTINEL_OPEN}SYNA:"
 
 SENTINEL_PATTERN = re.compile(r"[\uE000-\uE0FF]|\\[uU][eE]0[0-9a-fA-F]{2}")

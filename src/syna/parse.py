@@ -403,9 +403,7 @@ def parse_and_execute_tools(
 
     outputs: list[dict] = []
 
-    def _record_never_ran(
-        entry_name: str, entry_signature: str, output: str, raw: str
-    ):
+    def _record_never_ran(entry_name: str, entry_signature: str, output: str, raw: str):
         if echo_errors:
             print(f"  ! ({output[:80]})")
         if on_tool_event is not None:

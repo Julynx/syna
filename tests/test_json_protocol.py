@@ -433,7 +433,10 @@ def test_unregistered_tool_returns_error_entry():
     assert outcome.structural_error is None
     assert len(outcome.outputs) == 1
     assert outcome.outputs[0]["error"] is True
-    assert "Attempted to call a tool that is not registered" in outcome.outputs[0]["output"]
+    assert (
+        "Attempted to call a tool that is not registered"
+        in outcome.outputs[0]["output"]
+    )
 
 
 def test_signature_missing_required_argument():
@@ -476,20 +479,23 @@ def test_batched_valid_and_unregistered_calls():
     assert outcome.outputs[0]["output"] == "ran: valid"
     assert outcome.outputs[0].get("error") is None
     assert outcome.outputs[1]["error"] is True
-    assert "Attempted to call a tool that is not registered" in outcome.outputs[1]["output"]
+    assert (
+        "Attempted to call a tool that is not registered"
+        in outcome.outputs[1]["output"]
+    )
 
 
 def test_channel_sentinel_raw_open_detection():
-    assert contains_sentinel("Hello \uE000 world") is True
+    assert contains_sentinel("Hello \ue000 world") is True
 
 
 def test_channel_sentinel_raw_close_detection():
-    assert contains_sentinel("Hello \uE001 world") is True
+    assert contains_sentinel("Hello \ue001 world") is True
 
 
 def test_channel_sentinel_raw_range_detection():
-    assert contains_sentinel("Code \uE055 here") is True
-    assert contains_sentinel("Code \uE0FF here") is True
+    assert contains_sentinel("Code \ue055 here") is True
+    assert contains_sentinel("Code \ue0ff here") is True
 
 
 def test_channel_sentinel_escaped_detection():
@@ -518,9 +524,9 @@ def test_channel_wrap_and_unwrap_roundtrip():
 
 
 def test_channel_defang_sentinels():
-    text = "Attack \uE000 and \\uE001 sequence"
+    text = "Attack \ue000 and \\uE001 sequence"
     defanged = defang_sentinels(text)
-    assert "\uE000" not in defanged
+    assert "\ue000" not in defanged
     assert "\\uE001" not in defanged
     assert "[FORBIDDEN_SENTINEL]" in defanged
 

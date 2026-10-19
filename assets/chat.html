@@ -24,6 +24,7 @@
   --surface: rgba(239, 241, 245, 0.8);
   --surface-strong: rgba(235, 238, 243, 0.92);
   --surface-soft: rgba(24, 28, 38, 0.075);
+  --surface-detail: rgba(24, 28, 38, 0.13);
   --text: #1b1e22;
   --muted: #6b7280;
   --accent: #4f46e5;
@@ -62,6 +63,7 @@
     --surface: rgba(19, 23, 29, 0.75);
     --surface-strong: rgba(13, 16, 21, 0.9);
     --surface-soft: rgba(255, 255, 255, 0.085);
+    --surface-detail: rgba(255, 255, 255, 0.14);
     --text: #e6e8eb;
     --muted: #9aa1ab;
     --accent: #818cf8;
@@ -962,7 +964,7 @@ body.dragging #drop-overlay {
 .detail-section {
   padding: 8px 10px;
   border-radius: 10px;
-  background: var(--surface-soft);
+  background: var(--surface-detail);
   border: 1px solid var(--border);
 }
 .detail-header {
@@ -2644,12 +2646,19 @@ function expandToolRun(run) {
   if (wrap && !REDUCE) {
     cancelAnim(wrap);
     wrap.style.overflow = "hidden";
-    wrap.classList.remove("collapsed");
     rows.forEach((row) => {
       cancelAnim(row);
+      // Suppress the row opacity transition: changing opacity on visible
+      // rows would otherwise fade them out before the expand animation.
+      row.style.transition = "none";
       row.style.opacity = "0";
     });
-    const target = wrap.getBoundingClientRect().height;
+    const target = wrap.scrollHeight;
+    wrap.classList.remove("collapsed");
+    void wrap.offsetHeight;
+    rows.forEach((row) => {
+      row.style.transition = "";
+    });
     const anim = (wrap._anim = wrap.animate(
       [
         { height: "0px", marginTop: -CHAT_GAP + "px" },
@@ -2778,7 +2787,8 @@ function placeToolRow(row) {
 function addToolRow(event) {
   const meta = TOOL_META[event.name];
   const row = document.createElement("div");
-  row.className = "tool-row glass" + (event.parse_error ? " failed" : "");
+  row.className =
+    "tool-row glass " + (event.parse_error ? "failed" : "running");
   row.id = "tool-" + event.id;
   const icon = meta ? meta.icon : event.parse_error ? ICONS.warn : ICONS.terminal;
   row.innerHTML =
