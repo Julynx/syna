@@ -54,29 +54,57 @@ def load_thinking_effort():
 def build_tool_format_warning(response: str) -> str:
     """Compose the retry warning for a response without a tool call.
 
-    When the rejected response contains recognizable tool-call markup from
-    other agent frameworks, the warning names it explicitly so the model can
-    correct the specific mistake instead of guessing.
+    The rejected reply stays in the history right before this warning, so
+    the model can see and fix its own mistake. When it contains recognizable
+    tool-call markup from other agent frameworks, the warning names it
+    explicitly so the model can correct the specific mistake instead of
+    guessing.
     """
     warning = (
-        "WARNING: Your previous message contained no tool calls, so it was discarded.\n"
+        "WARNING: Your previous message contained no executable tool calls.\n"
         "- To continue working on your task, call at least one tool as such:\n"
         "  ```tool\n"
         r'     {"tool_name": {"argument": "value"}}'
         "\n"
         "  ```\n"
         '- To end the task and talk to the user, call the tool "respond".\n'
-        "Any further messages with no tool calls will be discarded, and repeated "
-        "violations of this rule will get you terminated."
+        "Repeated violations of this rule will get you terminated."
     )
     if "<tool_call>" in response or "<function=" in response:
         warning += (
             "Your message used tool-call markup such as"
             " <tool_call><function=...><parameter=...>, which is not"
             " recognized and will never be parsed. Do not use it. Write the"
-            " JSON object directly inside the ```tool fenced block"
+            " JSON object directly inside a ```tool ...``` fenced block"
             " instead.\n"
         )
+    return warning
+
+
+def build_unparsed_tool_warning(reasons: list[str] | None = None) -> str:
+    """Compose the corrective warning for tool markup that executed nothing.
+
+    Without this feedback the model cannot tell 'my call was never parsed'
+    apart from 'the tools returned nothing', which leads it to invent a
+    tool outage and retry the same malformed format for dozens of turns.
+    The parser's own reasons (including structural errors) are embedded so
+    the model can fix the exact mistake instead of guessing. The failed
+    reply stays in the history right before this warning.
+    """
+    warning = (
+        "WARNING: Your reply contained ```tool ...``` markup but no"
+        " executable tool call ran."
+    )
+    if reasons:
+        listed = "".join(f"\n- {reason[:200]}" for reason in reasons[:3])
+        warning += f" The parser reported:{listed}"
+    warning += (
+        "\nA tool block must look exactly like this:\n"
+        "```tool\n"
+        '{"tool_name": {"argument": "value"}}\n'
+        "```\n"
+        "Rebuild the call(s) in full and send them again."
+    )
     return warning
 
 
@@ -214,12 +242,14 @@ class AgentSession:
     def run_turn(self, user_text: str):
         """Run one full think/act cycle for a user message. Blocking.
 
-        A response without a tool call is discarded from the history (it
-        would otherwise teach the model its own malformed format by
-        example) and retried with a corrective warning. After
+        A response without an executable tool call — no calls at all,
+        markup that never parsed, or a structurally broken block — stays in
+        the history and is followed directly by a corrective warning, so
+        the model can see and fix its own mistake. After
         'MAX_NO_TOOL_RETRIES' consecutive failures the turn is aborted: the
         model receives an ultimatum, the user gets a warning, and control
-        returns to the caller.
+        returns to the caller. Any reply that dispatches at least one tool
+        call resets the failure streak.
         """
         logger = get_logger()
         msg = {"role": "user", "content": user_text}
@@ -248,24 +278,8 @@ class AgentSession:
                 self._emit({"type": "error", "text": f"Model request failed: {exc}"})
                 return
 
-            if "```tool" not in response:
-                no_tool_streak += 1
-                self._discard_last_assistant_message()
-                self._emit({"type": "status", "text": "No tool detected, retrying..."})
-                if no_tool_streak >= MAX_NO_TOOL_RETRIES:
-                    self._abort_turn(logger)
-                    return
-                msg = {
-                    "role": "user",
-                    "content": f"[System]: {build_tool_format_warning(response)}",
-                }
-                self.messages.append(msg)
-                logger.info(str(msg))
-                continue
-            no_tool_streak = 0
-
             try:
-                tool_results = parse_and_execute_tools(
+                outcome = parse_and_execute_tools(
                     response,
                     on_tool_event=self._on_tool_event,
                     echo_errors=not self.emit_tool_errors,
@@ -274,18 +288,73 @@ class AgentSession:
                 self._finish_cancelled_turn()
                 return
 
-            tool_results_str = json.dumps(tool_results)
+            if outcome.structural_error is not None:
+                no_tool_streak += 1
+                if no_tool_streak >= MAX_NO_TOOL_RETRIES:
+                    self._abort_turn(logger)
+                    return
+                self._append_corrective_warning(
+                    response,
+                    build_unparsed_tool_warning([outcome.structural_error]),
+                    "Malformed tool block, retrying...",
+                )
+                continue
+
+            if not outcome.outputs:
+                no_tool_streak += 1
+                if no_tool_streak >= MAX_NO_TOOL_RETRIES:
+                    self._abort_turn(logger)
+                    return
+                self._append_corrective_warning(
+                    response,
+                    build_tool_format_warning(response),
+                    "No tool detected, retrying...",
+                )
+                continue
+
+            never_ran = [result for result in outcome.outputs if result.get("error")]
+            if len(never_ran) == len(outcome.outputs):
+                no_tool_streak += 1
+                if no_tool_streak >= MAX_NO_TOOL_RETRIES:
+                    self._abort_turn(logger)
+                    return
+                self._append_corrective_warning(
+                    response,
+                    build_unparsed_tool_warning(
+                        [result["output"] for result in never_ran]
+                    ),
+                    "No executable tool call detected, retrying...",
+                )
+                continue
+
+            no_tool_streak = 0
+            tool_results_str = json.dumps(outcome.outputs)
             msg = {"role": "user", "content": f"[Tool]: {tool_results_str}"}
             self.messages.append(msg)
             logger.info(str(msg))
 
             respond_tool = next(
-                (tool for tool in tool_results if tool["name"] == "respond"),
+                (tool for tool in outcome.outputs if tool["name"] == "respond"),
                 None,
             )
             if respond_tool:
                 self._emit({"type": "model_message", "content": respond_tool["output"]})
                 return
+
+    def _append_corrective_warning(self, response: str, warning: str, status_text: str):
+        """Append a corrective [System] warning directly after the failed reply.
+
+        The assistant reply stays in the history: the model has no memory
+        beyond the message array, so the warning must immediately follow the
+        reply it corrects. Also logs a reply excerpt and emits a status
+        event for frontends.
+        """
+        logger = get_logger()
+        logger.warning("%s: %.200r", status_text, response)
+        self._emit({"type": "status", "text": status_text})
+        msg = {"role": "user", "content": f"[System]: {warning}"}
+        self.messages.append(msg)
+        logger.info(str(msg))
 
     def _compact_history_if_needed(self):
         """Replace old history with a summary once it reaches the interval.
@@ -376,15 +445,6 @@ class AgentSession:
             ),
             None,
         )
-
-    def _discard_last_assistant_message(self):
-        """Remove the assistant response that failed the tool-call check.
-
-        Keeping it would leave malformed serialization examples in the
-        history, which the model tends to imitate on the next attempt.
-        """
-        if self.messages and self.messages[-1]["role"] == "assistant":
-            self.messages.pop()
 
     def _abort_turn(self, logger):
         """Record the abort in the history and hand control back to the user."""

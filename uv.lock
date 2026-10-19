@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -1543,12 +1543,6 @@ wheels = [
 ]
 
 [[package]]
-name = "string-grab"
-version = "1.3.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/23/47/32c62af90539147a7271eb6f36d53d1e6bf61c7a9dc62ee67fb459a2c2d2/string_grab-1.3.0.tar.gz", hash = "sha256:67ad57c44ed0fcf15338e10e13f8de519f4169e60d3534fafe8c6d3bb2154fa0", size = 9888, upload-time = "2023-09-11T17:19:07.746Z" }
-
-[[package]]
 name = "syna"
 version = "0.1.0"
 source = { editable = "." }
@@ -1565,7 +1559,6 @@ dependencies = [
     { name = "playwright" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
-    { name = "string-grab" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1583,7 +1576,6 @@ requires-dist = [
     { name = "playwright", specifier = "==1.60.0" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "python-multipart", specifier = ">=0.0.9" },
-    { name = "string-grab", specifier = ">=1.3.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
 ]
 

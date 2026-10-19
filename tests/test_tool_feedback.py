@@ -1,0 +1,480 @@
+"""Smoke tests for tool-block parsing and the session feedback loop.
+
+Run with: uv run python tests/test_tool_feedback.py
+
+Uses the exact reply shapes that caused the tool-outage incident (unclosed
+```tool blocks that the old grab_all-based parser silently dropped and
+spiraled into dozens of wasted model calls), plus a scripted fake model
+client to verify the session-level feedback without network, Docker or a
+real model. The expected behavior follows PLAN.md: malformed markup is
+never repaired, never silently dropped, and never discarded from the
+history — the reply stays and a corrective warning follows it.
+"""
+
+import logging
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from syna.parse import parse_and_execute_tools
+from syna.session import AgentSession
+from syna.tools import TOOL_REGISTRY
+
+REPLY_CLOSED = '```tool\n{"smoke_tool": {}}\n```'
+REPLY_UNCLOSED = '```tool\n{"smoke_tool": {"label": "from the incident dump"}}'
+REPLY_TWO_PROSE_SEPARATED = (
+    "Here is call one.\n"
+    '```tool\n{"smoke_tool": {"label": "first"}}\n```\n'
+    "Middle narration.\n"
+    '```tool\n{"smoke_tool": {"label": "second"}}\n```\n'
+    "Done."
+)
+REPLY_GLUED_OPENERS = (
+    '```tool\n{"smoke_tool": {"label": "first"}}\n'
+    '```tool\n{"smoke_tool": {"label": "second"}}\n'
+    "```"
+)
+REPLY_HEREDOC_PHANTOM = (
+    "```tool\n"
+    '{"smoke_tool": {"label": "```tool\\nnot a real block\\n```"}}\n'
+    "```"
+)
+REPLY_LANG_CLOSER = (
+    '```tool\n{"smoke_tool": {"label": "x"}}\n```python\nprint(1)\n```\n'
+)
+REPLY_TRAILING_PROSE = (
+    '```tool\n{"smoke_tool": {"label": "x"}}\nsome remark\n```\n'
+)
+REPLY_INLINE_CODE_PROSE = (
+    '```tool\n{"smoke_tool": {"label": "x"}}\nuse `label` now\n```\n'
+)
+REPLY_BROKEN_JSON_CLOSED = '```tool\n{"smoke_tool": {"label": "broken"\n```\n'
+REPLY_BROKEN_JSON_UNCLOSED = '```tool\n{"smoke_tool": {"label": "broken"'
+REPLY_EMPTY_BLOCK = "```tool\n```\n"
+REPLY_WHITESPACE_BLOCK = "```tool\n   \n```\n"
+REPLY_EOF_OPENER = "Step 1:\n```tool\n"
+REPLY_MIDLINE_OPENER = 'Trying the tool now.```tool\n{"smoke_tool": {}}\n```\n'
+REPLY_QUOTED_EXAMPLE = (
+    "Example of the format:\n"
+    "```text\n"
+    '```tool\n{"tool_name": {"argument": "value"}}\n'
+    "```\n"
+    "```\n"
+)
+REPLY_STRAY_MARKUP = (
+    "Here is the format you asked about:\n\n"
+    "```tool\n"
+    '{"tool_name": {"argument": "value"}}\n'
+    "```\n"
+)
+REPLY_BARE_UNCLOSED = "Trying the tool now.```tool"
+REPLY_RESPOND = '```tool\n{"respond": {"text": "task done"}}\n```'
+REPLY_STRING_ARGS = '```tool\n{"smoke_tool": "ls -la"}\n```'
+REPLY_NULL_ARGS = '```tool\n{"smoke_tool": null}\n```'
+REPLY_LIST_ARGS = '```tool\n{"smoke_tool": ["ls"]}\n```'
+REPLY_TOP_LEVEL_LIST = '```tool\n["smoke_tool"]\n```'
+REPLY_TOP_LEVEL_STRING = '```tool\n"smoke_tool"\n```'
+REPLY_TOP_LEVEL_NUMBER = "```tool\n42\n```"
+REPLY_EMPTY_OBJECT = "```tool\n{}\n```"
+REPLY_MULTI_KEY = '```tool\n{"smoke_tool": {}, "respond": {"text": "hi"}}\n```'
+REPLY_FAILING_TOOL = '```tool\n{"smoke_fail": {}}\n```'
+REPLY_CRLF = '```tool\r\n{"smoke_tool": {}}\r\n```\r\n'
+REPLY_CRLF_UNCLOSED = '```tool\r\n{"smoke_tool": {}}\r\n'
+
+
+def _smoke_tool(label: str = "unlabeled") -> str:
+    """Minimal stand-in tool: echoes its argument back as the output."""
+    return f"ran: {label}"
+
+
+def _smoke_fail() -> str:
+    """Stand-in tool that always raises, like a real tool crashing."""
+    raise RuntimeError("boom")
+
+
+class _LogCapture(logging.Handler):
+
+    def __init__(self):
+        super().__init__()
+        self.messages = []
+
+    def emit(self, record):
+        self.messages.append(record.getMessage())
+
+
+class FakeMessage:
+
+    def __init__(self, content):
+        self.content = content
+        self.refusal = None
+
+
+class FakeChoice:
+
+    def __init__(self, content):
+        self.message = FakeMessage(content)
+        self.finish_reason = "stop"
+
+
+class FakeResponse:
+
+    def __init__(self, content):
+        self.choices = [FakeChoice(content)]
+
+
+class FakeChat:
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.requests = []
+        self.chat = self
+
+    def send(self, **request):
+        self.requests.append(request)
+        return FakeResponse(self.replies.pop(0))
+
+
+def _parse(reply):
+    events = []
+    outcome = parse_and_execute_tools(
+        reply, on_tool_event=lambda *a, **k: events.append((a, k)), echo_errors=False
+    )
+    return outcome, events
+
+
+def _capture_dev_log():
+    handler = _LogCapture()
+    logger = logging.getLogger("syna")
+    logger.addHandler(handler)
+    return handler
+
+
+def test_prose_separated_blocks_both_execute():
+    outcome, _ = _parse(REPLY_TWO_PROSE_SEPARATED)
+    assert outcome.structural_error is None
+    assert [o["output"] for o in outcome.outputs] == ["ran: first", "ran: second"]
+    print("PASS prose-separated well-formed blocks both execute")
+
+
+def test_incident_unclosed_block_is_structural():
+    outcome, events = _parse(REPLY_UNCLOSED)
+    assert outcome.outputs == []
+    assert "never closed" in outcome.structural_error
+    assert "line 1" in outcome.structural_error
+    assert "smoke_tool(label='from the incident dump')" in outcome.structural_error
+    assert not any(a[0] == "started" for a, _ in events)
+    print("PASS unclosed block (the incident) is a structural error, nothing runs")
+
+
+def test_glued_openers_drop_second_call():
+    capture = _capture_dev_log()
+    try:
+        outcome, _ = _parse(REPLY_GLUED_OPENERS)
+    finally:
+        logging.getLogger("syna").removeHandler(capture)
+    assert outcome.structural_error is None
+    assert [o["output"] for o in outcome.outputs] == ["ran: first"]
+    assert any(
+        "Discarded text after a tool block's closing fence" in m and "'tool'" in m
+        for m in capture.messages
+    )
+    print("PASS glued second call is dropped like a markdown parser would, and logged")
+
+
+def test_inline_tool_markup_inside_json_string():
+    outcome, _ = _parse(REPLY_HEREDOC_PHANTOM)
+    assert outcome.structural_error is None
+    assert len(outcome.outputs) == 1
+    assert outcome.outputs[0]["name"] == "smoke_tool"
+    assert not outcome.outputs[0].get("error")
+    print("PASS ```tool inside a JSON string is data; the call runs")
+
+
+def test_lang_fence_closes_block():
+    capture = _capture_dev_log()
+    try:
+        outcome, _ = _parse(REPLY_LANG_CLOSER)
+    finally:
+        logging.getLogger("syna").removeHandler(capture)
+    assert outcome.structural_error is None
+    assert [o["output"] for o in outcome.outputs] == ["ran: x"]
+    assert any("'python'" in m for m in capture.messages)
+    print("PASS a ```lang fence line closes an open tool block")
+
+
+def test_trailing_prose_inside_block_tolerated():
+    outcome, _ = _parse(REPLY_TRAILING_PROSE)
+    assert outcome.structural_error is None
+    assert [o["output"] for o in outcome.outputs] == ["ran: x"]
+    outcome, _ = _parse(REPLY_INLINE_CODE_PROSE)
+    assert outcome.structural_error is None
+    assert [o["output"] for o in outcome.outputs] == ["ran: x"]
+    print("PASS trailing prose and single-backtick inline code inside a block are inert")
+
+
+def test_broken_json_with_closer_is_error_entry():
+    outcome, _ = _parse(REPLY_BROKEN_JSON_CLOSED)
+    assert outcome.structural_error is None
+    assert len(outcome.outputs) == 1
+    assert outcome.outputs[0]["error"] is True
+    assert "could not be decoded as JSON" in outcome.outputs[0]["output"]
+    print("PASS broken JSON with a closer is a never-dispatched error entry")
+
+
+def test_broken_json_without_closer_is_structural():
+    outcome, _ = _parse(REPLY_BROKEN_JSON_UNCLOSED)
+    assert outcome.outputs == []
+    assert "never closed" in outcome.structural_error
+    assert "not valid JSON" in outcome.structural_error
+    print("PASS broken JSON without a closer is structural with both reasons")
+
+
+def test_empty_block_is_error_entry():
+    for reply in (REPLY_EMPTY_BLOCK, REPLY_WHITESPACE_BLOCK):
+        outcome, _ = _parse(reply)
+        assert outcome.structural_error is None
+        assert len(outcome.outputs) == 1
+        assert outcome.outputs[0]["error"] is True
+        assert "The tool block was empty." in outcome.outputs[0]["output"]
+    print("PASS empty tool blocks become error entries")
+
+
+def test_opener_at_end_of_reply_is_structural():
+    outcome, _ = _parse(REPLY_EOF_OPENER)
+    assert outcome.outputs == []
+    assert "never closed" in outcome.structural_error
+    assert "line 2" in outcome.structural_error
+    print("PASS a ```tool opener at the end of the reply is structural")
+
+
+def test_midline_tool_markup_is_inert():
+    outcome, _ = _parse(REPLY_MIDLINE_OPENER)
+    assert outcome.structural_error is None
+    assert outcome.outputs == []
+    outcome, _ = _parse(REPLY_BARE_UNCLOSED)
+    assert outcome.structural_error is None
+    assert outcome.outputs == []
+    print("PASS mid-line ```tool never opens a block")
+
+
+def test_quoted_tool_example_in_prose_block_is_inert():
+    outcome, _ = _parse(REPLY_QUOTED_EXAMPLE)
+    assert outcome.structural_error is None
+    assert outcome.outputs == []
+    print("PASS tool markup inside prose blocks is inert")
+
+
+def test_shape_errors_never_crash():
+    malformed = {
+        REPLY_STRING_ARGS: "got a string",
+        REPLY_NULL_ARGS: "got null",
+        REPLY_LIST_ARGS: "got an array",
+        REPLY_TOP_LEVEL_LIST: "got an array",
+        REPLY_TOP_LEVEL_STRING: "got a string",
+        REPLY_TOP_LEVEL_NUMBER: "got a number",
+        REPLY_EMPTY_OBJECT: "got an empty object",
+        REPLY_MULTI_KEY: "got 2: 'smoke_tool', 'respond'",
+    }
+    for reply, expected_shape in malformed.items():
+        outcome, _ = _parse(reply)
+        assert outcome.structural_error is None
+        assert len(outcome.outputs) == 1
+        assert outcome.outputs[0]["error"] is True
+        assert expected_shape in outcome.outputs[0]["output"]
+    print("PASS malformed-but-decodable calls become error entries, never crash")
+
+
+def test_unknown_tool_is_error_entry():
+    outcome, _ = _parse(
+        'Example:\n```tool\n{"tool_name": {"argument": "value"}}\n```\n'
+    )
+    assert outcome.structural_error is None
+    assert outcome.outputs[0]["error"] is True
+    assert "Unknown tool 'tool_name'" in outcome.outputs[0]["output"]
+    print("PASS unregistered tools become named error entries")
+
+
+def test_crlf_replies_parse():
+    outcome, _ = _parse(REPLY_CRLF)
+    assert outcome.structural_error is None
+    assert [o["output"] for o in outcome.outputs] == ["ran: unlabeled"]
+    outcome, _ = _parse(REPLY_CRLF_UNCLOSED)
+    assert outcome.outputs == []
+    assert "never closed" in outcome.structural_error
+    print("PASS CRLF replies parse; a CRLF unclosed block is still structural")
+
+
+def _make_session():
+    session = AgentSession(session_id="smoke-test")
+    session.dump_path = Path(tempfile.mkdtemp(prefix="syna-test-")) / "dump.json"
+    session.request_delay = 0
+    return session
+
+
+def _correctives(session, marker):
+    return [
+        m["content"]
+        for m in session.messages
+        if m["role"] == "user" and marker in m["content"]
+    ]
+
+
+def test_session_structural_reply_kept_and_warned():
+    session = _make_session()
+    session.client = FakeChat([REPLY_UNCLOSED, REPLY_RESPOND])
+    events = []
+    session.on_event = events.append
+    session.run_turn("probe")
+    reply_idx = next(
+        i
+        for i, m in enumerate(session.messages)
+        if m["role"] == "assistant" and "from the incident dump" in m["content"]
+    )
+    corrective = session.messages[reply_idx + 1]
+    assert "never closed" in corrective["content"]
+    assert "line 1" in corrective["content"]
+    assert '{"tool_name": {"argument": "value"}}' in corrective["content"]
+    assert "```tool ...```" in corrective["content"]
+    assert "task done" in session.messages[-1]["content"]
+    assert any(
+        e["type"] == "status" and "Malformed tool block" in e["text"] for e in events
+    )
+    print("PASS structural failure keeps the reply and warns with reason + skeleton")
+
+
+def test_session_no_calls_reply_kept_and_warned():
+    session = _make_session()
+    session.client = FakeChat([REPLY_BARE_UNCLOSED, REPLY_RESPOND])
+    session.run_turn("probe")
+    reply_idx = next(
+        i
+        for i, m in enumerate(session.messages)
+        if m["role"] == "assistant" and "Trying the tool now" in m["content"]
+    )
+    corrective = session.messages[reply_idx + 1]
+    assert "no executable tool calls" in corrective["content"]
+    assert '{"tool_name": {"argument": "value"}}' in corrective["content"]
+    assert "task done" in session.messages[-1]["content"]
+    print("PASS no-call reply stays in history followed by the format warning")
+
+
+def test_session_unknown_tool_feedback():
+    session = _make_session()
+    session.client = FakeChat([REPLY_STRAY_MARKUP, REPLY_RESPOND])
+    session.run_turn("probe")
+    corrective = _correctives(session, "no executable tool call ran")
+    assert len(corrective) == 1
+    assert "Unknown tool 'tool_name'" in corrective[0]
+    assert '{"tool_name": {"argument": "value"}}' in corrective[0]
+    reply_idx = next(
+        i
+        for i, m in enumerate(session.messages)
+        if m["role"] == "assistant" and "Here is the format" in m["content"]
+    )
+    assert "no executable tool call ran" in session.messages[reply_idx + 1]["content"]
+    assert "task done" in session.messages[-1]["content"]
+    print("PASS unregistered-tool calls get named feedback and keep the reply")
+
+
+def test_session_malformed_args_recovery():
+    session = _make_session()
+    session.client = FakeChat([REPLY_STRING_ARGS, REPLY_CLOSED, REPLY_RESPOND])
+    events = []
+    session.on_event = events.append
+    session.run_turn("probe")
+    corrective = _correctives(session, "no executable tool call ran")
+    assert len(corrective) == 1
+    assert "must be a JSON object" in corrective[0] and "got a string" in corrective[0]
+    assert "ran: unlabeled" in session.messages[-3]["content"]
+    assert "task done" in session.messages[-1]["content"]
+    assert not any("Task aborted" in e.get("text", "") for e in events)
+    print("PASS string-args reply is corrected, not fatal; next reply recovers")
+
+
+def test_session_corrective_path_and_abort():
+    session = _make_session()
+    session.client = FakeChat([REPLY_UNCLOSED] * 3)
+    events = []
+    session.on_event = events.append
+    session.run_turn("probe")
+    corrective = _correctives(session, "no executable tool call ran")
+    assert len(corrective) == 2
+    aborted = [
+        m["content"] for m in session.messages if "task was aborted" in m["content"]
+    ]
+    assert len(aborted) == 1
+    kept = [
+        m
+        for m in session.messages
+        if m["role"] == "assistant" and "from the incident dump" in m["content"]
+    ]
+    assert len(kept) == 3
+    assert "```tool ...```" in corrective[0]
+    assert events[-1]["type"] == "error" and "Task aborted" in events[-1]["text"]
+    assert "[Tool]: []" not in str(session.messages)
+    print("PASS session corrective feedback, streak, and abort after 3")
+
+
+def test_session_streak_resets_on_dispatch():
+    session = _make_session()
+    session.client = FakeChat(
+        [REPLY_UNCLOSED, REPLY_CLOSED, REPLY_UNCLOSED, REPLY_RESPOND]
+    )
+    events = []
+    session.on_event = events.append
+    session.run_turn("probe")
+    assert not any("Task aborted" in e.get("text", "") for e in events)
+    assert "ran: unlabeled" in str(session.messages)
+    assert "task done" in session.messages[-1]["content"]
+    print("PASS a dispatching reply between failures resets the streak")
+
+
+def test_session_tool_execution_failure_does_not_count():
+    session = _make_session()
+    session.client = FakeChat([REPLY_FAILING_TOOL, REPLY_RESPOND])
+    events = []
+    session.on_event = events.append
+    session.run_turn("probe")
+    assert not _correctives(session, "no executable tool call ran")
+    assert "Tool execution error: boom" in str(session.messages)
+    assert not any("Task aborted" in e.get("text", "") for e in events)
+    assert "task done" in session.messages[-1]["content"]
+    print("PASS tool execution failures flow through [Tool] and never count")
+
+
+def main():
+    TOOL_REGISTRY["smoke_tool"] = _smoke_tool
+    TOOL_REGISTRY["smoke_fail"] = _smoke_fail
+    try:
+        test_prose_separated_blocks_both_execute()
+        test_incident_unclosed_block_is_structural()
+        test_glued_openers_drop_second_call()
+        test_inline_tool_markup_inside_json_string()
+        test_crlf_replies_parse()
+        test_lang_fence_closes_block()
+        test_trailing_prose_inside_block_tolerated()
+        test_broken_json_with_closer_is_error_entry()
+        test_broken_json_without_closer_is_structural()
+        test_empty_block_is_error_entry()
+        test_opener_at_end_of_reply_is_structural()
+        test_midline_tool_markup_is_inert()
+        test_quoted_tool_example_in_prose_block_is_inert()
+        test_shape_errors_never_crash()
+        test_unknown_tool_is_error_entry()
+        test_session_structural_reply_kept_and_warned()
+        test_session_no_calls_reply_kept_and_warned()
+        test_session_unknown_tool_feedback()
+        test_session_malformed_args_recovery()
+        test_session_corrective_path_and_abort()
+        test_session_streak_resets_on_dispatch()
+        test_session_tool_execution_failure_does_not_count()
+    finally:
+        TOOL_REGISTRY.pop("smoke_tool", None)
+        TOOL_REGISTRY.pop("smoke_fail", None)
+    print("ALL SMOKE TESTS PASSED")
+
+
+if __name__ == "__main__":
+    main()
