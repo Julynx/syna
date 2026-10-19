@@ -15,12 +15,21 @@ def get_function_metadata(file_path):
                 continue
 
             args = []
-            for arg in node.args.args:
-                arg_info = {
-                    "name": arg.arg,
-                    "type": ast.unparse(arg.annotation) if arg.annotation else None,
-                }
-                args.append(arg_info)
+            positional = node.args.args
+            defaults = node.args.defaults
+            first_default = len(positional) - len(defaults)
+            for index, arg in enumerate(positional):
+                has_default = index >= first_default
+                args.append(
+                    {
+                        "name": arg.arg,
+                        "type": ast.unparse(arg.annotation) if arg.annotation else None,
+                        "has_default": has_default,
+                        "default": ast.unparse(defaults[index - first_default])
+                        if has_default
+                        else None,
+                    }
+                )
 
             if node.args.vararg:
                 args.append(
@@ -28,6 +37,19 @@ def get_function_metadata(file_path):
                         "name": f"*{node.args.vararg.arg}",
                         "type": ast.unparse(node.args.vararg.annotation)
                         if node.args.vararg.annotation
+                        else None,
+                        "has_default": False,
+                        "default": None,
+                    }
+                )
+            for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults):
+                args.append(
+                    {
+                        "name": arg.arg,
+                        "type": ast.unparse(arg.annotation) if arg.annotation else None,
+                        "has_default": default is not None,
+                        "default": ast.unparse(default)
+                        if default is not None
                         else None,
                     }
                 )
@@ -38,6 +60,8 @@ def get_function_metadata(file_path):
                         "type": ast.unparse(node.args.kwarg.annotation)
                         if node.args.kwarg.annotation
                         else None,
+                        "has_default": False,
+                        "default": None,
                     }
                 )
 

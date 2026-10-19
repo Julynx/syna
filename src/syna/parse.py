@@ -1,40 +1,50 @@
 """Tool call parsing and execution for agent responses.
 
 The parser is a strict pre-parse gate: a reply's tool markup is fully
-scanned before anything executes. Structurally broken markup (a ```tool
-block that was never closed) aborts the whole reply with a structural
-error; sound markup is executed call by call, and calls whose content is
-empty, not valid JSON, or badly shaped never dispatch and are reported
-back to the model as error entries instead.
+scanned before anything executes. A tool block is recognized by the opener
+pattern ```tool — a run of three or more backticks, the 'tool' tag, then
+whitespace or the brace of an inline payload — at ANY position in the
+reply, so a call glued to the end of a sentence or written inline on one
+line is parsed and dispatched like any other. Line-start fences with any
+other info open inert prose regions whose content can never execute.
+
+Structurally broken markup (a block whose JSON decodes but that was never
+closed) aborts the whole reply with a structural error. Every other
+mistake — empty or unparsable contents, bad shapes, unregistered tools,
+signature violations — becomes a descriptive error entry that never
+dispatches, and scanning continues with the rest of the reply.
 """
 
 import json
 import re
 import threading
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable
 
-from .config import get_logger, load_config
+from .config import get_logger, get_project_root, load_config
 from .state import get_registered_container, register_container, unregister_container
 from .tools import TOOL_REGISTRY
 
 DEFAULT_TOOL_CALL_TIMEOUT_S = 60
 
-FENCE_LINE_RE = re.compile(r"^ {0,3}(`{3,})[ \t]*(.*)$", re.MULTILINE)
+TOOL_OPEN = "```tool"
 TOOL_INFO = "tool"
-TOOL_INFO_BOUNDARIES = frozenset("{ \t")
 WHITESPACE = " \t\n\r"
+FENCE_LINE_RE = re.compile(r"^ {0,3}(`{3,})[ \t]*(.*)$", re.MULTILINE)
+BLOCK_CONTENTS_EXCERPT_CHARS = 120
 
 
 @dataclass(frozen=True)
 class ParseOutcome:
     """Result of parsing and executing one reply's tool calls.
 
-    'structural_error' is set when the reply's tool markup is broken beyond
-    a single call's content (a ```tool block that was never closed): nothing
-    is executed and the message names the problem for the corrective
-    feedback loop. 'outputs' carries one entry per parsed call in reply
-    order; entries for calls that never reached dispatch carry "error": True.
+    'structural_error' is set only when a ```tool block's JSON decodes but
+    the block was never closed: nothing from that reply executes and the
+    message names the problem (line number plus the exact parsed call) for
+    the corrective feedback loop. 'outputs' carries one entry per parsed
+    call in reply order; entries for calls that never reached dispatch
+    carry "error": True.
     """
 
     structural_error: str | None
@@ -43,7 +53,7 @@ class ParseOutcome:
 
 @dataclass(frozen=True)
 class _ParsedBlock:
-    """One scanned ```tool block, before shape validation and dispatch.
+    """One scanned ```tool block, before validation and dispatch.
 
     'payload' is the decoded JSON value of a sound block; 'error' is the
     corrective message for a block whose content is empty or not valid
@@ -76,9 +86,9 @@ def _skip_whitespace(text: str, pos: int) -> int:
 def _find_closing_run(text: str, pos: int) -> int | None:
     """Find the first backtick run of three or more backticks at/after 'pos'.
 
-    Runs of one or two backticks (inline code in trailing prose) can never
-    close a block and are skipped. Returns the run's start position, or
-    None when no such run exists before the end of the text.
+    Runs of one or two backticks (inline code in surrounding text) can
+    never close a block and are skipped. Returns the run's start position,
+    or None when no such run exists before the end of the text.
     """
     while True:
         at = text.find("`", pos)
@@ -92,16 +102,176 @@ def _find_closing_run(text: str, pos: int) -> int | None:
         pos = run_end
 
 
-def _is_tool_info(info: str) -> bool:
-    """Return True when a fence line's info string opens a tool block.
+def _find_tool_opener(text: str, cursor: int) -> int | None:
+    """Find the next ```tool opener at/after 'cursor', at any position.
 
-    The info must start with 'tool' followed by the end of the line,
-    whitespace, or the brace of an inline JSON payload; any other info
-    ('python', 'tooly', 'tool```', ...) opens an ordinary prose block.
+    An opener is a backtick run followed by the 'tool' tag and a boundary:
+    whitespace, the brace of an inline JSON payload, or the end of the
+    reply. Candidates without a boundary (```tooly, ```tool:, ```tool"...")
+    are inert text, not calls, and are skipped.
     """
+    while True:
+        at = text.find(TOOL_OPEN, cursor)
+        if at == -1:
+            return None
+        after = at + len(TOOL_OPEN)
+        if after >= len(text) or text[after] in WHITESPACE or text[after] == "{":
+            return at
+        cursor = at + 1
+
+
+def _is_tool_info(info: str) -> bool:
+    """Return True when a fence line's info string opens a tool block."""
     return info.startswith(TOOL_INFO) and (
-        len(info) == len(TOOL_INFO) or info[len(TOOL_INFO)] in TOOL_INFO_BOUNDARIES
+        len(info) == len(TOOL_INFO) or info[len(TOOL_INFO)] in WHITESPACE + "{"
     )
+
+
+def _find_prose_opener(text: str, cursor: int) -> tuple[int, int] | None:
+    """Find the next line-start fence with a non-tool info at/after 'cursor'.
+
+    These open inert prose regions: tool markup inside them can never
+    execute. Tool-info fences are skipped here because they belong to the
+    tool scan.
+    """
+    pos = cursor
+    while True:
+        fence = FENCE_LINE_RE.search(text, pos)
+        if fence is None:
+            return None
+        if not _is_tool_info(fence.group(2)):
+            return fence.span(1)
+        pos = _after_line(text, fence.start(1))
+
+
+def _skip_prose_block(text: str, after_opener: int) -> int:
+    """Skip an ordinary prose block, returning the resume position.
+
+    The block ends at the next line-start bare fence. Balance is not
+    enforced: an unclosed prose block silently swallows the rest of the
+    reply, so stray fences can never turn into tool calls.
+    """
+    pos = _after_line(text, after_opener)
+    while True:
+        fence = FENCE_LINE_RE.search(text, pos)
+        if fence is None:
+            return len(text)
+        if fence.group(2).strip() == "":
+            return _after_line(text, fence.start(1))
+        pos = _after_line(text, fence.start(1))
+
+
+def _resume_after_closer(text: str, boundary: int, logger) -> int:
+    """Consume a block's closing backtick run, logging a glued second call.
+
+    Only the run itself is consumed so that further content on the same
+    line (including another tool opener) is re-scanned normally. When the
+    text right after the run is another 'tool' tag, that opener's backticks
+    were consumed as this block's closer and its call is lost — logged to
+    the dev log, since a markdown parser drops it the same way.
+    """
+    run_end = boundary
+    while run_end < len(text) and text[run_end] == "`":
+        run_end += 1
+    if text.startswith(TOOL_INFO, run_end):
+        after = run_end + len(TOOL_INFO)
+        if after >= len(text) or text[after] in WHITESPACE or text[after] == "{":
+            logger.warning(
+                "A tool block's closing fence on line %d was followed by"
+                " another tool opener; that second call was dropped"
+                " (markdown-parser semantics).",
+                _line_no(text, boundary),
+            )
+    return run_end
+
+
+def _scan_tool_block(text: str, decoder, content_start: int, line_no: int, logger):
+    """Scan one tool block's content, starting after its 'tool' info token.
+
+    The JSON decoder is the string-aware tokenizer: backticks inside JSON
+    strings are consumed as data, and the first backtick run after the
+    decoded value closes the block, whatever its position or the rest of
+    its line carries. A block whose JSON decodes but that has no closing
+    run was never closed — a structural error carrying the exact parsed
+    call. A block whose content does not decode is a content-level error
+    entry, never a structural error: the scan resumes inside the block so
+    later calls in the same reply still parse.
+
+    Returns (payload, error, resume, structural_error).
+    """
+    try:
+        payload, json_end = decoder.raw_decode(text, content_start)
+    except json.JSONDecodeError as exc:
+        peek = _find_closing_run(text, content_start)
+        if peek is not None:
+            empty = peek == content_start
+        else:
+            empty = content_start >= len(text)
+        if empty:
+            error = (
+                "Empty tool block. A tool block must contain one JSON object"
+                ' of the form: {"tool_name": {"argument": "value"}}.'
+            )
+        else:
+            excerpt = text[content_start : content_start + BLOCK_CONTENTS_EXCERPT_CHARS]
+            error = (
+                f"The contents of a tool block could not be parsed as JSON:"
+                f" {exc}. Block contents: {excerpt!r}"
+            )
+        if peek is None:
+            return None, error, len(text), None
+        if _find_tool_opener(text, peek) == peek:
+            return None, error, content_start, None
+        return None, error, _resume_after_closer(text, peek, logger), None
+    boundary = _find_closing_run(text, json_end)
+    if boundary is None:
+        return (
+            None,
+            None,
+            None,
+            (
+                f"A ```tool block starting on line {line_no} was never closed;"
+                f" it contained {_describe_block_content(payload)}"
+            ),
+        )
+    resume = _resume_after_closer(text, boundary, logger)
+    return payload, None, resume, None
+
+
+def _scan_tool_blocks(text: str):
+    """Scan a reply into parsed ```tool blocks plus an optional structural error.
+
+    The scan walks the reply once; whichever candidate appears first wins:
+    a ```tool opener (any position) starts a tool block, a line-start fence
+    with any other info opens an inert prose region. Mid-line backtick runs
+    without the tool tag are inert content.
+
+    Returns (blocks, structural_error). 'structural_error' is None when the
+    reply's tool markup is structurally sound, in which case every block
+    carries either a decoded payload or a content-level error message; the
+    first structural violation wins and the blocks scanned so far are
+    discarded (nothing from a broken reply executes).
+    """
+    logger = get_logger()
+    decoder = json.JSONDecoder()
+    blocks = []
+    pos = 0
+    while True:
+        tool_at = _find_tool_opener(text, pos)
+        prose = _find_prose_opener(text, pos)
+        if tool_at is None and prose is None:
+            return blocks, None
+        if prose is not None and (tool_at is None or prose[0] < tool_at):
+            pos = _skip_prose_block(text, prose[1])
+            continue
+        content_start = _skip_whitespace(text, tool_at + len(TOOL_OPEN))
+        payload, error, resume, structural = _scan_tool_block(
+            text, decoder, content_start, _line_no(text, tool_at), logger
+        )
+        if structural is not None:
+            return blocks, structural
+        blocks.append(_ParsedBlock(_line_no(text, tool_at), payload, error))
+        pos = resume
 
 
 def _describe_json_shape(value) -> str:
@@ -136,132 +306,134 @@ def _describe_block_content(payload) -> str:
     return f"content of shape {_describe_json_shape(payload)}"
 
 
-def _resume_after_closer(text: str, boundary: int, logger) -> int:
-    """Consume a tool block's closing fence line and log any trailing text.
+@lru_cache(maxsize=1)
+def _tool_signatures() -> dict[str, dict]:
+    """Return the parsed signature metadata of every tool, keyed by name."""
+    from .inspect_module import get_function_metadata
 
-    The closing run may carry trailing text on its line (e.g. the 'tool' of
-    a second block's opener glued to a missing closer); like a markdown
-    parser, the text is discarded as part of the closing line, and logged
-    so a silently dropped call is visible in the dev log.
+    tools_path = get_project_root() / "src" / "syna" / "tools.py"
+    return {entry["name"]: entry for entry in get_function_metadata(tools_path)}
+
+
+def _render_signature(tool_name: str, entry: dict) -> str:
+    """Render a tool's signature as a single informative line."""
+    parameters = ", ".join(
+        f"{argument['name']}: {argument['type']}"
+        + (f" = {argument['default']}" if argument["has_default"] else "")
+        for argument in entry["arguments"]
+    )
+    return f"{tool_name}({parameters})"
+
+
+def _json_type_name(value) -> str:
+    """Name a JSON value's type for argument type errors."""
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    if value is None:
+        return "null"
+    return type(value).__name__
+
+
+def _simple_type_match(value, annotation: str) -> bool | None:
+    """Match a JSON value against one simple type annotation.
+
+    Returns True/False for annotations the parser understands (str, int,
+    float, bool, list, dict and their parametrized forms), or None when the
+    annotation is too complex to check (Any, unknown names) so the argument
+    passes through untouched.
     """
-    run_end = boundary
-    while run_end < len(text) and text[run_end] == "`":
-        run_end += 1
-    newline_at = text.find("\n", run_end)
-    if newline_at == -1:
-        remainder = text[run_end:]
-        line_end = len(text)
-    else:
-        remainder = text[run_end:newline_at].rstrip("\r")
-        line_end = newline_at + 1
-    if remainder.strip():
-        logger.warning(
-            "Discarded text after a tool block's closing fence"
-            " (line %d): %.100r",
-            _line_no(text, boundary),
-            remainder,
+    if annotation in ("Any", "...", ""):
+        return None
+    if annotation == "str":
+        return isinstance(value, str)
+    if annotation == "int":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if annotation == "float":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if annotation == "bool":
+        return isinstance(value, bool)
+    if annotation == "list" or annotation.startswith("list["):
+        return isinstance(value, list)
+    if annotation == "dict" or annotation.startswith("dict["):
+        return isinstance(value, dict)
+    return None
+
+
+def _argument_type_error(tool_name, arg_name, value, annotation, signature):
+    """Return a type-mismatch error for one argument, or None when it is fine.
+
+    Annotations may be unions ('list[str] | None'); null is accepted when
+    None is one of the alternatives. When no alternative can be checked the
+    argument is allowed, so complex annotations never produce false errors.
+    """
+    alternatives = [part.strip() for part in annotation.split("|")]
+    if value is None:
+        if "None" in alternatives:
+            return None
+        return (
+            f"Argument '{arg_name}' of tool '{tool_name}' should be of type"
+            f" {annotation}; got null. Signature: {signature}"
         )
-    return line_end
-
-
-def _scan_tool_block(text: str, decoder, content_start: int, line_no: int, logger):
-    """Scan one tool block's content, starting after its 'tool' info token.
-
-    The JSON decoder is the string-aware tokenizer: backticks inside JSON
-    strings are consumed as data, and the first backtick run of three or
-    more after the decoded value closes the block whatever its line carries
-    (a bare fence, another opener's fence, or prose containing one). A block
-    with no such run was never closed, which is a structural error carrying
-    the exact parsed call.
-
-    Returns (payload, error, resume, structural_error): the decoded payload
-    or a content-level error message, the position to resume scanning at
-    when the block is sound, and a structural error when it is not.
-    """
-    try:
-        payload, json_end = decoder.raw_decode(text, content_start)
-    except json.JSONDecodeError as exc:
-        boundary = _find_closing_run(text, content_start)
-        if boundary is None:
-            if text[content_start:].strip():
-                return None, None, None, (
-                    f"A ```tool block starting on line {line_no} was never"
-                    f" closed, and its content is not valid JSON: {exc}"
-                )
-            return None, None, None, (
-                f"A ```tool block starting on line {line_no} was never closed"
-                " and had no content"
-            )
-        if not text[content_start:boundary].strip():
-            error = "The tool block was empty."
-        else:
-            error = f"A tool call could not be decoded as JSON: {exc}"
-        resume = _resume_after_closer(text, boundary, logger)
-        return None, error, resume, None
-    boundary = _find_closing_run(text, json_end)
-    if boundary is None:
-        return None, None, None, (
-            f"A ```tool block starting on line {line_no} was never closed;"
-            f" it contained {_describe_block_content(payload)}"
+    alternatives = [part for part in alternatives if part != "None"]
+    results = [_simple_type_match(value, part) for part in alternatives]
+    if any(result is True for result in results):
+        return None
+    if results and all(result is False for result in results):
+        return (
+            f"Argument '{arg_name}' of tool '{tool_name}' should be of type"
+            f" {annotation}; got {_json_type_name(value)}."
+            f" Signature: {signature}"
         )
-    resume = _resume_after_closer(text, boundary, logger)
-    return payload, None, resume, None
+    return None
 
 
-def _skip_prose_block(text: str, after_opener: int) -> int:
-    """Skip an ordinary prose block, returning the resume position.
+def _signature_error(tool_name, tool_arguments) -> str | None:
+    """Return a descriptive error when a call violates the tool's signature.
 
-    The block ends at the next line-start bare fence; tool markup inside
-    stays inert. Balance is not enforced: an unclosed prose block silently
-    swallows the rest of the reply, so stray fences can never turn into
-    tool calls.
+    Checks required arguments, unexpected arguments and simple type
+    compatibility against the signature metadata extracted from the tools
+    module source. Tools without metadata (e.g. test doubles) pass through
+    unvalidated.
     """
-    pos = _after_line(text, after_opener)
-    while True:
-        fence = FENCE_LINE_RE.search(text, pos)
-        if fence is None:
-            return len(text)
-        if fence.group(2).strip() == "":
-            return _after_line(text, fence.start(1))
-        pos = _after_line(text, fence.start(1))
-
-
-def _scan_tool_blocks(text: str):
-    """Scan a reply into parsed ```tool blocks plus an optional structural error.
-
-    Fence openers are recognized only at line starts (0-3 spaces of indent,
-    a run of three or more backticks); an info string starting with 'tool'
-    opens a tool block, every other fence opens an ordinary prose block.
-    Mid-line backtick runs are inert content, so a ```tool mentioned inside
-    a sentence or glued after prose never opens a block.
-
-    Returns (blocks, structural_error). 'structural_error' is None when the
-    reply's tool markup is structurally sound, in which case every block
-    carries either a decoded payload or a content-level error message; the
-    first structural violation wins and the blocks scanned so far are
-    discarded (nothing from a broken reply executes).
-    """
-    logger = get_logger()
-    decoder = json.JSONDecoder()
-    blocks = []
-    pos = 0
-    while True:
-        opener = FENCE_LINE_RE.search(text, pos)
-        if opener is None:
-            return blocks, None
-        run_start, run_end = opener.span(1)
-        info = opener.group(2).rstrip("\r")
-        if _is_tool_info(info):
-            content_start = _skip_whitespace(text, opener.start(2) + len(TOOL_INFO))
-            payload, error, resume, structural = _scan_tool_block(
-                text, decoder, content_start, _line_no(text, run_start), logger
-            )
-            if structural is not None:
-                return blocks, structural
-            blocks.append(_ParsedBlock(_line_no(text, run_start), payload, error))
-            pos = resume
-            continue
-        pos = _skip_prose_block(text, run_end)
+    entry = _tool_signatures().get(tool_name)
+    if entry is None:
+        return None
+    signature = _render_signature(tool_name, entry)
+    declared = {argument["name"]: argument for argument in entry["arguments"]}
+    missing = [
+        argument["name"]
+        for argument in entry["arguments"]
+        if not argument["has_default"] and argument["name"] not in tool_arguments
+    ]
+    if missing:
+        return (
+            f"Missing required argument(s)"
+            f" {', '.join(repr(name) for name in missing)}"
+            f" for tool '{tool_name}'. Signature: {signature}"
+        )
+    unexpected = [name for name in tool_arguments if name not in declared]
+    if unexpected:
+        return (
+            f"Unexpected argument(s) {', '.join(repr(name) for name in unexpected)}"
+            f" for tool '{tool_name}'. Signature: {signature}"
+        )
+    for arg_name, value in tool_arguments.items():
+        error = _argument_type_error(
+            tool_name, arg_name, value, declared[arg_name]["type"], signature
+        )
+        if error is not None:
+            return error
+    return None
 
 
 def build_signature(tool_name, tool_arguments):
@@ -357,13 +529,14 @@ def parse_and_execute_tools(
     exceeds it is detached and the model is told it may keep working.
 
     The reply's tool markup is fully scanned before anything executes: a
-    structurally broken block (one that was never closed) aborts the whole
+    block whose JSON decodes but that was never closed aborts the whole
     reply, and ParseOutcome.structural_error carries the reason while no
     call runs. When the structure is sound, every block is processed in
-    reply order: content that is empty or not valid JSON, or that fails the
-    single-key {tool_name: {arguments}} shape, becomes an output entry with
-    "error": True and never dispatches; well-formed calls run through the
-    timeout machinery. Returns a ParseOutcome.
+    reply order: content that is empty or not valid JSON, that fails the
+    single-key {tool_name: {arguments}} shape, that names an unregistered
+    tool, or that violates the tool's signature becomes an output entry
+    with "error": True and never dispatches; well-formed calls run through
+    the timeout machinery. Returns a ParseOutcome.
     """
     outputs = []
     if tool_timeout_s is None:
@@ -408,8 +581,9 @@ def parse_and_execute_tools(
 
         if not tool:
             output = (
-                "A tool call must have exactly one top-level key (the tool"
-                " name); got an empty object."
+                "Tool block contains an empty JSON object; a tool call must"
+                " have exactly one top-level key: the tool name (e.g."
+                ' {"tool_name": {"argument": "value"}}).'
             )
             _record_never_ran("unknown", build_signature("unknown", {}), output)
             continue
@@ -439,7 +613,8 @@ def parse_and_execute_tools(
 
         if tool_name not in TOOL_REGISTRY:
             output = (
-                f"Unknown tool '{tool_name}'. Available tools:"
+                f"Attempted to call a tool that is not registered:"
+                f" '{tool_name}'. Registered tools:"
                 f" {', '.join(sorted(TOOL_REGISTRY))}"
             )
             logger.warning(output)
@@ -454,6 +629,25 @@ def parse_and_execute_tools(
                     "name": tool_name,
                     "signature": signature,
                     "output": output,
+                    "error": True,
+                }
+            )
+            continue
+
+        argument_error = _signature_error(tool_name, tool_arguments)
+        if argument_error is not None:
+            logger.warning(argument_error)
+            if echo_errors:
+                print(f"  ! ({argument_error[:80]})")
+            if on_tool_event is not None:
+                on_tool_event("started", tool_name, signature)
+                on_tool_event("error", tool_name, signature, output=argument_error)
+                on_tool_event("finished", tool_name, signature, argument_error)
+            outputs.append(
+                {
+                    "name": tool_name,
+                    "signature": signature,
+                    "output": argument_error,
                     "error": True,
                 }
             )

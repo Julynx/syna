@@ -93,9 +93,7 @@ def load_speech_settings() -> SpeechSettings:
         stt_model=(env.get("STT_MODEL") or "").strip() or None,
         tts_model=(env.get("TTS_MODEL") or "").strip() or None,
         tts_voice=(env.get("TTS_VOICE") or "").strip() or DEFAULT_TTS_VOICE,
-        tts_response_format=(
-            env.get("TTS_RESPONSE_FORMAT") or ""
-        ).strip().lower()
+        tts_response_format=(env.get("TTS_RESPONSE_FORMAT") or "").strip().lower()
         or DEFAULT_TTS_RESPONSE_FORMAT,
         language=(env.get("SPEECH_LANGUAGE") or "").strip() or DEFAULT_SPEECH_LANGUAGE,
     )
@@ -208,9 +206,7 @@ def synthesize_speech(text: str, settings: SpeechSettings) -> SynthesizedAudio:
     content = response.content
     if audio_format == "pcm":
         content = wrap_pcm_in_wav(content, PCM_SAMPLE_RATE_HZ)
-    media_type = MEDIA_TYPES_BY_FORMAT.get(
-        audio_format, f"audio/{audio_format}"
-    )
+    media_type = MEDIA_TYPES_BY_FORMAT.get(audio_format, f"audio/{audio_format}")
     get_logger().info(
         "Synthesized %d chars into %d bytes of %s speech",
         len(text),

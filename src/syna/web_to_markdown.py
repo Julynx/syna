@@ -325,9 +325,7 @@ def fetch_markdown(url: str, cfg: Config | None = None) -> str:
             if attempt < cfg.retries:
                 time.sleep(cfg.backoff * attempt + random.uniform(0, 1.5))
 
-    raise FetchError(
-        f"Could not fetch {url} after {cfg.retries} attempts: {last_exc}"
-    )
+    raise FetchError(f"Could not fetch {url} after {cfg.retries} attempts: {last_exc}")
 
 
 def main(argv: list[str] | None = None) -> int:
