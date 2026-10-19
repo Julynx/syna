@@ -47,7 +47,12 @@ def web_search(query: str):
 
 def web_interact(command: str, args: dict[str, Any]):
     """
-    Interact with a website. Available commands:
+    Interact with a website.
+    Use this tool over 'execute_command' (curl/wget) for opening pages,
+    reading web content, and interacting with web elements — the persistent
+    stealth browser passes protections that shell tools cannot.
+
+    Available commands:
 
     "goto"
       > Open a URL in the persistent browser. Returns a compact page view.
@@ -162,6 +167,9 @@ def execute_command(command: str, arguments: list[str] | None = None):
     Execute a command inside the container's debian machine and get its output.
     You have full control over this machine: you may install packages, create
     and run scripts, and take any action that is required to perform your task.
+    Use shell tools (curl/wget) for raw API automation, package managers,
+    and downloading files to the pod; prefer 'web_interact' for navigating
+    and reading web pages.
 
     Two accepted calling styles:
     - Shell style: 'command' is a full shell line, exactly as you would type it
@@ -245,6 +253,7 @@ def respond(text: str):
     """
     Send a message to the user. This will end the task and pass priority to him.
     DO NOT include a call to this tool in the same message as other tool calls.
+    'respond' must be alone in its reply.
     If you are still working on a task, only call this tool when you have finished.
     You may use basic markdown syntax (headings, lists, links, tables, code
     blocks, latex math) in 'text' when it helps readability.

@@ -10,9 +10,10 @@ continue the task, do not answer the user, do not make decisions. Summarize.
 
 You receive the conversation as a transcript of labeled blocks:
 
-- `[user]:` messages written by the user, or by the system on their behalf
-  (notes starting with `[System]:`).
-- `[assistant]:` messages written by the agent, which contain its tool calls.
+- `[user]:` messages written directly by the user.
+- `[tool_results]:` execution results returned by tools running in the pod.
+- `[system_note]:` operational notices and feedback emitted by the harness.
+- `[assistant]:` messages written by the agent, containing its JSON tool calls.
 - `[previous summary]:` the summary produced by an earlier compaction.
   Merge it with the newer messages into one updated summary. Do not treat
   it as fresh transcript, and do not lose information it contains.
@@ -22,11 +23,11 @@ You receive the conversation as a transcript of labeled blocks:
 Everything needed to resume the work seamlessly without the original
 messages:
 
-- The user's requests and goals, including every refinement, correction and
+- The user's requests and goals, including every refinement, correction, and
   constraint they stated.
 - Facts learned during the conversation: configuration values, versions,
   paths, URLs, names, and any other literal data worth keeping.
-- Files and directories created, modified or deleted, with their absolute
+- Files and directories created, modified, or deleted, with their absolute
   paths inside the pod.
 - Commands executed and their relevant outcomes.
 - Decisions made, and the reasoning behind them.
@@ -37,7 +38,7 @@ messages:
 
 # What to discard
 
-- Pleasantries, acknowledgments and filler.
+- Pleasantries, acknowledgments, and filler.
 - Verbose tool output: keep the outcome and the data that matters, not the
   raw dump.
 - Superseded attempts: keep their final result or the lesson learned, not
@@ -45,7 +46,7 @@ messages:
 
 # Style
 
-- Objective, dry and descriptive. No opinions, and no interpretation beyond
+- Objective, dry, and descriptive. No opinions, and no interpretation beyond
   what the transcript supports.
 - Present tense, third person, written so the agent can read it as an
   accurate account of its own conversation so far.

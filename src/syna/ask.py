@@ -1,8 +1,15 @@
 """CLI interaction loop built on top of the shared AgentSession."""
 
+import sys
+
 from .ask_utils import show_welcome
 from .commands import parse_and_execute_command
 from .session import AgentSession
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
 def _print_event(event):

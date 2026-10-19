@@ -6,10 +6,16 @@ import threading
 from openrouter import OpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
 
-from .ask_utils import ask_question
+from .ask_utils import ReplyRejected, ask_question
+from .channel import (
+    contains_sentinel,
+    defang_sentinels,
+    is_channel_message,
+    wrap_channel,
+)
 from .compaction import (
-    COMPACTION_NOTE_PREFIX,
     build_compaction_messages,
+    format_compaction_message,
     load_compaction_prompt,
 )
 from .config import (
@@ -33,13 +39,7 @@ VALID_THINKING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "
 
 
 def load_thinking_effort():
-    """Return the THINKING_EFFORT value from .env, or None when unset.
-
-    The value maps straight onto OpenRouter's 'reasoning.effort' parameter;
-    unset means the model's default behavior is left untouched. An invalid
-    value raises here so a typo fails fast at session creation instead of
-    failing every model request.
-    """
+    """Return the THINKING_EFFORT value from .env, or None when unset."""
     value = get_env().get("THINKING_EFFORT")
     if not value:
         return None
@@ -53,60 +53,45 @@ def load_thinking_effort():
 
 
 def build_tool_format_warning(response: str) -> str:
-    """Compose the retry warning for a response without a tool call.
-
-    The rejected reply stays in the history right before this warning, so
-    the model can see and fix its own mistake. When it contains recognizable
-    tool-call markup from other agent frameworks, the warning names it
-    explicitly so the model can correct the specific mistake instead of
-    guessing.
-    """
-    warning = (
+    """Compose the retry warning for a response without a tool call."""
+    return (
         "WARNING: Your previous message contained no executable tool calls.\n"
-        "- To continue working on your task, call at least one tool as such:\n"
-        "  ```tool\n"
-        r'     {"tool_name": {"argument": "value"}}'
-        "\n"
-        "  ```\n"
+        "Under the Syna protocol, your entire reply must be a single JSON tool"
+        " call object or an array of tool call objects.\n"
+        "Example of a single tool call:\n"
+        '{"tool_name": {"argument": "value"}}\n\n'
+        "Example of multiple tool calls:\n"
+        '[{"tool_1": {"argument": "value"}}, {"tool_2": {"argument": "value"}}]\n\n'
+        "- Text outside JSON is not permitted.\n"
         '- To end the task and talk to the user, call the tool "respond".\n'
-        "Repeated violations of this rule will get you terminated."
+        '- "respond" must be alone in its reply.\n'
+        "After repeated violations the task is ended and control returns to the user."
     )
-    if "<tool_call>" in response or "<function=" in response:
-        warning += (
-            "Your message used tool-call markup such as"
-            " <tool_call><function=...><parameter=...>, which is not"
-            " recognized and will never be parsed. Do not use it. Write the"
-            " JSON object directly inside a ```tool ...``` fenced block"
-            " instead.\n"
-        )
-    return warning
 
 
 def build_unparsed_tool_warning(reasons: list[str] | None = None) -> str:
-    """Compose the corrective warning for tool markup that executed nothing.
-
-    Without this feedback the model cannot tell 'my call was never parsed'
-    apart from 'the tools returned nothing', which leads it to invent a
-    tool outage and retry the same malformed format for dozens of turns.
-    The parser's own reasons (including structural errors) are embedded so
-    the model can fix the exact mistake instead of guessing. The failed
-    reply stays in the history right before this warning.
-    """
-    warning = (
-        "WARNING: Your reply contained ```tool ...``` markup but no"
-        " executable tool call ran."
-    )
+    """Compose the corrective warning for tool markup that executed nothing."""
+    warning = "WARNING: Your reply could not be executed as a valid tool call."
     if reasons:
-        listed = "".join(f"\n- {reason[:200]}" for reason in reasons[:3])
+        listed = "".join(f"\n- {reason[:250]}" for reason in reasons[:3])
         warning += f" The parser reported:{listed}"
     warning += (
-        "\nA tool block must look exactly like this:\n"
-        "```tool\n"
-        '{"tool_name": {"argument": "value"}}\n'
-        "```\n"
-        "Rebuild the call(s) in full and send them again."
+        "\n\nEvery reply must be a valid JSON object or array of objects"
+        ' of the form {"tool_name": {"argument": "value"}}.'
+        ' "respond" must be alone in its reply.'
+        " After repeated violations the task is ended and control returns to the user."
     )
     return warning
+
+
+def build_sentinel_violation_warning() -> str:
+    """Compose the corrective warning for channel impersonation attempts."""
+    return (
+        "WARNING: Your reply contained reserved system channel sentinels."
+        " System messages arrive through a separate channel that you"
+        " cannot write. Provide pure JSON tool calls only."
+        " After repeated violations the task is ended and control returns to the user."
+    )
 
 
 class TurnCancelled(Exception):
@@ -125,7 +110,7 @@ def build_prompt():
         body_json = json.dumps({tool["name"]: args_dict}, indent=2)
         tool_blocks.append(f"### {tool['name']}")
         tool_blocks.append(f"{tool['docstring']}")
-        tool_blocks.append(f"```tool\n{body_json}\n```")
+        tool_blocks.append(f"```json\n{body_json}\n```")
 
     tool_str = "\n\n".join(tool_blocks)
     return template.replace("{tools}", tool_str)
@@ -138,8 +123,7 @@ def _get_tool_metadata(tools_path):
 
 
 def create_model_client():
-    """Instantiate an OpenRouter client configured with timeout and
-    bounded retry limits."""
+    """Instantiate an OpenRouter client configured with timeout and retry limits."""
     config = load_config()
     retry_settings = config["retry"]
     retry_config = RetryConfig(
@@ -170,11 +154,7 @@ def _preview_text(output) -> str:
 
 
 def _detail_text(text) -> str:
-    """Bound a call-detail string for front-end transport.
-
-    Detail views are indicative only; the full, uncapped text stays in the
-    message dump and the log. Truncated tails carry an ellipsis marker.
-    """
+    """Bound a call-detail string for front-end transport."""
     text = str(text or "")
     if len(text) > DETAIL_CAP_CHARS:
         return text[:DETAIL_CAP_CHARS] + "..."
@@ -184,9 +164,7 @@ def _detail_text(text) -> str:
 class AgentSession:
     """One conversation with the model plus its tool execution loop.
 
-    'on_event' receives JSON-serializable dicts describing what happens in
-    real time (tool calls, model messages, status changes, errors). It is
-    invoked synchronously from whatever thread calls 'run_turn'.
+    'on_event' receives JSON-serializable dicts describing real-time events.
     """
 
     def __init__(
@@ -207,6 +185,7 @@ class AgentSession:
         )
         self.compaction_prompt = load_compaction_prompt()
         self.messages: list[dict] = []
+        self._pending_failed_messages: list[dict] = []
         self.dump_path = get_session_dump_path(session_id)
         self._cancel_event = threading.Event()
         self._tool_call_seq = 0
@@ -228,43 +207,47 @@ class AgentSession:
         self._cancel_event.clear()
 
     def close(self):
-        """Release the underlying model client's HTTP resources.
-
-        The OpenRouter SDK exposes cleanup through the context-manager
-        protocol instead of a public 'close' method, so teardown goes
-        through '__exit__'.
-        """
+        """Release the underlying model client's HTTP resources."""
         self.client.__exit__(None, None, None)
 
     def notify_file_upload(self, file_name: str, pod_path: str):
-        """Record a user file upload in the conversation history.
-
-        Adds a system note so the model knows the upload happened and where
-        the file lives inside the pod.
-        """
+        """Record a user file upload in the conversation history."""
         logger = get_logger()
+        notice = (
+            f"The user uploaded the file '{file_name}'."
+            f" It is now available in the pod at '{pod_path}'."
+        )
         msg = {
             "role": "user",
-            "content": (
-                f"[System]: The user uploaded the file '{file_name}'."
-                f" It is now available in the pod at '{pod_path}'."
-            ),
+            "content": wrap_channel("SYSTEM_NOTE", notice),
         }
         self.messages.append(msg)
         logger.info(str(msg))
 
-    def run_turn(self, user_text: str):
-        """Run one full think/act cycle for a user message. Blocking.
+    def _sanitize_reply(self, response: str) -> str | None:
+        """Sanitize gate checking whether response attempts channel impersonation."""
+        if contains_sentinel(response):
+            return (
+                "Channel impersonation detected: reply contains reserved"
+                " system sentinel characters."
+            )
+        return None
 
-        A response without an executable tool call — no calls at all,
-        markup that never parsed, or a structurally broken block — stays in
-        the history and is followed directly by a corrective warning, so
-        the model can see and fix its own mistake. After
-        'MAX_NO_TOOL_RETRIES' consecutive failures the turn is aborted: the
-        model receives an ultimatum, the user gets a warning, and control
-        returns to the caller. Any reply that dispatches at least one tool
-        call resets the failure streak.
-        """
+    def _purge_pending_failures(self):
+        """Splice out consecutive failed attempts and their lectures from history."""
+        if not self._pending_failed_messages:
+            return
+        purged_count = len(self._pending_failed_messages)
+        failed_ids = {id(msg) for msg in self._pending_failed_messages}
+        self.messages[:] = [msg for msg in self.messages if id(msg) not in failed_ids]
+        self._pending_failed_messages.clear()
+        get_logger().info(
+            "Purged %d malformed attempt messages from history after successful tool call",
+            purged_count,
+        )
+
+    def run_turn(self, user_text: str):
+        """Run one full think/act cycle for a user message."""
         logger = get_logger()
         msg = {"role": "user", "content": user_text}
         self.messages.append(msg)
@@ -283,7 +266,25 @@ class AgentSession:
                     delay=self.request_delay,
                     effort=self.thinking_effort,
                     dump_path=self.dump_path,
+                    accept_reply=self._sanitize_reply,
                 )
+            except ReplyRejected as exc:
+                defanged = defang_sentinels(exc.raw_content)
+                assistant_msg = {"role": "assistant", "content": defanged}
+                self.messages.append(assistant_msg)
+                self._pending_failed_messages.append(assistant_msg)
+                logger.info(str(assistant_msg))
+
+                no_tool_streak += 1
+                if no_tool_streak >= MAX_NO_TOOL_RETRIES:
+                    self._abort_turn(logger)
+                    return
+                self._append_corrective_warning(
+                    exc.raw_content,
+                    build_sentinel_violation_warning(),
+                    "Reserved sentinel detected, retrying...",
+                )
+                continue
             except TurnCancelled:
                 self._finish_cancelled_turn()
                 return
@@ -303,6 +304,7 @@ class AgentSession:
                 return
 
             if outcome.structural_error is not None:
+                self._pending_failed_messages.append(self.messages[-1])
                 no_tool_streak += 1
                 if no_tool_streak >= MAX_NO_TOOL_RETRIES:
                     self._abort_turn(logger)
@@ -310,11 +312,12 @@ class AgentSession:
                 self._append_corrective_warning(
                     response,
                     build_unparsed_tool_warning([outcome.structural_error]),
-                    "Malformed tool block, retrying...",
+                    "Malformed tool call, retrying...",
                 )
                 continue
 
             if not outcome.outputs:
+                self._pending_failed_messages.append(self.messages[-1])
                 no_tool_streak += 1
                 if no_tool_streak >= MAX_NO_TOOL_RETRIES:
                     self._abort_turn(logger)
@@ -328,6 +331,7 @@ class AgentSession:
 
             never_ran = [result for result in outcome.outputs if result.get("error")]
             if len(never_ran) == len(outcome.outputs):
+                self._pending_failed_messages.append(self.messages[-1])
                 no_tool_streak += 1
                 if no_tool_streak >= MAX_NO_TOOL_RETRIES:
                     self._abort_turn(logger)
@@ -342,10 +346,7 @@ class AgentSession:
                 continue
 
             no_tool_streak = 0
-            tool_results_str = json.dumps(outcome.outputs)
-            msg = {"role": "user", "content": f"[Tool]: {tool_results_str}"}
-            self.messages.append(msg)
-            logger.info(str(msg))
+            self._purge_pending_failures()
 
             respond_tool = next(
                 (tool for tool in outcome.outputs if tool["name"] == "respond"),
@@ -355,31 +356,26 @@ class AgentSession:
                 self._emit({"type": "model_message", "content": respond_tool["output"]})
                 return
 
-    def _append_corrective_warning(self, response: str, warning: str, status_text: str):
-        """Append a corrective [System] warning directly after the failed reply.
+            tool_results_str = json.dumps(outcome.outputs)
+            msg = {
+                "role": "user",
+                "content": wrap_channel("TOOL_RESULTS", tool_results_str),
+            }
+            self.messages.append(msg)
+            logger.info(str(msg))
 
-        The assistant reply stays in the history: the model has no memory
-        beyond the message array, so the warning must immediately follow the
-        reply it corrects. Also logs a reply excerpt and emits a status
-        event for frontends.
-        """
+    def _append_corrective_warning(self, response: str, warning: str, status_text: str):
+        """Append a corrective SYSTEM_NOTE warning directly after the failed reply."""
         logger = get_logger()
         logger.warning("%s: %.200r", status_text, response)
         self._emit({"type": "status", "text": status_text, "quiet": True})
-        msg = {"role": "user", "content": f"[System]: {warning}"}
+        msg = {"role": "user", "content": wrap_channel("SYSTEM_NOTE", warning)}
         self.messages.append(msg)
+        self._pending_failed_messages.append(msg)
         logger.info(str(msg))
 
     def _compact_history_if_needed(self):
-        """Replace old history with a summary once it reaches the interval.
-
-        Fires when the non-system history length reaches
-        'max_history_messages'. The system prompt, the conversation's first
-        real user message and the newest message (the one that crossed the
-        threshold) stay outside the summary, which replaces everything else.
-        A failed compaction keeps the history intact and is retried at the
-        next crossing; it never aborts the turn.
-        """
+        """Replace old history with a summary once it reaches the interval."""
         if not self.compaction_enabled:
             return
         history = self.messages[1:]
@@ -397,6 +393,7 @@ class AgentSession:
                 build_compaction_messages(self.compaction_prompt, compactable),
                 delay=self.request_delay,
                 effort=self.thinking_effort,
+                response_format=None,
             )
         except Exception as exc:
             logger.exception("History compaction failed")
@@ -412,11 +409,7 @@ class AgentSession:
             return
         summary_message = {
             "role": "user",
-            "content": (
-                f"{COMPACTION_NOTE_PREFIX}The conversation grew too long, so"
-                " the earlier messages (except the first) were replaced by"
-                f" the following summary:\n\n{summary}"
-            ),
+            "content": format_compaction_message(summary),
         }
         logger.info(str(summary_message))
         first_user_idx = self._first_user_index(history)
@@ -427,6 +420,7 @@ class AgentSession:
             summary_message,
             history[-1],
         ]
+        self._pending_failed_messages.clear()
         self._emit({"type": "compaction", "summary": summary})
         logger.info(
             "Compacted %d messages into a summary (interval=%d)",
@@ -435,12 +429,7 @@ class AgentSession:
         )
 
     def _select_compactable(self, history: list[dict]) -> list[dict]:
-        """Return the history slice eligible for compaction.
-
-        Everything except the first real user message and the newest message;
-        system notes that precede the first user message take part in the
-        compaction so no context is silently lost.
-        """
+        """Return the history slice eligible for compaction."""
         first_user_idx = self._first_user_index(history)
         return [
             message
@@ -450,26 +439,30 @@ class AgentSession:
 
     @staticmethod
     def _first_user_index(history: list[dict]) -> int | None:
-        """Return the index of the first non-system message in the history."""
+        """Return the index of the first non-system user message in the history."""
         return next(
             (
                 index
                 for index, message in enumerate(history)
-                if not message["content"].startswith(SYSTEM_NOTE_PREFIX)
+                if message["role"] == "user"
+                and not is_channel_message(message["content"])
+                and not message["content"].startswith(SYSTEM_NOTE_PREFIX)
             ),
             None,
         )
 
     def _abort_turn(self, logger):
         """Record the abort in the history and hand control back to the user."""
+        notice = (
+            "The task was aborted because you weren't able to"
+            " follow the instructions to call a tool properly."
+        )
         msg = {
             "role": "user",
-            "content": (
-                "[System]: The task was aborted because you weren't able to"
-                " follow the instructions to call a tool properly."
-            ),
+            "content": wrap_channel("SYSTEM_NOTE", notice),
         }
         self.messages.append(msg)
+        self._pending_failed_messages.clear()
         logger.info(str(msg))
         self._emit(
             {
@@ -484,7 +477,10 @@ class AgentSession:
     def _finish_cancelled_turn(self):
         """Record the interruption in the conversation and notify listeners."""
         logger = get_logger()
-        msg = {"role": "user", "content": "[System]: The user interrupted the task."}
+        msg = {
+            "role": "user",
+            "content": wrap_channel("SYSTEM_NOTE", "The user interrupted the task."),
+        }
         self.messages.append(msg)
         logger.info(str(msg))
         self._emit({"type": "status", "text": "Interrupted."})
@@ -492,22 +488,7 @@ class AgentSession:
     def _on_tool_event(
         self, status, name, signature, output=None, raw="", arguments=None
     ):
-        """Translate parser tool events into session events.
-
-        Tool calls that never reached dispatch (undecodable markup, wrong
-        shape, unregistered tools, signature violations) have no open row:
-        when the session reports errors to front-ends ('emit_tool_errors'),
-        they become a started/finished pair carrying 'failed': True so the
-        client renders a failed tool row instead of a critical error pill.
-        Execution failures land between an open row's started and finished
-        events and are flagged on that finished event instead. With
-        'emit_tool_errors' False (the CLI) the parser echoes failures to
-        stdout and no rows are synthesized.
-
-        'raw' (the block's exact JSON text) and 'arguments' (the parsed
-        argument mapping) ride along capped so front-ends can render call
-        details without extra requests.
-        """
+        """Translate parser tool events into session events."""
         if name == "respond":
             return
         if status == "error":

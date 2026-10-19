@@ -4,11 +4,22 @@ import json
 import os
 import time
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 
 from .config import get_logger
 
 EMPTY_RESPONSE_MAX_ATTEMPTS = 3
+DEFAULT_RESPONSE_FORMAT = {"type": "json_object"}
+
+
+class ReplyRejected(Exception):
+    """Raised when an assistant reply is rejected by the pre-history acceptance gate."""
+
+    def __init__(self, reason: str, raw_content: str):
+        super().__init__(reason)
+        self.reason = reason
+        self.raw_content = raw_content
 
 
 def show_welcome():
@@ -37,18 +48,7 @@ def _content_text(content) -> str:
 
 
 def _write_dump(dump_path: Path | None, payload: dict) -> None:
-    """Atomically persist 'payload' to the session dump file.
-
-    The dump is a diagnostic side channel: any failure (serialization,
-    disk full, permissions) is logged and swallowed so it can never abort
-    the model request itself. Writes go through a temp file plus
-    'os.replace', so readers never see a half-written file and a crash
-    mid-write cannot corrupt the previous dump.
-
-    Callers may pass a payload whose 'messages' value aliases the live
-    conversation list; a later write of the same dict then reflects any
-    messages appended in between.
-    """
+    """Atomically persist 'payload' to the session dump file."""
     if dump_path is None:
         return
     try:
@@ -61,31 +61,36 @@ def _write_dump(dump_path: Path | None, payload: dict) -> None:
         )
 
 
-def ask_question(client, model, messages, delay=2, effort=None, dump_path=None):
+def ask_question(
+    client,
+    model,
+    messages,
+    delay=2,
+    effort=None,
+    dump_path=None,
+    response_format: dict | None = DEFAULT_RESPONSE_FORMAT,
+    accept_reply: Callable[[str], str | None] | None = None,
+):
     """Send conversation messages to the model and record its response.
 
-    'effort' optionally sets OpenRouter's reasoning effort, sent as the
-    unified 'reasoning' parameter ({"effort": ...}); None leaves the
-    model's default behavior untouched.
-
-    'dump_path' optionally points at the session dump file: when given,
-    the exact request payload (model, reasoning effort and messages) is
-    atomically written there right before each call and again once the
-    assistant reply has been appended to the history. Pass None to skip
-    dumping entirely, which the compaction request does so it never
-    hijacks the live conversation's dump.
-
-    Transient empty responses (no content, e.g. finish_reason 'error')
-    are retried up to EMPTY_RESPONSE_MAX_ATTEMPTS times; request failures
-    and refusals raise immediately. Raises RuntimeError when the model
-    returns no usable content, so an empty assistant message is never
-    added to the conversation history.
+    Parameters:
+        client: OpenRouter or compatible chat client.
+        model: Identifier of the target LLM.
+        messages: Conversation history list of role/content dicts.
+        delay: Seconds to pause before making the request.
+        effort: Optional reasoning effort parameter for reasoning models.
+        dump_path: Optional path for diagnostic request dumps.
+        response_format: Structured output format dict, or None for unconstrained output.
+        accept_reply: Optional callable receiving raw response text. Returning a
+            non-None string rejects the response and raises ReplyRejected.
     """
     logger = get_logger()
     try:
         for attempt in range(1, EMPTY_RESPONSE_MAX_ATTEMPTS + 1):
             time.sleep(delay)
             request = {"model": model, "messages": messages}
+            if response_format is not None:
+                request["response_format"] = response_format
             if effort:
                 request["reasoning"] = {"effort": effort}
             _write_dump(dump_path, request)
@@ -95,6 +100,11 @@ def ask_question(client, model, messages, delay=2, effort=None, dump_path=None):
                 raise RuntimeError(f"Model refused to respond: {message.refusal}")
             content = _content_text(message.content)
             if content:
+                if accept_reply is not None:
+                    rejection_reason = accept_reply(content)
+                    if rejection_reason is not None:
+                        logger.warning("Assistant reply rejected: %s", rejection_reason)
+                        raise ReplyRejected(rejection_reason, content)
                 msg = {"role": "assistant", "content": content}
                 messages.append(msg)
                 logger.info(str(msg))
@@ -106,6 +116,8 @@ def ask_question(client, model, messages, delay=2, effort=None, dump_path=None):
                 EMPTY_RESPONSE_MAX_ATTEMPTS,
                 response.choices[0].finish_reason,
             )
+    except ReplyRejected:
+        raise
     except Exception as exc:
         logger.exception("Failed to get model response")
         print(f"\n  ! (Error communicating with model: {exc})")
