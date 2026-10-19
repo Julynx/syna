@@ -338,9 +338,8 @@ function expandToolRun(run) {
       row.style.transition = "none";
       row.style.opacity = "0";
     });
-    const target = wrap.scrollHeight;
     wrap.classList.remove("collapsed");
-    void wrap.offsetHeight;
+    const target = wrap.getBoundingClientRect().height;
     rows.forEach((row) => {
       row.style.transition = "";
     });
@@ -544,7 +543,7 @@ function detailSectionsFor(event) {
 
 function detailSection(section) {
   const box = document.createElement("div");
-  box.className = "detail-section glass";
+  box.className = "detail-section";
   const header = document.createElement("div");
   header.className = "detail-header";
   const label = document.createElement("span");

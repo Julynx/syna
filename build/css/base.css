@@ -43,7 +43,7 @@
     --surface: rgba(19, 23, 29, 0.75);
     --surface-strong: rgba(13, 16, 21, 0.9);
     --surface-soft: rgba(255, 255, 255, 0.085);
-    --surface-detail: rgba(255, 255, 255, 0.14);
+    --surface-detail: rgba(0, 0, 0, 0.25);
     --text: #e6e8eb;
     --muted: #9aa1ab;
     --accent: #818cf8;
