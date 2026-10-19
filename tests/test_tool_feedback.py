@@ -575,6 +575,113 @@ def test_session_tool_execution_failure_does_not_count():
     print("PASS tool execution failures flow through [Tool] and never count")
 
 
+def _make_web_session():
+    """A session configured like the web server: errors surface as rows."""
+    session = _make_session()
+    session.emit_tool_errors = True
+    return session
+
+
+def test_web_parse_failure_becomes_failed_tool_row():
+    session = _make_web_session()
+    session.client = FakeChat([REPLY_BROKEN_JSON_CLOSED, REPLY_RESPOND])
+    events = []
+    session.on_event = events.append
+    session.run_turn("probe")
+    started = next(
+        e
+        for e in events
+        if e["type"] == "tool_call"
+        and e.get("parse_error")
+        and e["status"] == "started"
+    )
+    finished = next(
+        e
+        for e in events
+        if e["type"] == "tool_call"
+        and e.get("parse_error")
+        and e["status"] == "finished"
+    )
+    assert started["name"] == "unknown"
+    assert started["raw"].startswith('{"smoke_tool": {"label": "broken"')
+    assert finished["id"] == started["id"]
+    assert finished["failed"] is True
+    assert "could not be parsed as JSON" in finished["output"]
+    assert finished["output_preview"]
+    assert not any(e["type"] == "error" for e in events)
+    assert "task done" in session.messages[-1]["content"]
+    print("PASS undecodable blocks render as failed tool rows, not error pills")
+
+
+def test_web_signature_violation_becomes_failed_tool_row():
+    session = _make_web_session()
+    session.client = FakeChat([REPLY_MISSING_ARG, REPLY_RESPOND])
+    events = []
+    session.on_event = events.append
+    session.run_turn("probe")
+    finished = next(
+        e
+        for e in events
+        if e["type"] == "tool_call" and e["status"] == "finished" and e.get("failed")
+    )
+    assert finished["name"] == "web_search"
+    assert "Missing required argument(s) 'query'" in finished["output"]
+    assert finished["raw"] == '{"web_search": {}}'
+    assert not any(e["type"] == "error" for e in events)
+    assert not any(e.get("parse_error") for e in events)
+    assert "task done" in session.messages[-1]["content"]
+    print("PASS signature violations surface as failed rows with the signature")
+
+
+def test_web_events_carry_raw_json_and_arguments():
+    session = _make_web_session()
+    session.client = FakeChat([REPLY_CLOSED, REPLY_RESPOND])
+    events = []
+    session.on_event = events.append
+    session.run_turn("probe")
+    started = next(
+        e
+        for e in events
+        if e["type"] == "tool_call"
+        and e["status"] == "started"
+        and not e.get("parse_error")
+    )
+    finished = next(
+        e
+        for e in events
+        if e["type"] == "tool_call"
+        and e["status"] == "finished"
+        and not e.get("parse_error")
+    )
+    assert started["raw"] == '{"smoke_tool": {}}'
+    assert started["arguments"] == {}
+    assert finished["raw"] == started["raw"]
+    assert "ran: unlabeled" in finished["output"]
+    assert not finished.get("failed")
+    print("PASS dispatch events carry the exact block JSON and parsed arguments")
+
+
+def test_corrective_status_is_quiet():
+    session = _make_web_session()
+    session.client = FakeChat([REPLY_UNCLOSED, REPLY_RESPOND])
+    events = []
+    session.on_event = events.append
+    session.run_turn("probe")
+    corrective = [
+        e
+        for e in events
+        if e["type"] == "status" and "Malformed tool block" in e["text"]
+    ]
+    assert len(corrective) == 1
+    assert corrective[0]["quiet"] is True
+    thinking = [
+        e for e in events if e["type"] == "status" and e["text"] == "Thinking..."
+    ]
+    assert thinking
+    assert all("quiet" not in e for e in thinking)
+    print("PASS corrective statuses are quiet so the pill keeps saying Thinking...")
+
+
 def main():
     TOOL_REGISTRY["smoke_tool"] = _smoke_tool
     TOOL_REGISTRY["smoke_fail"] = _smoke_fail
@@ -610,6 +717,10 @@ def main():
         test_session_corrective_path_and_abort()
         test_session_streak_resets_on_dispatch()
         test_session_tool_execution_failure_does_not_count()
+        test_web_parse_failure_becomes_failed_tool_row()
+        test_web_signature_violation_becomes_failed_tool_row()
+        test_web_events_carry_raw_json_and_arguments()
+        test_corrective_status_is_quiet()
     finally:
         TOOL_REGISTRY.pop("smoke_tool", None)
         TOOL_REGISTRY.pop("smoke_fail", None)

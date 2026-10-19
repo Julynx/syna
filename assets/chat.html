@@ -953,31 +953,47 @@ body.dragging #drop-overlay {
   }
 }
 
-.tool-row pre {
-  flex-basis: 100%;
-  display: none;
-  margin-top: 15px;
+.tool-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.detail-section {
   padding: 8px 10px;
+  border-radius: 10px;
   background: var(--surface-soft);
   border: 1px solid var(--border);
-  border-radius: 10px;
+}
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.detail-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.detail-header .copy-btn {
+  position: static;
+  flex: none;
+  opacity: 1;
+  pointer-events: auto;
+}
+.detail-section pre {
+  margin: 0;
   font-family: var(--mono);
   font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 240px;
+  max-height: 320px;
   overflow-y: auto;
-  opacity: 0;
-  filter: blur(8px);
-  transform: translateY(2px);
   cursor: auto;
-  transition: none;
-}
-.tool-row.open pre {
-  display: block;
-  opacity: 1;
-  filter: blur(0);
-  transform: none;
 }
 
 .tool-overflow {
@@ -1168,39 +1184,11 @@ body.dragging #drop-overlay {
   }
 }
 
-.compaction-divider {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--muted);
-  opacity: 0.85;
-  transition:
-    opacity var(--dur-in) var(--ease),
-    filter var(--dur-in) var(--ease),
-    transform var(--dur-in) var(--ease);
-}
-.compaction-summary {
-  padding: 8px 10px;
-  border-radius: 10px;
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 240px;
-  overflow-y: auto;
-  transition:
-    opacity var(--dur-in) var(--ease),
-    filter var(--dur-in) var(--ease),
-    transform var(--dur-in) var(--ease);
-}
-
 @starting-style {
   .bubble,
   .tool-row,
   .event-row,
   .queued-tag,
-  .compaction-divider,
-  .compaction-summary,
   .see-more,
   .files-group,
   .inline-status,
@@ -1224,16 +1212,14 @@ body.dragging #drop-overlay {
 }
 
 #chat::-webkit-scrollbar,
-.tool-row pre::-webkit-scrollbar,
-.compaction-summary::-webkit-scrollbar,
+.tool-detail pre::-webkit-scrollbar,
 .markdown pre::-webkit-scrollbar,
 .markdown table::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 #chat::-webkit-scrollbar-thumb,
-.tool-row pre::-webkit-scrollbar-thumb,
-.compaction-summary::-webkit-scrollbar-thumb,
+.tool-detail pre::-webkit-scrollbar-thumb,
 .markdown pre::-webkit-scrollbar-thumb,
 .markdown table::-webkit-scrollbar-thumb {
   background: var(--border);
@@ -1242,8 +1228,7 @@ body.dragging #drop-overlay {
   background-clip: content-box;
 }
 #chat::-webkit-scrollbar-thumb:hover,
-.tool-row pre::-webkit-scrollbar-thumb:hover,
-.compaction-summary::-webkit-scrollbar-thumb:hover {
+.tool-detail pre::-webkit-scrollbar-thumb:hover {
   background-color: var(--muted);
   background-clip: content-box;
 }
@@ -1267,10 +1252,9 @@ body.dragging #drop-overlay {
   }
   .bubble,
   .tool-row,
+  .tool-detail,
   .event-row,
   .queued-tag,
-  .compaction-divider,
-  .compaction-summary,
   .see-more,
   .files-group,
   .inline-status,
@@ -2393,21 +2377,22 @@ const ICONS = {
   warn: GLYPH("warning"),
   copy: GLYPH("content_copy", "i-copy"),
   check: GLYPH("check", "i-check"),
+  history: GLYPH("history"),
   mic: GLYPH("mic"),
   speakerOn: GLYPH("record_voice_over", "s-on"),
   speakerOff: GLYPH("voice_over_off", "s-off"),
 };
 
 const TOOL_META = {
-  execute_command: { verb: "Ran command", icon: ICONS.terminal, arg: 0 },
-  web_interact: { verb: "Browsed", icon: ICONS.globe, arg: 0 },
-  web_search: { verb: "Searched", icon: ICONS.search, arg: 0 },
-  read_file: { verb: "Read file", icon: ICONS.eye, arg: 0 },
-  edit_file: { verb: "Edited file", icon: ICONS.pencil, arg: 0 },
-  share_file: { verb: "Share file", icon: ICONS.share, arg: 0 },
+  execute_command: { verb: "Ran command", icon: ICONS.terminal, key: "command" },
+  web_interact: { verb: "Browsed", icon: ICONS.globe },
+  web_search: { verb: "Searched", icon: ICONS.search, key: "query" },
+  read_file: { verb: "Read file", icon: ICONS.eye, key: "file_path" },
+  edit_file: { verb: "Edited file", icon: ICONS.pencil, key: "file_path" },
+  share_file: { verb: "Share file", icon: ICONS.share, key: "path" },
 };
 
-const DECODE_ERROR_PREFIX = "A tool call could not be decoded as JSON";
+const DETAIL_CAP_CHARS = 6000;
 
 function formatSize(bytes) {
   if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
@@ -2417,10 +2402,27 @@ function formatSize(bytes) {
 
 function firstQuotedArg(signature) {
   const text = String(signature);
+  // Python repr switches to double quotes when a value contains single
+  // quotes (e.g. heredoc commands), so match whichever quote character
+  // directly follows the '=' of the first keyword argument.
+  const eq = text.indexOf("=");
+  if (eq >= 0) {
+    const m = text.slice(eq + 1).match(/^ *('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")/);
+    if (m) return m[1].slice(1, -1).replace(/\\(['"\\])/g, "$1");
+  }
   const quoted = text.match(/'((?:[^'\\]|\\.)*)'/);
   if (quoted) return quoted[1].replace(/\\'/g, "'").replace(/\\\\/g, "\\");
   const bare = text.match(/=\s*([^,)]+)/);
   return bare ? bare[1].trim() : "";
+}
+
+function primaryArg(event) {
+  const meta = TOOL_META[event.name];
+  if (event.arguments && meta && meta.key) {
+    const value = event.arguments[meta.key];
+    if (value !== undefined && value !== null) return String(value);
+  }
+  return firstQuotedArg(event.signature);
 }
 
 function truncateArg(value) {
@@ -2521,15 +2523,13 @@ function addCopyButton(bubble, source) {
 }
 
 function toolEventText(event) {
+  if (event.parse_error) return "invalid tool call format";
   const meta = TOOL_META[event.name];
   if (!meta) return truncateArg(event.signature);
-  if (event.name === "web_interact") return webInteractText(event.signature);
-  const arg = truncateArg(firstQuotedArg(event.signature));
+  if (event.name === "web_interact") return webInteractText(event);
+  const arg = truncateArg(primaryArg(event));
   let verb = meta.verb;
-  if (
-    event.name === "web_search" &&
-    /^https?:\/\//.test(firstQuotedArg(event.signature))
-  )
+  if (event.name === "web_search" && /^https?:\/\//.test(primaryArg(event)))
     verb = "Visited";
   return verb + (arg ? ' "' + arg + '"' : "");
 }
@@ -2546,23 +2546,29 @@ const WEB_VERBS = {
   read: "Read",
 };
 
-function webInteractText(signature) {
-  const cmd = firstQuotedArg(signature);
+function webInteractText(event) {
+  const args = event.arguments || null;
+  const signature = String(event.signature);
+  const cmd = args ? String(args.command || "") : firstQuotedArg(signature);
   const arg = (key) => {
+    if (args && args[key] !== undefined && args[key] !== null)
+      return String(args[key]);
     const match = signature.match(new RegExp("'" + key + "':\\s*'([^']*)'"));
     return match ? match[1] : null;
   };
   if (cmd === "goto") return 'Visited "' + truncateArg(arg("url") || "") + '"';
   if (cmd === "click" || cmd === "read") {
-    const ref = signature.match(/'ref':\s*(\d+)/);
-    return WEB_VERBS[cmd] + (ref ? " #" + ref[1] : "");
+    const ref = args
+      ? args.ref
+      : (signature.match(/'ref':\s*(\d+)/) || [])[1];
+    return WEB_VERBS[cmd] + (ref ? " #" + ref : "");
   }
   if (cmd === "back" || cmd === "snapshot") return WEB_VERBS[cmd] || "Browsed";
   const text =
     arg("text") ||
     arg("option") ||
     arg("key") ||
-    (signature.match(/'direction':\s*'([^']*)'/) || [])[1];
+    arg("direction");
   return (
     (WEB_VERBS[cmd] || "Browsed") + (text ? ' "' + truncateArg(text) + '"' : "")
   );
@@ -2639,6 +2645,10 @@ function expandToolRun(run) {
     cancelAnim(wrap);
     wrap.style.overflow = "hidden";
     wrap.classList.remove("collapsed");
+    rows.forEach((row) => {
+      cancelAnim(row);
+      row.style.opacity = "0";
+    });
     const target = wrap.getBoundingClientRect().height;
     const anim = (wrap._anim = wrap.animate(
       [
@@ -2648,28 +2658,32 @@ function expandToolRun(run) {
       { duration: 520, easing: EASE_OUT, fill: "backwards" },
     ));
     anim.onfinish = () => {
-      wrap.style.overflow = "";
       wrap._anim = null;
-    };
-    rows.forEach((row, i) => {
-      cancelAnim(row);
-      row.style.opacity = "0";
-      const fade = row.animate(
-        [
-          { opacity: 0, filter: "blur(6px)" },
-          { opacity: 1, filter: "blur(0px)" },
-        ],
-        {
-          duration: 360,
-          delay: Math.min(i * 55, 280),
+      if (!run.expanded) return;
+      const fades = rows.map((row) => {
+        const fade = row.animate([{ opacity: 0 }, { opacity: 1 }], {
+          duration: 300,
           easing: EASE_OUT,
-          fill: "backwards",
+          fill: "forwards",
+        });
+        row._anim = fade;
+        fade.onfinish = () => {
+          row.style.opacity = "";
+          fade.cancel();
+        };
+        return fade;
+      });
+      Promise.all(fades.map((fade) => fade.finished.catch(() => {}))).then(
+        () => {
+          if (!run.expanded) return;
+          wrap.style.overflow = "";
+          rows.forEach((row) => {
+            cancelAnim(row);
+            row.style.opacity = "";
+          });
         },
       );
-      fade.onfinish = () => {
-        row.style.opacity = "";
-      };
-    });
+    };
   } else if (wrap) {
     wrap.classList.remove("collapsed");
     rows.forEach((row) => {
@@ -2689,36 +2703,51 @@ function collapseToolRun(run) {
   const wrap = run.wrap;
   const rows = wrap ? Array.from(wrap.children) : [];
   if (wrap && !REDUCE) {
+    rows.forEach((row) => {
+      if (row._detailOpen) destroyDetail(row);
+    });
     cancelAnim(wrap);
+    wrap.classList.remove("collapsed");
     wrap.style.overflow = "hidden";
-    const start = wrap.getBoundingClientRect().height;
-    const anim = (wrap._anim = wrap.animate(
-      [
-        { height: start + "px", marginTop: "0px" },
-        { height: "0px", marginTop: -CHAT_GAP + "px" },
-      ],
-      { duration: 420, easing: EASE_IN, fill: "forwards" },
-    ));
     rows.forEach((row) => {
       cancelAnim(row);
-      row._anim = row.animate(
-        [
-          { opacity: 1, filter: "blur(0px)" },
-          { opacity: 0, filter: "blur(6px)" },
-        ],
-        { duration: 280, easing: EASE_IN, fill: "forwards" },
-      );
+      row.style.opacity = "";
     });
-    anim.onfinish = () => {
-      wrap.classList.add("collapsed");
-      wrap.style.overflow = "";
-      wrap._anim = null;
-      anim.cancel();
-      rows.forEach((row) => cancelAnim(row));
-    };
+    const start = wrap.getBoundingClientRect().height;
+    const fades = rows.map(
+      (row) =>
+        (row._anim = row.animate([{ opacity: 1 }, { opacity: 0 }], {
+          duration: 280,
+          easing: EASE_IN,
+          fill: "forwards",
+        })),
+    );
+    Promise.all(fades.map((fade) => fade.finished.catch(() => {}))).then(() => {
+      if (run.expanded) return;
+      const anim = (wrap._anim = wrap.animate(
+        [
+          { height: start + "px", marginTop: "0px" },
+          { height: "0px", marginTop: -CHAT_GAP + "px" },
+        ],
+        { duration: 420, easing: EASE_IN, fill: "forwards" },
+      ));
+      anim.onfinish = () => {
+        wrap.classList.add("collapsed");
+        wrap.style.overflow = "";
+        wrap._anim = null;
+        anim.cancel();
+        rows.forEach((row) => {
+          cancelAnim(row);
+          row.style.opacity = "";
+        });
+      };
+    });
   } else if (wrap) {
+    rows.forEach((row) => {
+      if (row._detailOpen) destroyDetail(row);
+      cancelAnim(row);
+    });
     wrap.classList.add("collapsed");
-    rows.forEach((row) => cancelAnim(row));
   }
   updateToolRunThinking();
   if (stick) followBottom(700);
@@ -2749,15 +2778,11 @@ function placeToolRow(row) {
 function addToolRow(event) {
   const meta = TOOL_META[event.name];
   const row = document.createElement("div");
-  row.className = "tool-row glass running";
+  row.className = "tool-row glass" + (event.parse_error ? " failed" : "");
   row.id = "tool-" + event.id;
-  const icon = meta ? meta.icon : ICONS.terminal;
+  const icon = meta ? meta.icon : event.parse_error ? ICONS.warn : ICONS.terminal;
   row.innerHTML =
-    '<span class="tool-icon">' +
-    icon +
-    "</span>" +
-    '<span class="tool-text"></span>' +
-    "<pre hidden></pre>";
+    '<span class="tool-icon">' + icon + "</span>" + '<span class="tool-text"></span>';
   row.querySelector(".tool-text").textContent = toolEventText(event);
   placeToolRow(row);
 }
@@ -2807,50 +2832,67 @@ function growIn(el, delay) {
   };
 }
 
-function toggleOpen(row) {
-  const pre = row.querySelector("pre");
-  if (!pre || REDUCE) {
-    Sfx.play(row.classList.contains("open") ? "close" : "open");
-    row.classList.toggle("open");
+function detailSectionsFor(event) {
+  const call = event.raw
+    ? String(event.raw)
+    : event.arguments
+      ? JSON.stringify(event.arguments, null, 2)
+      : "";
+  const output = String(event.output || event.output_preview || "");
+  const sections = [];
+  const cap = (text) =>
+    text.length > DETAIL_CAP_CHARS ? text.slice(0, DETAIL_CAP_CHARS) + "..." : text;
+  if (call.trim()) sections.push({ label: "Call", text: cap(call) });
+  if (output.trim()) sections.push({ label: "Output", text: cap(output) });
+  return sections;
+}
+
+function detailSection(section) {
+  const box = document.createElement("div");
+  box.className = "detail-section glass";
+  const header = document.createElement("div");
+  header.className = "detail-header";
+  const label = document.createElement("span");
+  label.className = "detail-label";
+  label.textContent = section.label;
+  header.appendChild(label);
+  addCopyButton(header, section.text);
+  box.appendChild(header);
+  const pre = document.createElement("pre");
+  pre.textContent = section.text;
+  box.appendChild(pre);
+  return box;
+}
+
+function destroyDetail(row) {
+  row._detailOpen = false;
+  row.classList.remove("detail-open");
+  if (row._detailEl) {
+    cancelAnim(row._detailEl);
+    row._detailEl.remove();
+    row._detailEl = null;
+  }
+}
+
+function toggleDetail(row) {
+  Sfx.play(row._detailOpen ? "close" : "open");
+  if (row._detailOpen) {
+    destroyDetail(row);
     return;
   }
-  cancelAnim(pre);
-  const opening = !row.classList.contains("open");
-  Sfx.play(opening ? "open" : "close");
-  const gap = parseFloat(getComputedStyle(row).rowGap) || 0;
-  if (opening) row.classList.add("open");
-  pre.style.overflow = "hidden";
-  const cs = getComputedStyle(pre);
-  const shown = {
-    ...boxOf(pre, cs),
-    marginTop: cs.marginTop,
-    opacity: 1,
-    filter: "blur(0px)",
-    transform: "none",
-  };
-  const hidden = {
-    ...BOX_ZERO,
-    marginTop: -gap + "px",
-    opacity: 0,
-    filter: "blur(8px)",
-    transform: "translateY(3px)",
-  };
-  const anim = (pre._anim = pre.animate(
-    opening ? [hidden, shown] : [shown, hidden],
-    {
-      duration: opening ? 520 : 380,
-      easing: opening ? EASE_OUT : EASE_IN,
-      fill: opening ? "backwards" : "forwards",
-    },
-  ));
-  anim.onfinish = () => {
-    if (!opening) row.classList.remove("open");
-    pre.style.overflow = "";
-    anim.cancel();
-    pre._anim = null;
-  };
+  const detail = document.createElement("div");
+  detail.className = "tool-detail";
+  (row._detailSections || []).forEach((section) =>
+    detail.appendChild(detailSection(section)),
+  );
+  if (!detail.childElementCount) return;
+  row._detailOpen = true;
+  row.classList.add("detail-open");
+  row._detailEl = detail;
+  row.parentNode.insertBefore(detail, row.nextSibling);
+  growIn(detail);
   const stick = isAtBottom();
-  if (stick) followBottom(opening ? 560 : 420);
+  if (stick) followBottom(700);
 }
 
 function fitInput() {
@@ -2883,31 +2925,13 @@ function finishToolRow(event) {
   } else {
     text.textContent = toolEventText(event);
   }
-  const preview = (event.output_preview || "").trim();
-  if (preview) {
-    row.classList.add("toggleable");
-    row.addEventListener("click", () => toggleOpen(row));
-    const pre = row.querySelector("pre");
-    pre.hidden = false;
-    pre.textContent = preview;
+  row._detailSections = detailSectionsFor(event);
+  row.classList.add("toggleable");
+  if (!row._detailBound) {
+    row._detailBound = true;
+    row.addEventListener("click", () => toggleDetail(row));
   }
   updateAmbient();
-}
-
-function addDecodeErrorRow(detail) {
-  const row = document.createElement("div");
-  row.className = "tool-row glass failed toggleable";
-  row.innerHTML =
-    '<span class="tool-icon">' +
-    ICONS.warn +
-    "</span>" +
-    '<span class="tool-text">Tool call failed: "' +
-    DECODE_ERROR_PREFIX +
-    '"</span>' +
-    "<pre hidden></pre>";
-  row.querySelector("pre").textContent = detail;
-  row.addEventListener("click", () => toggleOpen(row));
-  placeToolRow(row);
 }
 
 function addFileChip(event) {
@@ -2935,14 +2959,25 @@ function addEventRow(text, isError) {
 }
 
 function addCompactionRow(event) {
-  const divider = document.createElement("div");
-  divider.className = "compaction-divider";
-  divider.textContent = "----- Compaction -----";
-  append(divider);
-  const box = document.createElement("pre");
-  box.className = "compaction-summary glass";
-  box.textContent = event.summary;
-  append(box);
+  const row = document.createElement("div");
+  row.className = "tool-row glass compaction-row toggleable";
+  row.innerHTML =
+    '<span class="tool-icon">' +
+    ICONS.history +
+    "</span>" +
+    '<span class="tool-text">Summarized earlier history</span>';
+  const summary = String(event.summary || "");
+  row._detailSections = [
+    {
+      label: "Summary",
+      text:
+        summary.length > DETAIL_CAP_CHARS
+          ? summary.slice(0, DETAIL_CAP_CHARS) + "..."
+          : summary,
+    },
+  ];
+  row.addEventListener("click", () => toggleDetail(row));
+  placeToolRow(row);
 }
 
 let statusHideTimer = null;
@@ -3024,14 +3059,12 @@ function render(event) {
     Voice.willNarrate(event.content);
   if (snd && !narrates) Sfx.play(snd);
   if (event.type !== "file" && event.type !== "file_sent") closeFileGroup();
-  const isDecodeError =
-    event.type === "error" && event.text.startsWith(DECODE_ERROR_PREFIX);
   if (
     event.type !== "tool_call" &&
     event.type !== "status" &&
     event.type !== "busy" &&
     event.type !== "ready" &&
-    !isDecodeError
+    event.type !== "compaction"
   ) {
     resetToolRun();
   }
@@ -3061,7 +3094,7 @@ function render(event) {
       addCompactionRow(event);
       break;
     case "status":
-      setStatus(busy ? "working" : "ready", event.text);
+      if (!event.quiet) setStatus(busy ? "working" : "ready", event.text);
       break;
     case "busy":
       busy = true;
@@ -3078,11 +3111,7 @@ function render(event) {
       updateAmbient();
       break;
     case "error":
-      if (event.text.startsWith(DECODE_ERROR_PREFIX)) {
-        addDecodeErrorRow(event.text);
-      } else {
-        addEventRow(event.text, true);
-      }
+      addEventRow(event.text, true);
       setStatus("error", "Error");
       updateAmbient();
       break;

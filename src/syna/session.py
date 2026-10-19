@@ -22,6 +22,7 @@ from .config import (
 from .parse import parse_and_execute_tools
 
 OUTPUT_PREVIEW_CHARS = 512
+DETAIL_CAP_CHARS = 6000
 DEFAULT_REQUEST_DELAY_S = 2
 DEFAULT_MAX_HISTORY_MESSAGES = 100
 DEFAULT_ENABLE_COMPACTION = True
@@ -168,6 +169,18 @@ def _preview_text(output) -> str:
     return text[:OUTPUT_PREVIEW_CHARS]
 
 
+def _detail_text(text) -> str:
+    """Bound a call-detail string for front-end transport.
+
+    Detail views are indicative only; the full, uncapped text stays in the
+    message dump and the log. Truncated tails carry an ellipsis marker.
+    """
+    text = str(text or "")
+    if len(text) > DETAIL_CAP_CHARS:
+        return text[:DETAIL_CAP_CHARS] + "..."
+    return text
+
+
 class AgentSession:
     """One conversation with the model plus its tool execution loop.
 
@@ -198,6 +211,7 @@ class AgentSession:
         self._cancel_event = threading.Event()
         self._tool_call_seq = 0
         self._tool_errored = False
+        self._row_open = False
         self.thinking_effort = load_thinking_effort()
         self.client = create_model_client()
         self.model = self._require_model()
@@ -351,7 +365,7 @@ class AgentSession:
         """
         logger = get_logger()
         logger.warning("%s: %.200r", status_text, response)
-        self._emit({"type": "status", "text": status_text})
+        self._emit({"type": "status", "text": status_text, "quiet": True})
         msg = {"role": "user", "content": f"[System]: {warning}"}
         self.messages.append(msg)
         logger.info(str(msg))
@@ -475,27 +489,57 @@ class AgentSession:
         logger.info(str(msg))
         self._emit({"type": "status", "text": "Interrupted."})
 
-    def _on_tool_event(self, status, name, signature, output=None):
+    def _on_tool_event(
+        self, status, name, signature, output=None, raw="", arguments=None
+    ):
         """Translate parser tool events into session events.
 
-        Undecodable tool calls (no tool row exists for them) become 'error'
-        events when the session was built with 'emit_tool_errors'. Tool
-        execution failures are instead flagged on the 'finished' tool event
-        ('failed': True) so frontends can mark the tool row itself; with
-        'emit_tool_errors' False the parser echoes failures to stdout for
-        the CLI, preserving its legacy rendering.
+        Tool calls that never reached dispatch (undecodable markup, wrong
+        shape, unregistered tools, signature violations) have no open row:
+        when the session reports errors to front-ends ('emit_tool_errors'),
+        they become a started/finished pair carrying 'failed': True so the
+        client renders a failed tool row instead of a critical error pill.
+        Execution failures land between an open row's started and finished
+        events and are flagged on that finished event instead. With
+        'emit_tool_errors' False (the CLI) the parser echoes failures to
+        stdout and no rows are synthesized.
+
+        'raw' (the block's exact JSON text) and 'arguments' (the parsed
+        argument mapping) ride along capped so front-ends can render call
+        details without extra requests.
         """
         if name == "respond":
             return
         if status == "error":
             self._tool_errored = True
-            if name == "unknown" and self.emit_tool_errors:
-                self._emit({"type": "error", "text": _preview_text(output)})
+            if self._row_open or not self.emit_tool_errors:
+                return
+            self._tool_call_seq += 1
+            base = {
+                "type": "tool_call",
+                "id": self._tool_call_seq,
+                "name": name,
+                "signature": signature,
+                "raw": _detail_text(raw),
+                "arguments": arguments,
+                "parse_error": True,
+            }
+            self._emit({**base, "status": "started"})
+            self._emit(
+                {
+                    **base,
+                    "status": "finished",
+                    "output": _detail_text(output),
+                    "output_preview": _preview_text(output),
+                    "failed": True,
+                }
+            )
             return
         if status == "started":
             self._check_cancelled()
             self._tool_call_seq += 1
             self._tool_errored = False
+            self._row_open = True
             self._emit(
                 {
                     "type": "tool_call",
@@ -503,16 +547,22 @@ class AgentSession:
                     "status": "started",
                     "name": name,
                     "signature": signature,
+                    "raw": _detail_text(raw),
+                    "arguments": arguments,
                 }
             )
             return
 
+        self._row_open = False
         event = {
             "type": "tool_call",
             "id": self._tool_call_seq,
             "status": "finished",
             "name": name,
             "signature": signature,
+            "raw": _detail_text(raw),
+            "arguments": arguments,
+            "output": _detail_text(output),
             "output_preview": _preview_text(output),
         }
         if self._tool_errored:

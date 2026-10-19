@@ -33,6 +33,7 @@ TOOL_INFO = "tool"
 WHITESPACE = " \t\n\r"
 FENCE_LINE_RE = re.compile(r"^ {0,3}(`{3,})[ \t]*(.*)$", re.MULTILINE)
 BLOCK_CONTENTS_EXCERPT_CHARS = 120
+DETAIL_RAW_CAP_CHARS = 6000
 
 
 @dataclass(frozen=True)
@@ -57,12 +58,15 @@ class _ParsedBlock:
 
     'payload' is the decoded JSON value of a sound block; 'error' is the
     corrective message for a block whose content is empty or not valid
-    JSON. Exactly one of the two is set.
+    JSON. Exactly one of the two is set. 'raw' is the block's exact JSON
+    text for sound blocks, or its raw contents (capped) for broken ones;
+    it feeds the web client's call-detail view and never reaches history.
     """
 
     line_no: int
     payload: Any = None
     error: str | None = None
+    raw: str = ""
 
 
 def _line_no(text: str, pos: int) -> int:
@@ -197,7 +201,7 @@ def _scan_tool_block(text: str, decoder, content_start: int, line_no: int, logge
     entry, never a structural error: the scan resumes inside the block so
     later calls in the same reply still parse.
 
-    Returns (payload, error, resume, structural_error).
+    Returns (payload, error, resume, structural_error, raw).
     """
     try:
         payload, json_end = decoder.raw_decode(text, content_start)
@@ -218,11 +222,13 @@ def _scan_tool_block(text: str, decoder, content_start: int, line_no: int, logge
                 f"The contents of a tool block could not be parsed as JSON:"
                 f" {exc}. Block contents: {excerpt!r}"
             )
+        raw_end = peek if peek is not None else len(text)
+        raw = text[content_start:raw_end][:DETAIL_RAW_CAP_CHARS]
         if peek is None:
-            return None, error, len(text), None
+            return None, error, len(text), None, raw
         if _find_tool_opener(text, peek) == peek:
-            return None, error, content_start, None
-        return None, error, _resume_after_closer(text, peek, logger), None
+            return None, error, content_start, None, raw
+        return None, error, _resume_after_closer(text, peek, logger), None, raw
     boundary = _find_closing_run(text, json_end)
     if boundary is None:
         return (
@@ -233,9 +239,10 @@ def _scan_tool_block(text: str, decoder, content_start: int, line_no: int, logge
                 f"A ```tool block starting on line {line_no} was never closed;"
                 f" it contained {_describe_block_content(payload)}"
             ),
+            text[content_start:json_end][:DETAIL_RAW_CAP_CHARS],
         )
     resume = _resume_after_closer(text, boundary, logger)
-    return payload, None, resume, None
+    return payload, None, resume, None, text[content_start:json_end]
 
 
 def _scan_tool_blocks(text: str):
@@ -265,12 +272,12 @@ def _scan_tool_blocks(text: str):
             pos = _skip_prose_block(text, prose[1])
             continue
         content_start = _skip_whitespace(text, tool_at + len(TOOL_OPEN))
-        payload, error, resume, structural = _scan_tool_block(
+        payload, error, resume, structural, raw = _scan_tool_block(
             text, decoder, content_start, _line_no(text, tool_at), logger
         )
         if structural is not None:
             return blocks, structural
-        blocks.append(_ParsedBlock(_line_no(text, tool_at), payload, error))
+        blocks.append(_ParsedBlock(_line_no(text, tool_at), payload, error, raw))
         pos = resume
 
 
@@ -515,11 +522,14 @@ def parse_and_execute_tools(
 ) -> ParseOutcome:
     """Parse tool invocations from text and execute their corresponding functions.
 
-    'on_tool_event' is called as on_tool_event(status, name, signature, output)
+    'on_tool_event' is called as
+    on_tool_event(status, name, signature, output=None, raw="", arguments=None)
     with status "started" before each tool runs (it may raise to abort the
     remaining calls), with status "error" when a tool call cannot be decoded,
     fails, or is detached after exceeding the timeout, and with status
-    "finished" once its output is available.
+    "finished" once its output is available. 'raw' is the block's exact JSON
+    text (or raw contents for broken blocks) and 'arguments' the parsed
+    argument mapping; both feed front-end call-detail views.
 
     'echo_errors' controls the legacy stdout rendering of failures, meant for
     the terminal CLI; frontends that report errors through 'on_tool_event'
@@ -548,12 +558,14 @@ def parse_and_execute_tools(
         logger.warning("Structurally invalid tool markup: %s", structural_error)
         return ParseOutcome(structural_error, [])
 
-    def _record_never_ran(entry_name: str, entry_signature: str, output: str):
+    def _record_never_ran(
+        entry_name: str, entry_signature: str, output: str, raw: str = ""
+    ):
         """Record a call that never reached dispatch, with its error event."""
         if echo_errors:
             print(f"  ! ({output[:80]})")
         if on_tool_event is not None:
-            on_tool_event("error", entry_name, entry_signature, output=output)
+            on_tool_event("error", entry_name, entry_signature, output=output, raw=raw)
         outputs.append(
             {
                 "name": entry_name,
@@ -565,7 +577,9 @@ def parse_and_execute_tools(
 
     for block in blocks:
         if block.error is not None:
-            _record_never_ran("unknown", build_signature("unknown", {}), block.error)
+            _record_never_ran(
+                "unknown", build_signature("unknown", {}), block.error, block.raw
+            )
             continue
 
         tool = block.payload
@@ -576,7 +590,9 @@ def parse_and_execute_tools(
                 f" tool name and whose value is the arguments object; got"
                 f" {_describe_json_shape(tool)}."
             )
-            _record_never_ran("unknown", build_signature("unknown", {}), output)
+            _record_never_ran(
+                "unknown", build_signature("unknown", {}), output, block.raw
+            )
             continue
 
         if not tool:
@@ -585,7 +601,9 @@ def parse_and_execute_tools(
                 " have exactly one top-level key: the tool name (e.g."
                 ' {"tool_name": {"argument": "value"}}).'
             )
-            _record_never_ran("unknown", build_signature("unknown", {}), output)
+            _record_never_ran(
+                "unknown", build_signature("unknown", {}), output, block.raw
+            )
             continue
 
         if len(tool) > 1:
@@ -594,7 +612,9 @@ def parse_and_execute_tools(
                 "A tool call must have exactly one top-level key (the tool"
                 f" name); got {len(tool)}: {keys}."
             )
-            _record_never_ran("unknown", build_signature("unknown", {}), output)
+            _record_never_ran(
+                "unknown", build_signature("unknown", {}), output, block.raw
+            )
             continue
 
         tool_name = next(iter(tool))
@@ -606,7 +626,9 @@ def parse_and_execute_tools(
                 f" mapping argument names to values; got"
                 f" {_describe_json_shape(tool_arguments)}."
             )
-            _record_never_ran(tool_name, build_signature(tool_name, {}), output)
+            _record_never_ran(
+                tool_name, build_signature(tool_name, {}), output, block.raw
+            )
             continue
 
         signature = build_signature(tool_name, tool_arguments)
@@ -621,9 +643,29 @@ def parse_and_execute_tools(
             if echo_errors:
                 print(f"  ! ({output})")
             if on_tool_event is not None:
-                on_tool_event("started", tool_name, signature)
-                on_tool_event("error", tool_name, signature, output=output)
-                on_tool_event("finished", tool_name, signature, output)
+                on_tool_event(
+                    "started",
+                    tool_name,
+                    signature,
+                    raw=block.raw,
+                    arguments=tool_arguments,
+                )
+                on_tool_event(
+                    "error",
+                    tool_name,
+                    signature,
+                    output=output,
+                    raw=block.raw,
+                    arguments=tool_arguments,
+                )
+                on_tool_event(
+                    "finished",
+                    tool_name,
+                    signature,
+                    output,
+                    raw=block.raw,
+                    arguments=tool_arguments,
+                )
             outputs.append(
                 {
                     "name": tool_name,
@@ -640,9 +682,29 @@ def parse_and_execute_tools(
             if echo_errors:
                 print(f"  ! ({argument_error[:80]})")
             if on_tool_event is not None:
-                on_tool_event("started", tool_name, signature)
-                on_tool_event("error", tool_name, signature, output=argument_error)
-                on_tool_event("finished", tool_name, signature, argument_error)
+                on_tool_event(
+                    "started",
+                    tool_name,
+                    signature,
+                    raw=block.raw,
+                    arguments=tool_arguments,
+                )
+                on_tool_event(
+                    "error",
+                    tool_name,
+                    signature,
+                    output=argument_error,
+                    raw=block.raw,
+                    arguments=tool_arguments,
+                )
+                on_tool_event(
+                    "finished",
+                    tool_name,
+                    signature,
+                    argument_error,
+                    raw=block.raw,
+                    arguments=tool_arguments,
+                )
             outputs.append(
                 {
                     "name": tool_name,
@@ -654,7 +716,13 @@ def parse_and_execute_tools(
             continue
 
         if on_tool_event is not None:
-            on_tool_event("started", tool_name, signature)
+            on_tool_event(
+                "started",
+                tool_name,
+                signature,
+                raw=block.raw,
+                arguments=tool_arguments,
+            )
 
         try:
             output, detached = execute_tool_with_timeout(
@@ -666,7 +734,14 @@ def parse_and_execute_tools(
             output = f"Tool execution error: {exc}"
             detached = False
             if on_tool_event is not None:
-                on_tool_event("error", tool_name, signature, output=output)
+                on_tool_event(
+                    "error",
+                    tool_name,
+                    signature,
+                    output=output,
+                    raw=block.raw,
+                    arguments=tool_arguments,
+                )
 
         if detached:
             if echo_errors:
@@ -675,10 +750,24 @@ def parse_and_execute_tools(
                 "Tool call detached after %s seconds: %s", tool_timeout_s, signature
             )
             if on_tool_event is not None:
-                on_tool_event("error", tool_name, signature, output=output)
+                on_tool_event(
+                    "error",
+                    tool_name,
+                    signature,
+                    output=output,
+                    raw=block.raw,
+                    arguments=tool_arguments,
+                )
 
         if on_tool_event is not None:
-            on_tool_event("finished", tool_name, signature, output)
+            on_tool_event(
+                "finished",
+                tool_name,
+                signature,
+                output,
+                raw=block.raw,
+                arguments=tool_arguments,
+            )
 
         outputs.append({"name": tool_name, "signature": signature, "output": output})
 
