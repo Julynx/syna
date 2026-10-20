@@ -12,7 +12,7 @@
     },
     {
       "text": "$(build) Build",
-      "command": "uv run build.py",
+      "command": "uv run scripts/build.py",
       "color": "#eb93eb"
     },
   ]

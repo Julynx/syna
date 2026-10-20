@@ -12,7 +12,6 @@ wheels/
 *.log
 message-session-log*
 TODO.md
-technical_description.md
 investigate/
 logs/
 PLAN.md

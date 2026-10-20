@@ -1,7 +1,7 @@
 """Assemble assets/chat.html from the sources in build/.
 
 chat.html is a GENERATED file — edit the css/ and js/ sources in build/,
-then rebuild with: python build.py
+then rebuild with: python scripts/build.py
 
 build/index.html is the page skeleton; every {{CSS}} marker is replaced in
 order with a <style> block from build/css/, and every {{JS}} marker with an
