@@ -65,7 +65,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from syna.config import get_project_root
-from syna.session import AgentSession
+from syna.session import AgentSession, shared_file_metadata
 from syna.state import (
     close_docker_client,
     create_container,
@@ -150,14 +150,9 @@ def _harvest_shared_files(container, shared_dir: Path, events: list[dict]) -> li
     shared_dir.mkdir(parents=True, exist_ok=True)
     saved: list[str] = []
     for event in events:
-        if (
-            event.get("type") == "tool_call"
-            and event.get("status") == "finished"
-            and event.get("name") == "share_file"
-            and isinstance(event.get("output"), dict)
-            and "path" in event["output"]
-        ):
-            pod_path = event["output"]["path"]
+        metadata = shared_file_metadata(event)
+        if metadata is not None:
+            pod_path = metadata["path"]
             try:
                 container.copy_from(pod_path, str(shared_dir))
                 saved.append(pod_path)

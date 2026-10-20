@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from . import speech
 from .config import get_logger, get_project_root, load_config
-from .session import AgentSession
+from .session import AgentSession, shared_file_metadata
 from .state import (
     create_container,
     destroy_container,
@@ -139,15 +139,10 @@ class SessionRecord:
         self.shutdown.set()
 
     def _on_session_event(self, event: dict):
-        if (
-            event.get("type") == "tool_call"
-            and event.get("status") == "finished"
-            and event.get("name") == "share_file"
-            and isinstance(event.get("output"), dict)
-            and "path" in event["output"]
-        ):
+        metadata = shared_file_metadata(event)
+        if metadata is not None:
             try:
-                self.share_file(event["output"])
+                self.share_file(metadata)
             except Exception as exc:
                 logger.exception("Failed to share file for session %s", self.client_id)
                 self.push({"type": "error", "text": f"Could not share file: {exc}"})

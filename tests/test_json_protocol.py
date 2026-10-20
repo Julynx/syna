@@ -14,6 +14,7 @@ from syna.channel import (
     wrap_channel,
 )
 from syna.parse import ParseOutcome, parse_and_execute_tools
+from syna.session import shared_file_metadata
 from syna.tools import TOOL_REGISTRY
 
 
@@ -25,6 +26,11 @@ def _smoke_tool(label: str = "unlabeled", **kwargs) -> str:
 def _smoke_fail():
     """Stand-in test tool that always raises."""
     raise RuntimeError("boom")
+
+
+def _smoke_structured(**kwargs) -> dict:
+    """Stand-in test tool returning a dict like share_file does."""
+    return {"path": "/workspace/x.pdf", "name": "x.pdf", "is_dir": False}
 
 
 def _parse(text: str) -> tuple[ParseOutcome, list]:
@@ -627,9 +633,47 @@ def test_channel_escape_neutralizes_result_markers():
     assert "&lt;/result" in escaped
 
 
+def test_finished_event_carries_structured_output_for_dict_tools():
+    payload = json.dumps({"smoke_structured": {}})
+    outcome, events = _parse(payload)
+    assert outcome.structural_error is None
+    assert [event[0][0] for event in events] == ["started", "finished"]
+    kwargs = events[1][1]
+    assert kwargs["structured_output"] == {
+        "path": "/workspace/x.pdf",
+        "name": "x.pdf",
+        "is_dir": False,
+    }
+    assert isinstance(kwargs["output"], str)
+    assert "path" in kwargs["output"]
+
+
+def test_finished_event_has_no_structured_output_for_string_tools():
+    payload = json.dumps({"smoke_tool": {"label": "plain"}})
+    outcome, events = _parse(payload)
+    assert outcome.structural_error is None
+    assert "structured_output" not in events[1][1]
+
+
+def test_shared_file_metadata_matches_session_event_contract():
+    good = {
+        "type": "tool_call",
+        "status": "finished",
+        "name": "share_file",
+        "structured_output": {"path": "/w/f.pdf", "name": "f.pdf", "is_dir": False},
+    }
+    assert shared_file_metadata(good) == good["structured_output"]
+    assert shared_file_metadata({**good, "status": "error"}) is None
+    assert shared_file_metadata({**good, "name": "execute_command"}) is None
+    assert shared_file_metadata({**good, "structured_output": {"error": "no"}}) is None
+    without = {key: value for key, value in good.items() if key != "structured_output"}
+    assert shared_file_metadata(without) is None
+
+
 def main():
     TOOL_REGISTRY["smoke_tool"] = _smoke_tool
     TOOL_REGISTRY["smoke_fail"] = _smoke_fail
+    TOOL_REGISTRY["smoke_structured"] = _smoke_structured
     try:
         test_valid_single_call_flat()
         test_valid_single_call_nested()
@@ -696,9 +740,13 @@ def main():
         test_channel_wrap_and_unwrap_roundtrip()
         test_channel_defang_sentinels()
         test_channel_escape_neutralizes_result_markers()
+        test_finished_event_carries_structured_output_for_dict_tools()
+        test_finished_event_has_no_structured_output_for_string_tools()
+        test_shared_file_metadata_matches_session_event_contract()
     finally:
         TOOL_REGISTRY.pop("smoke_tool", None)
         TOOL_REGISTRY.pop("smoke_fail", None)
+        TOOL_REGISTRY.pop("smoke_structured", None)
     print("ALL JSON PROTOCOL TESTS PASSED")
 
 

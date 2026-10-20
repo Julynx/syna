@@ -176,6 +176,25 @@ def _preview_text(output) -> str:
     return text[:OUTPUT_PREVIEW_CHARS]
 
 
+def shared_file_metadata(event: dict) -> dict | None:
+    """Return the delivery metadata of a finished share_file call, if any.
+
+    The parser carries a tool's raw return value in 'structured_output' only
+    when it is a dict, so a successful share_file yields
+    {'path', 'name', 'is_dir'} here and everything else yields None.
+    """
+    metadata = event.get("structured_output")
+    if (
+        event.get("type") == "tool_call"
+        and event.get("status") == "finished"
+        and event.get("name") == "share_file"
+        and isinstance(metadata, dict)
+        and "path" in metadata
+    ):
+        return metadata
+    return None
+
+
 def _detail_text(text) -> str:
     """Bound a call-detail string for front-end transport."""
     text = str(text or "")
@@ -636,7 +655,15 @@ class AgentSession:
         self._emit({"type": "status", "text": "Interrupted."})
 
     def _on_tool_event(
-        self, status, name, signature, output=None, raw="", arguments=None, failed=False
+        self,
+        status,
+        name,
+        signature,
+        output=None,
+        raw="",
+        arguments=None,
+        failed=False,
+        structured_output=None,
     ):
         """Translate parser tool events into session events."""
         if name == "respond":
@@ -698,8 +725,8 @@ class AgentSession:
         }
         if self._tool_errored or failed:
             event["failed"] = True
-        if name == "share_file":
-            event["output"] = output
+        if structured_output is not None:
+            event["structured_output"] = structured_output
         self._emit(event)
 
     def _check_cancelled(self):

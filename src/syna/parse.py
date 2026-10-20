@@ -676,6 +676,7 @@ def parse_and_execute_tools(
             raw=raw,
             arguments=tool_arguments,
             failed=failed_run,
+            **({"structured_output": output} if isinstance(output, dict) else {}),
         )
         outputs.append(
             {

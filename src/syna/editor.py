@@ -31,8 +31,9 @@ def edit_file(file_path, operations: list[dict]):
         {"replace": {"line_num_or_range": [45, 47], "replace_with_lines": ["..."]}}
         {"delete": {"line_num_or_range": [45, 47]}}   # ranges are inclusive
     Line numbers are 1-based and refer to the ORIGINAL file.
-    Raises ValueError, before touching the file, for unknown operations,
-    out-of-bounds line numbers, invalid ranges or overlapping edit ranges.
+    Raises ValueError, before touching the file, for malformed operations,
+    unknown operation types, out-of-bounds line numbers, invalid ranges or
+    overlapping edit ranges.
     """
     inserts: dict[int, list[str]] = {}
     removed: set[int] = set()
@@ -40,6 +41,12 @@ def edit_file(file_path, operations: list[dict]):
 
     lines = Path(file_path).read_text().splitlines()
     occupied: set[int] = set()
+
+    required_keys = {
+        "insert_above": ("line_num", "insert_lines"),
+        "replace": ("line_num_or_range", "replace_with_lines"),
+        "delete": ("line_num_or_range",),
+    }
 
     def _resolve_line_num_or_range(data) -> tuple[int, int]:
         ref = data["line_num_or_range"]
@@ -55,33 +62,50 @@ def edit_file(file_path, operations: list[dict]):
             )
         return start, end
 
+    def _parse_operation(operation) -> tuple[str, dict]:
+        if not isinstance(operation, dict) or len(operation) != 1:
+            raise ValueError(
+                "Each edit operation must be an object with exactly one key"
+                f" (insert_above, replace, or delete); got {operation!r}"
+            )
+        op_type, data = next(iter(operation.items()))
+        if op_type not in required_keys:
+            raise ValueError(f"Unknown edit operation type: {op_type!r}")
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"The payload for '{op_type}' must be an object; got {data!r}"
+            )
+        missing = [key for key in required_keys[op_type] if key not in data]
+        if missing:
+            raise ValueError(
+                f"The payload for '{op_type}' is missing required"
+                f" key(s): {', '.join(missing)}"
+            )
+        return op_type, data
+
     for operation in operations:
-        for op_type, data in operation.items():
-            if op_type == "insert_above":
-                line_num = data["line_num"]
-                if not isinstance(line_num, int) or not 1 <= line_num <= len(lines) + 1:
-                    raise ValueError(
-                        f"insert_above line_num {line_num!r} is out of bounds"
-                        f" for a file with {len(lines)} lines"
-                        f" (valid: 1..{len(lines) + 1})"
-                    )
-                inserts.setdefault(line_num, []).extend(data["insert_lines"])
-            elif op_type in ("replace", "delete"):
-                start, end = _resolve_line_num_or_range(data)
-                overlap = occupied.intersection(range(start, end + 1))
-                if overlap:
-                    raise ValueError(
-                        f"{op_type} range [{start}, {end}] overlaps"
-                        f" previously edited line(s): {sorted(overlap)}"
-                    )
-                occupied.update(range(start, end + 1))
-                removed.update(range(start, end + 1))
-                if op_type == "replace":
-                    replacements.setdefault(start, []).extend(
-                        data["replace_with_lines"]
-                    )
-            else:
-                raise ValueError(f"Unknown edit operation type: {op_type!r}")
+        op_type, data = _parse_operation(operation)
+        if op_type == "insert_above":
+            line_num = data["line_num"]
+            if not isinstance(line_num, int) or not 1 <= line_num <= len(lines) + 1:
+                raise ValueError(
+                    f"insert_above line_num {line_num!r} is out of bounds"
+                    f" for a file with {len(lines)} lines"
+                    f" (valid: 1..{len(lines) + 1})"
+                )
+            inserts.setdefault(line_num, []).extend(data["insert_lines"])
+        elif op_type in ("replace", "delete"):
+            start, end = _resolve_line_num_or_range(data)
+            overlap = occupied.intersection(range(start, end + 1))
+            if overlap:
+                raise ValueError(
+                    f"{op_type} range [{start}, {end}] overlaps"
+                    f" previously edited line(s): {sorted(overlap)}"
+                )
+            occupied.update(range(start, end + 1))
+            removed.update(range(start, end + 1))
+            if op_type == "replace":
+                replacements.setdefault(start, []).extend(data["replace_with_lines"])
 
     result: list[str] = []
 
