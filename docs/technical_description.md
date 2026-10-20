@@ -77,11 +77,12 @@ create files with full root access.
 | `command_timeout_s` | Per-`execute_command` timeout (default 50, kept below `tool_call_timeout_s`). The command is wrapped in `timeout -k 5` inside the pod so hangs are killed instead of detaching; long-running work belongs in background jobs (`nohup ... &`), as the system prompt documents. |
 | `pod_memory_mb` | Pod memory ceiling in MB (default 8192). Protects the host from runaway processes inside the pod; does not restrict what the model may do inside it. |
 | `pod_pids_limit` | Pod process-count ceiling (default 512), guarding against fork bombs. |
-| `max_steps_per_turn` | Model requests allowed per turn (default 100). Before the cap, the model receives a wrap-up warning; after it, the turn ends. |
+| `max_steps_per_turn` | Model requests allowed per turn (default 100). Before the cap, the model receives a wrap-up warning; past it, the turn ends with one final request reserved for a `respond` status report. |
 | `step_warning_remaining` | Remaining-steps count that triggers the wrap-up warning (default 20). |
 | `context_budget_tokens` | Estimated-token budget for the whole conversation (default 100000). When exceeded, old tool outputs are elided first and summarization runs only if the budget is still exceeded. |
 | `elide_keep_recent_messages` | History messages kept untouched by output elision (default 12). |
 | `elide_interval_messages` | History size at which lossless output elision runs on its own, instead of waiting for the token budget (default 30). Keeps prompts small through long runs; elided outputs remain readable in the pod at their `saved_to` paths. |
+| `elide_every_requests` | Requests between batched elision passes once the message interval is reached (default 10). Batching keeps the conversation prefix stable between passes so the provider prompt cache stays warm; the token-budget path always elides immediately. |
 | `max_history_messages` | History length that triggers compaction. |
 | `enable_compaction` | Master switch for history compaction. |
 | `max_visible_tool_calls` | UI limit on rendered tool rows. |
@@ -316,7 +317,14 @@ Tool-call parsing and execution under the v5 pure-JSON protocol.
   decodes only the FIRST JSON value with `JSONDecoder(strict=False)
   .raw_decode` (literal newlines inside strings are accepted). Text before or
   after the value is discarded and returned as warnings; a reply with no
-  decodable JSON raises `ReplyFormatError` and nothing is executed.
+  decodable JSON raises `ReplyFormatError` and nothing is executed. When the
+  failed reply does not end with a JSON closing bracket, the error carries a
+  note that the provider may have cut the reply off mid-generation, so the
+  model resends instead of hunting for a syntax mistake.
+- `find_respond_text(text)` — decodes and validates a reply without executing
+  anything and returns the `respond` call's text when one is validly placed;
+  used by the session to collect a final status report when the step budget
+  is exhausted and no tool may run.
 - `_extract_tool_calls(data)` — validates JSON shape (single object with one
   key or non-empty array of single-key objects; arguments must be a dict).
   One leniency: a multi-key object that contains `think` is accepted and
@@ -419,16 +427,21 @@ message.
   `elide_interval_messages`, and additionally whenever estimated tokens
   exceed `context_budget_tokens`, old tool outputs (those with `saved_to`)
   outside the recent window are elided to pointers — lossless, since the
-  model can re-read them in the pod. Running elision on its own message
-  interval keeps prompts small through a long run instead of letting the
-  history balloon until the budget forces a lossy summarization.
-  Summarization runs only if the message count reaches
+  model can re-read them in the pod. To keep the provider prompt cache warm,
+  the rewrite is batched: outside the budget-exceeded path it only runs every
+  `elide_every_requests` requests, so history stays append-only (and the
+  cache prefix intact) between passes. Every output still becomes a pointer
+  eventually. Summarization runs only if the message count reaches
   `max_history_messages` or the budget is still exceeded after elision,
   keeping the system prompt, first real user message, the compaction
   summary, and the newest message.
 - **Step budget**: each turn allows `max_steps_per_turn` model requests; when
   `step_warning_remaining` steps are left, the model receives a wrap-up
-  notice; past the cap the turn ends with an explanatory notice.
+  notice. Past the cap the turn ends with one final model request whose only
+  useful action is `respond`, delivering a status report (what was done,
+  verified, and remains); a reply without a valid `respond` (checked via
+  `find_respond_text`, never executed) ends the turn with the plain
+  exhaustion error, and the un-executed reply is removed from history.
 - **Loop detection**: identical non-`think`/non-`respond` calls repeated
   `REPEATED_CALL_LIMIT` (3) times within one turn trigger a one-time
   "change approach" harness notice; the same guard covers identical think
@@ -511,10 +524,14 @@ use), it falls back to a plain `container.exec`.
 ### `src/syna/vision.py`
 `describe_image(file_path, question)` — image understanding through a
 dedicated single-turn vision request. Copies the image from the pod, converts
-it to PNG, downscales it to fit a 1024x1024 box with Pillow, base64-encodes
-it into a fresh single-message conversation (plain-text response, no JSON
-mode), and replaces the bytes with a text placeholder carrying the
-description so images never linger in history.
+it to PNG, downscales it to fit a 1024x1024 box with Pillow, logs the payload
+size (pixels and PNG bytes, so a failing vision request leaves data instead
+of a mystery), base64-encodes it into a fresh single-message conversation
+(plain-text response, no JSON mode), and replaces the bytes with a text
+placeholder carrying the description so images never linger in history. The
+request runs at `medium` reasoning effort: without it the provider default
+for this model is maximum, which burns the completion budget on hidden
+reasoning and can return no content at all.
 
 ### `src/syna/web_search.py`
 `search(query)` — DuckDuckGo text search for queries; URLs are fetched and
@@ -546,10 +563,12 @@ All suites are plain scripts runnable with the project venv
   (BOM, think blocks, fences, first-JSON-value-wins with warnings), shape and
   signature validation, respond/think placement, batch stop-on-failure with
   skipped statuses, think-only replies, and channel sentinel/marker escaping.
-  Also covers the `structured_output` event contract: dict-returning tools
-  carry their raw return value on the finished event, string-returning tools
-  do not, and `session.shared_file_metadata()` matches only well-formed
-  finished `share_file` events.
+  Also covers the truncation hint on replies that die mid-JSON, the
+  `find_respond_text` contract (respond extracted without executing, all
+  invalid replies rejected), and the `structured_output` event contract: dict-
+  returning tools carry their raw return value on the finished event, string-
+  returning tools do not, and `session.shared_file_metadata()` matches only
+  well-formed finished `share_file` events.
 - `tests/test_editor.py` — line-editor validation: valid and combined edits
   apply; null/non-object payloads, multi-key operations, missing required keys
   and unknown operation types raise clean `ValueError`s and leave the file
@@ -557,8 +576,9 @@ All suites are plain scripts runnable with the project venv
 - `tests/test_tool_feedback.py` — session-level loop: history wiping after
   success, abort after 3 consecutive failures, `<tool_results>` marker
   format, parser warnings surfaced as harness notices, think+respond turns,
-  step-budget warning and exhaustion, repeated-call nudges, compaction
-  channel detection, and web event details.
+  step-budget warning, final status report delivered at exhaustion (and the
+  error path when the final reply holds no valid `respond`), repeated-call
+  nudges, compaction channel detection, and web event details.
 - `tests/test_output_and_persistence.py` — `output.py` cleaning and
   head-and-tail rendering, plus `/tool_outputs/` persistence using a fake
   container (host tools persisted; pod-native `execute_command` not;
@@ -573,7 +593,9 @@ All suites are plain scripts runnable with the project venv
   escaping-layer artifacts) and survives a JSON roundtrip unchanged.
 - `tests/test_context_management.py` — token estimation, elision semantics
   (saved_to-only, recency window, idempotence), pod `HostConfig` assembly,
-  and a session-level elision-under-budget run.
+  a session-level elision-under-budget run, interval elision with per-request
+  batching disabled, and a session-level proof that outputs stay full-text
+  between batched elision passes.
 - `tests/test_eval_scoring.py` — eval outcome scoring: honest failures,
   false successes, false failures, clarifying questions, no-report runs,
   and the headline rate computation.

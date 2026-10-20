@@ -13,7 +13,7 @@ from syna.channel import (
     unwrap_channel,
     wrap_channel,
 )
-from syna.parse import ParseOutcome, parse_and_execute_tools
+from syna.parse import ParseOutcome, find_respond_text, parse_and_execute_tools
 from syna.session import shared_file_metadata
 from syna.tools import TOOL_REGISTRY
 
@@ -713,6 +713,44 @@ def test_multi_key_object_with_think_rejects_non_dict_arguments():
     assert "'smoke_tool'" in outcome.structural_error
 
 
+def test_truncated_reply_gets_cut_off_hint():
+    truncated = '{"respond": {"text": "partial report that stops mid'
+    outcome, _ = _parse(truncated)
+    assert outcome.structural_error is not None
+    assert "cut off by the provider" in outcome.structural_error
+
+
+def test_reply_ending_in_closer_has_no_cut_off_hint():
+    outcome, _ = _parse('{"respond": {"text": "x"}')
+    assert outcome.structural_error is not None
+    assert "cut off by the provider" not in outcome.structural_error
+
+
+def test_shape_error_has_no_cut_off_hint():
+    outcome, _ = _parse("not json at all")
+    assert outcome.structural_error is not None
+    assert "cut off by the provider" not in outcome.structural_error
+
+
+def test_find_respond_text_extracts_report_without_executing():
+    assert find_respond_text(json.dumps({"respond": {"text": "report"}})) == "report"
+    assert (
+        find_respond_text(
+            json.dumps([{"think": {"thought": "t"}}, {"respond": {"text": "rep"}}])
+        )
+        == "rep"
+    )
+
+
+def test_find_respond_text_returns_none_for_non_respond_replies():
+    assert find_respond_text(json.dumps({"smoke_tool": {"label": "x"}})) is None
+    assert find_respond_text("not json at all") is None
+    assert (
+        find_respond_text(json.dumps({"respond": {"text": "a"}, "extra": {}})) is None
+    ), "respond beside a non-think call fails placement validation"
+    assert find_respond_text(json.dumps({"respond": {}})) is None
+
+
 def main():
     TOOL_REGISTRY["smoke_tool"] = _smoke_tool
     TOOL_REGISTRY["smoke_fail"] = _smoke_fail
@@ -790,6 +828,11 @@ def main():
         test_multi_key_object_with_think_preserves_call_order()
         test_think_and_respond_in_one_object_is_split()
         test_multi_key_object_with_think_rejects_non_dict_arguments()
+        test_truncated_reply_gets_cut_off_hint()
+        test_reply_ending_in_closer_has_no_cut_off_hint()
+        test_shape_error_has_no_cut_off_hint()
+        test_find_respond_text_extracts_report_without_executing()
+        test_find_respond_text_returns_none_for_non_respond_replies()
     finally:
         TOOL_REGISTRY.pop("smoke_tool", None)
         TOOL_REGISTRY.pop("smoke_fail", None)

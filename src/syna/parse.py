@@ -138,13 +138,32 @@ def _decode_reply(text: str) -> tuple[object, list[str]]:
         value, end = json.JSONDecoder(strict=False).raw_decode(clean_text, start)
     except json.JSONDecodeError as exc:
         excerpt = clean_text[:CONTENT_EXCERPT_CHARS]
-        raise ReplyFormatError(
+        message = (
             f"The response could not be parsed as JSON: {exc}. Nothing was"
             f" executed. Received content excerpt: {excerpt!r}"
-        ) from exc
+        )
+        if _looks_truncated(clean_text):
+            message += (
+                " The reply appears to have been cut off by the provider"
+                " before it was complete. This sometimes happens when a"
+                " reply is too long. Send the tool call again; shorten it if"
+                " needed."
+            )
+        raise ReplyFormatError(message) from exc
     if clean_text[end:].strip():
         warnings.append("Text after the JSON value was discarded.")
     return value, warnings
+
+
+def _looks_truncated(clean_text: str) -> bool:
+    """Heuristically decide whether a failed-to-parse reply was cut off.
+
+    A complete reply under the protocol always ends with the closing brace
+    or bracket of its JSON. Anything else that fails to decode was most
+    likely truncated mid-generation by the provider.
+    """
+    stripped = clean_text.rstrip()
+    return bool(stripped) and not stripped.endswith(("}", "]"))
 
 
 def _describe_json_shape(value: object) -> str:
@@ -714,3 +733,25 @@ def parse_and_execute_tools(
 
 
 parse_and_execute_reply = parse_and_execute_tools
+
+
+def find_respond_text(text: str) -> str | None:
+    """Return the text of a valid respond call in a reply, without running it.
+
+    Used at step-budget exhaustion, when no tool may execute but a final
+    status report is still wanted. Returns None when the reply does not
+    decode, fails shape or respond-placement validation, or contains no
+    respond call with a string `text` argument.
+    """
+    try:
+        data, _ = _decode_reply(text)
+    except ReplyFormatError:
+        return None
+    calls, shape_error = _extract_tool_calls(data)
+    if shape_error is not None or _enforce_respond_placement(calls) is not None:
+        return None
+    for tool_name, tool_arguments, _ in calls:
+        if tool_name == "respond":
+            value = tool_arguments.get("text")
+            return value if isinstance(value, str) else None
+    return None

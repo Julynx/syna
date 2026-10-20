@@ -20,7 +20,6 @@ from .compaction import (
     format_compaction_message,
     load_compaction_prompt,
 )
-from .context import elide_tool_outputs, estimate_history_tokens
 from .config import (
     get_env,
     get_logger,
@@ -30,7 +29,8 @@ from .config import (
     load_config,
     load_output_limit_chars,
 )
-from .parse import parse_and_execute_tools
+from .context import elide_tool_outputs, estimate_history_tokens
+from .parse import find_respond_text, parse_and_execute_tools
 
 OUTPUT_PREVIEW_CHARS = 512
 DETAIL_CAP_CHARS = 6000
@@ -42,8 +42,16 @@ DEFAULT_STEP_WARNING_REMAINING = 20
 DEFAULT_CONTEXT_BUDGET_TOKENS = 100000
 DEFAULT_ELIDE_KEEP_RECENT = 12
 DEFAULT_ELIDE_INTERVAL_MESSAGES = 30
+DEFAULT_ELIDE_EVERY_REQUESTS = 10
 MAX_NO_TOOL_RETRIES = 3
 REPEATED_CALL_LIMIT = 3
+
+STEP_BUDGET_OUT_NOTICE = (
+    "The step budget for this task ran out. Call respond now with a status"
+    " report: what was done, what was verified, and what remains, so the"
+    " user knows where things stand. Do not include any tools in this response,"
+    " as they will not execute."
+)
 
 VALID_THINKING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
@@ -243,6 +251,9 @@ class AgentSession:
         self.elide_interval_messages = load_config().get(
             "elide_interval_messages", DEFAULT_ELIDE_INTERVAL_MESSAGES
         )
+        self.elide_every_requests = load_config().get(
+            "elide_every_requests", DEFAULT_ELIDE_EVERY_REQUESTS
+        )
         self.compaction_prompt = load_compaction_prompt()
         self.session_id = session_id
         self.messages: list[dict] = []
@@ -252,6 +263,7 @@ class AgentSession:
         self._tool_call_seq = 0
         self._tool_errored = False
         self._row_open = False
+        self._requests_since_elide = 0
         self.thinking_effort = load_thinking_effort()
         self.client = create_model_client()
         self.model = self._require_model()
@@ -325,12 +337,7 @@ class AgentSession:
                 steps_used += 1
                 remaining_steps = self.max_steps_per_turn - steps_used
                 if remaining_steps < 0:
-                    self._abort_turn(
-                        logger,
-                        "The step budget for this task ran out. Report what was"
-                        " done, what was verified, and what remains.",
-                        f"Step budget exhausted after {self.max_steps_per_turn} steps.",
-                    )
+                    self._end_turn_at_step_budget(logger)
                     return
                 if (
                     not step_warning_sent
@@ -343,6 +350,7 @@ class AgentSession:
                         " with your status.",
                         "Step budget warning sent.",
                     )
+                self._requests_since_elide += 1
                 self._compact_history_if_needed()
                 self._emit({"type": "status", "text": "Thinking..."})
                 response = ask_question(
@@ -528,17 +536,25 @@ class AgentSession:
     def _elide_old_outputs(self, history, total_tokens, logger) -> int:
         """Elide saved tool outputs once history passes its interval.
 
-        Elision runs when the message count reaches
-        `elide_interval_messages` — keeping prompts small throughout a long
-        run without waiting for the token budget — and whenever the budget
-        is exceeded regardless of count. Lossless: elided output stays
-        readable in the pod at its saved_to path.
+        Elision runs when the message count reaches `elide_interval_messages`
+        — keeping prompts small throughout a long run without waiting for the
+        token budget — and whenever the budget is exceeded regardless of
+        count. To keep the provider prompt cache warm, the rewrite itself is
+        batched: outside the budget-exceeded path it only runs every
+        `elide_every_requests` requests. Every output still becomes a pointer
+        eventually; it simply stays full-text a few requests longer. Lossless:
+        elided output stays readable in the pod at its saved_to path.
         """
         interval = self.elide_interval_messages
         interval_reached = bool(interval) and len(history) >= interval
-        if not (interval_reached or total_tokens > self.context_budget_tokens):
+        budget_exceeded = total_tokens > self.context_budget_tokens
+        if not (interval_reached or budget_exceeded):
+            return 0
+        batch_due = self._requests_since_elide >= self.elide_every_requests
+        if not (budget_exceeded or batch_due):
             return 0
         elided = elide_tool_outputs(self.messages, self.elide_keep_recent_messages)
+        self._requests_since_elide = 0
         if elided:
             logger.info("Elided %d old tool outputs from history", elided)
             self._emit(
@@ -554,11 +570,12 @@ class AgentSession:
         """Keep history within budget: elide old outputs, then summarize.
 
         Eliding is lossless — elided outputs remain readable in the pod at
-        their saved_to paths. It runs on its own message-count interval so
-        prompts stay small throughout a long run, and additionally whenever
-        the token budget is exceeded. Summarization is the lossy fallback and
-        only runs when the message count hits its interval or the token
-        budget is still exceeded after eliding.
+        their saved_to paths. It runs on a batched message-count interval so
+        prompts stay small throughout a long run without rewriting history
+        before every request, and additionally whenever the token budget is
+        exceeded. Summarization is the lossy fallback and only runs when the
+        message count hits its interval or the token budget is still exceeded
+        after eliding.
         """
         if not self.compaction_enabled:
             return
@@ -663,6 +680,55 @@ class AgentSession:
         self._pending_failed_messages.clear()
         logger.info(str(msg))
         self._emit({"type": "error", "text": error_text})
+
+    def _end_turn_at_step_budget(self, logger):
+        """End the turn at budget exhaustion after one final status report.
+
+        The step budget is spent, so no tool may run: the model gets a single
+        request whose only useful action is `respond`, delivering the status
+        report the wrap-up warning asked it to keep ready. Any other reply
+        ends the turn with the plain exhaustion error, as before.
+        """
+        logger.info("Step budget exhausted; requesting final status report.")
+        self._append_harness_notice(
+            STEP_BUDGET_OUT_NOTICE,
+            "Step budget exhausted; requesting final status report.",
+        )
+        try:
+            self._emit({"type": "status", "text": "Thinking..."})
+            response = ask_question(
+                self.client,
+                self.model,
+                self.messages,
+                delay=self.request_delay,
+                effort=self.thinking_effort,
+                dump_path=self.dump_path,
+                accept_reply=self._sanitize_reply,
+                session_id=self.session_id,
+            )
+        except TurnCancelled:
+            self._finish_cancelled_turn()
+            return
+        except Exception as exc:
+            logger.exception("Final status report request failed")
+            self._emit({"type": "error", "text": f"Model request failed: {exc}"})
+            return
+        report = find_respond_text(response)
+        if report is None:
+            if self.messages and self.messages[-1]["role"] == "assistant":
+                self.messages.pop()
+            self._pending_failed_messages.clear()
+            self._emit(
+                {
+                    "type": "error",
+                    "text": (
+                        f"Step budget exhausted after {self.max_steps_per_turn} steps."
+                    ),
+                }
+            )
+            return
+        self._purge_pending_failures()
+        self._emit({"type": "model_message", "content": report})
 
     def _finish_cancelled_turn(self):
         """Record the interruption in the conversation and notify listeners."""

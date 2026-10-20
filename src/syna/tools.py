@@ -61,8 +61,15 @@ COMMAND_KILL_GRACE_S = 5
 
 def think(thought: str):
     """
-    Record reasoning in the conversation. It changes nothing in the pod and returns nothing. Your private reasoning may not carry over between turns, but `think` entries stay visible for the rest of the task. Use it when the note will matter later: a plan for multi-step work, what you concluded from a surprising or failed result, a decision and its reason, and a check of your claims against the evidence before `respond`. Skip it for routine steps. Pair `think` with the call or `respond` it informs in the same reply when you can: a reply containing only `think` is valid but costs an extra round-trip, so use it only when the note matters and there is nothing to act on yet. It is not a message to the user; anything they need to know goes in `respond`.
-    - `thought` (string, required)
+    Record reasoning in the conversation. It does not affect the pod, and the call returns nothing.
+
+    Your private reasoning may not carry over between turns, but `think` entries stay visible for the rest of the task. Use it for things you will need later: a plan for multi-step work, a conclusion from a surprising or failed result, a decision and its reason, or a check of your claims against the evidence before `respond`. Skip it for routine steps you act on immediately.
+
+    Prefer calling `think` in the same reply as the tool call or `respond` it informs. Nothing in the pod changes between a think-only reply and your next one, so a separate reply costs an extra request. Use a think-only reply only when the note matters and there is nothing to act on yet (e.g. re-orienting after a history summary). Several think-only replies in a row means nothing new has happened between them, so act on what you already concluded.
+
+    This is not a message to the user; anything they need to know goes in `respond`.
+
+    - `thought` (string, required): The note to record.
     """
     return "(noted)"
 

@@ -392,6 +392,8 @@ def test_session_step_budget_warning_and_exhaustion():
     session = _make_session()
     session.max_steps_per_turn = 3
     session.step_warning_remaining = 1
+    events = []
+    session.on_event = events.append
     session.client = FakeChat([REPLY_VALID, REPLY_VALID, REPLY_VALID, REPLY_RESPOND])
     session.run_turn("probe")
 
@@ -403,7 +405,35 @@ def test_session_step_budget_warning_and_exhaustion():
     ]
     assert len(warnings) == 1
     assert any("step budget" in m["content"].lower() for m in session.messages)
-    print("PASS step budget warns before the cap and ends the turn after it")
+    assert len(session.client.requests) == 4, "one final report request is made"
+    model_messages = [e for e in events if e["type"] == "model_message"]
+    assert len(model_messages) == 1
+    assert model_messages[0]["content"] == "task done"
+    assert not any(e["type"] == "error" for e in events)
+    print(
+        "PASS step budget warns before the cap and delivers a final status"
+        " report after it"
+    )
+
+
+def test_session_step_budget_final_report_requires_respond():
+    session = _make_session()
+    session.max_steps_per_turn = 2
+    session.step_warning_remaining = 1
+    events = []
+    session.on_event = events.append
+    session.client = FakeChat([REPLY_VALID, REPLY_VALID, REPLY_VALID])
+    session.run_turn("probe")
+
+    assert len(session.client.requests) == 3
+    model_messages = [e for e in events if e["type"] == "model_message"]
+    assert not model_messages, "a non-respond final reply delivers no report"
+    errors = [e for e in events if e["type"] == "error"]
+    assert any("Step budget exhausted" in e["text"] for e in errors)
+    assert session.messages[-1]["role"] != "assistant", (
+        "the un-executed final reply is removed from history"
+    )
+    print("PASS a non-respond final reply still ends the turn with an error")
 
 
 def test_session_repeated_identical_calls_get_nudge():
@@ -508,6 +538,7 @@ def main():
         test_corrective_status_is_quiet()
         test_session_think_and_respond_turn()
         test_session_step_budget_warning_and_exhaustion()
+        test_session_step_budget_final_report_requires_respond()
         test_session_repeated_identical_calls_get_nudge()
         test_session_lone_think_is_accepted_and_persists()
         test_session_repeated_identical_thinks_get_nudge()

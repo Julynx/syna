@@ -26,7 +26,10 @@ def describe_image(file_path: str, question: str):
     folder (same mechanism as 'read_file'/'edit_file'), converted to PNG,
     downscaled with Pillow's 'thumbnail' so it fits inside a 1024x1024
     box, base64-encoded and sent to the model as a separate session: a
-    fresh client and a throwaway single-turn conversation.
+    fresh client and a throwaway single-turn conversation. The request
+    runs at 'medium' reasoning effort: without it the provider default is
+    maximum, which burns the completion budget on hidden reasoning and
+    can return no content at all.
 
     Once the image has been described, its base64 payload is replaced in
     the request's messages array by a compact text placeholder carrying
@@ -54,10 +57,17 @@ def describe_image(file_path: str, question: str):
                 if img.mode == "CMYK":
                     img_new = img.convert("RGB")
                 img_new.thumbnail(MAX_IMAGE_BOX)
+                pixel_count = img_new.width * img_new.height
                 img_new.save(png_path, format="PNG")
         except Exception as exc:
             return {"error": f"Could not read '{file_path}' as an image: {exc}"}
 
+        logger.info(
+            "Vision request for '%s': %d pixels, %d bytes of PNG payload",
+            file_path,
+            pixel_count,
+            png_path.stat().st_size,
+        )
         encoded = base64.b64encode(png_path.read_bytes()).decode("ascii")
         image_data = f"data:image/png;base64,{encoded}"
         prompt = (
@@ -77,7 +87,7 @@ def describe_image(file_path: str, question: str):
 
         with create_model_client() as client:
             description = ask_question(
-                client, model, messages, delay=0, response_format=None
+                client, model, messages, delay=0, response_format=None, effort="medium"
             )
 
     logger.info(

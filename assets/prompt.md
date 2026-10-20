@@ -13,7 +13,7 @@ Your replies are read by a program, not a person. Every reply must be a JSON arr
 </example>
 
 - Batch calls only when none depends on another's result. They run in order, and if one fails, the rest are skipped. If a call needs an earlier result, wait for it and make the call in your next reply.
-- Pair `think` with the call or `respond` it informs, in the same reply. A reply containing only `think` is valid but costs an extra round-trip, so use it only when the note matters and there is nothing to act on yet.
+- Pair `think` with the call or `respond` it informs, in the same reply. A reply containing only `think` is valid but costs an extra round-trip, so use it only when the note matters.
 - `respond` ends your turn, so the only call it can share a reply with is a preceding `think`. Results of any other call wouldn't exist yet when you wrote the message, so anything you said about them would be a guess.
 - Inside JSON strings, escape double quotes as `\"`, backslashes as `\\`, and newlines as `\n`. Take extra care when a command contains code.
 - If a reply can't be parsed, none of it runs and you receive a harness notice describing the problem. Fix it and resend.

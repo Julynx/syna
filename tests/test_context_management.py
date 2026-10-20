@@ -142,11 +142,11 @@ def test_session_elides_old_outputs_under_token_budget():
         session = AgentSession(session_id="context-test")
         session.dump_path = Path(tempfile.mkdtemp(prefix="syna-context-")) / "dump.json"
         session.request_delay = 0
-        session.context_budget_tokens = 8500
+        session.context_budget_tokens = 14000
         session.elide_keep_recent_messages = 0
         session.client = FakeChat(
             [
-                json.dumps({"smoke_tool": {"label": "x" * 12000}}),
+                json.dumps({"smoke_tool": {"label": "x" * 24000}}),
                 json.dumps({"respond": {"text": "done"}}),
             ]
         )
@@ -181,6 +181,7 @@ def test_session_elides_old_outputs_on_message_interval():
         session.max_history_messages = 10**6
         session.elide_keep_recent_messages = 1
         session.elide_interval_messages = 2
+        session.elide_every_requests = 1
         session.client = FakeChat(
             [
                 json.dumps({"smoke_tool": {"label": "first"}}),
@@ -204,6 +205,43 @@ def test_session_elides_old_outputs_on_message_interval():
     assert "[output elided; full text in /tool_outputs/" in first_body
     assert "ran: first" not in first_body
     assert "ran: second" in second_body, "recent output must stay intact"
+
+
+def test_session_elision_is_batched_by_request_interval():
+    TOOL_REGISTRY["smoke_tool"] = lambda label="unlabeled": f"ran: {label}"
+    pod = FakePod()
+    register_container(pod)
+    try:
+        from syna.session import AgentSession
+
+        session = AgentSession(session_id="context-batch-test")
+        session.dump_path = Path(tempfile.mkdtemp(prefix="syna-batch-")) / "dump.json"
+        session.request_delay = 0
+        session.context_budget_tokens = 10**9
+        session.max_history_messages = 10**6
+        session.elide_keep_recent_messages = 1
+        session.elide_interval_messages = 2
+        session.elide_every_requests = 10
+        session.client = FakeChat(
+            [
+                json.dumps({"smoke_tool": {"label": "first"}}),
+                json.dumps({"smoke_tool": {"label": "second"}}),
+                json.dumps({"smoke_tool": {"label": "third"}}),
+                json.dumps({"respond": {"text": "done"}}),
+            ]
+        )
+        session.run_turn("probe")
+    finally:
+        unregister_container()
+        TOOL_REGISTRY.pop("smoke_tool", None)
+
+    third_prompt = session.client.requests[2]["messages"]
+    assert any("ran: first" in str(m.get("content")) for m in third_prompt), (
+        "outputs must stay full-text between batched elision passes"
+    )
+    assert not any(
+        "output elided" in str(m.get("content")) for m in session.messages
+    ), "no batched elision pass is due within the request budget"
 
 
 class FakeMessage:
@@ -245,6 +283,7 @@ def main():
     test_pod_host_config_allows_unset_limits()
     test_session_elides_old_outputs_under_token_budget()
     test_session_elides_old_outputs_on_message_interval()
+    test_session_elision_is_batched_by_request_interval()
     print("ALL CONTEXT AND POD LIMIT TESTS PASSED")
 
 
