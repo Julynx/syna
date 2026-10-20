@@ -384,7 +384,13 @@ def _persist_tool_output(
 
 
 def _extract_tool_calls(data: object) -> tuple[list[tuple[str, dict, str]], str | None]:
-    """Validate the JSON shape and extract a list of (tool_name, arguments, raw_json) tuples."""
+    """Validate the JSON shape and extract a list of (tool_name, arguments, raw_json) tuples.
+
+    A single object holding 'think' alongside other calls — a frequent model
+    slip against the one-key rule — is accepted and split into the sequential
+    calls it obviously means, with 'think' first. Multi-key objects without
+    'think' stay rejected: their intent is genuinely ambiguous.
+    """
     if not isinstance(data, (dict, list)):
         return (
             [],
@@ -419,12 +425,26 @@ def _extract_tool_calls(data: object) -> tuple[list[tuple[str, dict, str]], str 
                 " have exactly one key (the tool name).",
             )
         if len(item) > 1:
-            keys = ", ".join(repr(key) for key in list(item)[:4])
-            return (
-                [],
-                f"Tool call object at index {index} must have exactly one key"
-                f" (the tool name); got {len(item)}: {keys}.",
-            )
+            if "think" not in item:
+                keys = ", ".join(repr(key) for key in list(item)[:4])
+                return (
+                    [],
+                    f"Tool call object at index {index} must have exactly one key"
+                    f" (the tool name); got {len(item)}: {keys}.",
+                )
+            ordered = ["think"] + [key for key in item if key != "think"]
+            for key in ordered:
+                tool_arguments = item[key]
+                if not isinstance(tool_arguments, dict):
+                    return (
+                        [],
+                        f"The arguments for tool '{key}' at index {index} must"
+                        f" be a JSON object; got {_describe_json_shape(tool_arguments)}.",
+                    )
+                calls.append(
+                    (key, tool_arguments, json.dumps({key: tool_arguments})[:6000])
+                )
+            continue
         tool_name = next(iter(item))
         tool_arguments = item[tool_name]
         if not isinstance(tool_arguments, dict):

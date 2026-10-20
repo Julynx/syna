@@ -670,6 +670,49 @@ def test_shared_file_metadata_matches_session_event_contract():
     assert shared_file_metadata(without) is None
 
 
+def test_multi_key_object_with_think_is_split_into_calls():
+    payload = json.dumps(
+        {"think": {"thought": "note"}, "smoke_tool": {"label": "split"}}
+    )
+    outcome, events = _parse(payload)
+    assert outcome.structural_error is None
+    assert [entry["name"] for entry in outcome.outputs] == ["smoke_tool"]
+    assert len(outcome.think_signatures) == 1
+    event_names = [event[0][1] for event in events]
+    assert event_names.index("think") < event_names.index("smoke_tool")
+
+
+def test_multi_key_object_with_think_preserves_call_order():
+    payload = json.dumps(
+        {
+            "smoke_tool": {"label": "a"},
+            "think": {"thought": "note"},
+            "smoke_structured": {},
+        }
+    )
+    outcome, _ = _parse(payload)
+    assert outcome.structural_error is None
+    assert [entry["name"] for entry in outcome.outputs] == [
+        "smoke_tool",
+        "smoke_structured",
+    ]
+    assert len(outcome.think_signatures) == 1
+
+
+def test_think_and_respond_in_one_object_is_split():
+    payload = json.dumps({"think": {"thought": "why"}, "respond": {"text": "hi"}})
+    outcome, _ = _parse(payload)
+    assert outcome.structural_error is None
+    assert len(outcome.think_signatures) == 1
+
+
+def test_multi_key_object_with_think_rejects_non_dict_arguments():
+    payload = json.dumps({"smoke_tool": "bad", "think": {}})
+    outcome, _ = _parse(payload)
+    assert outcome.structural_error is not None
+    assert "'smoke_tool'" in outcome.structural_error
+
+
 def main():
     TOOL_REGISTRY["smoke_tool"] = _smoke_tool
     TOOL_REGISTRY["smoke_fail"] = _smoke_fail
@@ -743,6 +786,10 @@ def main():
         test_finished_event_carries_structured_output_for_dict_tools()
         test_finished_event_has_no_structured_output_for_string_tools()
         test_shared_file_metadata_matches_session_event_contract()
+        test_multi_key_object_with_think_is_split_into_calls()
+        test_multi_key_object_with_think_preserves_call_order()
+        test_think_and_respond_in_one_object_is_split()
+        test_multi_key_object_with_think_rejects_non_dict_arguments()
     finally:
         TOOL_REGISTRY.pop("smoke_tool", None)
         TOOL_REGISTRY.pop("smoke_fail", None)
