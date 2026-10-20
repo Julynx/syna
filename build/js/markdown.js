@@ -1,6 +1,5 @@
 "use strict";
 
-
 const md =
   typeof window.markdownit === "function"
     ? window.markdownit({ html: false, breaks: true, linkify: false })

@@ -430,7 +430,8 @@ def test_session_lone_think_is_accepted_and_persists():
 
     assert len(session.client.requests) == 3
     think_replies = [
-        m for m in session.messages
+        m
+        for m in session.messages
         if m["role"] == "assistant" and "plan: read the file" in m["content"]
     ]
     assert len(think_replies) == 1, "the think note must persist in history"
@@ -444,7 +445,13 @@ def test_session_lone_think_is_accepted_and_persists():
 def test_session_repeated_identical_thinks_get_nudge():
     session = _make_session()
     session.client = FakeChat(
-        [REPLY_LONE_THINK, REPLY_LONE_THINK, REPLY_LONE_THINK, REPLY_VALID, REPLY_RESPOND]
+        [
+            REPLY_LONE_THINK,
+            REPLY_LONE_THINK,
+            REPLY_LONE_THINK,
+            REPLY_VALID,
+            REPLY_RESPOND,
+        ]
     )
     session.run_turn("probe")
 
@@ -456,7 +463,8 @@ def test_session_repeated_identical_thinks_get_nudge():
     ]
     assert len(nudges) == 1
     think_replies = [
-        m for m in session.messages
+        m
+        for m in session.messages
         if m["role"] == "assistant" and "plan: read the file" in m["content"]
     ]
     assert len(think_replies) == 3, "accepted think replies are not purged"

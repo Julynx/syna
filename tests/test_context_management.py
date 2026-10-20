@@ -27,11 +27,15 @@ class FakePod:
         Path(host_path).write_text("persisted", encoding="utf-8")
 
 
-def _tool_results_message(call: int, tool: str, output: str, saved_to: str | None) -> dict:
+def _tool_results_message(
+    call: int, tool: str, output: str, saved_to: str | None
+) -> dict:
     attributes = f'call="{call}" tool="{tool}" status="ok"'
     if saved_to:
         attributes += f' saved_to="{saved_to}"'
-    body = f"<tool_results>\n<result {attributes}>\n{output}\n</result>\n</tool_results>"
+    body = (
+        f"<tool_results>\n<result {attributes}>\n{output}\n</result>\n</tool_results>"
+    )
     return {"role": "user", "content": wrap_channel("TOOL_RESULTS", body)}
 
 
@@ -54,7 +58,9 @@ def test_elide_replaces_old_saved_outputs_with_pointers():
     messages = [
         {"role": "system", "content": "system prompt"},
         {"role": "user", "content": "task"},
-        _tool_results_message(1, "web_search", "long result body", "/tool_outputs/0001_web_search.txt"),
+        _tool_results_message(
+            1, "web_search", "long result body", "/tool_outputs/0001_web_search.txt"
+        ),
     ]
     elided = elide_tool_outputs(messages, keep_recent=0)
     assert elided == 1
@@ -78,11 +84,15 @@ def test_elide_keeps_results_without_saved_to():
 
 
 def test_elide_keeps_recent_messages_untouched():
-    recent = _tool_results_message(2, "web_search", "fresh output", "/tool_outputs/0002_web_search.txt")
+    recent = _tool_results_message(
+        2, "web_search", "fresh output", "/tool_outputs/0002_web_search.txt"
+    )
     messages = [
         {"role": "system", "content": "system prompt"},
         {"role": "user", "content": "task"},
-        _tool_results_message(1, "web_search", "old output", "/tool_outputs/0001_web_search.txt"),
+        _tool_results_message(
+            1, "web_search", "old output", "/tool_outputs/0001_web_search.txt"
+        ),
         {"role": "assistant", "content": "working"},
         recent,
     ]
@@ -98,7 +108,9 @@ def test_elide_is_idempotent():
     messages = [
         {"role": "system", "content": "system prompt"},
         {"role": "user", "content": "task"},
-        _tool_results_message(1, "web_search", "body", "/tool_outputs/0001_web_search.txt"),
+        _tool_results_message(
+            1, "web_search", "body", "/tool_outputs/0001_web_search.txt"
+        ),
     ]
     assert elide_tool_outputs(messages, keep_recent=0) == 1
     assert elide_tool_outputs(messages, keep_recent=0) == 0
@@ -132,8 +144,12 @@ def test_session_elides_old_outputs_under_token_budget():
         session.request_delay = 0
         session.context_budget_tokens = 8500
         session.elide_keep_recent_messages = 0
-        session.client = FakeChat([json.dumps({"smoke_tool": {"label": "x" * 12000}}),
-                                   json.dumps({"respond": {"text": "done"}})])
+        session.client = FakeChat(
+            [
+                json.dumps({"smoke_tool": {"label": "x" * 12000}}),
+                json.dumps({"respond": {"text": "done"}}),
+            ]
+        )
         session.run_turn("probe")
     finally:
         unregister_container()

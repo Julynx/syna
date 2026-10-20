@@ -17,7 +17,9 @@ from syna import tools
 BASH = Path("C:/Users/Omega/scoop/apps/git/current/bin/bash.exe")
 
 
-def run_scripts(command: str, exit_code_expected: int, timeout_s: int | None = None) -> str:
+def run_scripts(
+    command: str, exit_code_expected: int, timeout_s: int | None = None
+) -> str:
     with tempfile.TemporaryDirectory(prefix="syna-exec-smoke-") as pod:
         out_path = str(Path(pod, "0001_execute_command.txt")).replace("\\", "/")
         exit_path = out_path + ".exit"

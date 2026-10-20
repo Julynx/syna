@@ -2,6 +2,7 @@
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 from bollard import DockerException
@@ -77,15 +78,14 @@ class BrokenPod(FakePod):
 
 def _make_session():
     session = AgentSession(session_id="tool-errors")
-    session.dump_path = Path(__file__).parent / "tmp-dump-tool-errors.json"
+    session.dump_path = Path(tempfile.mkdtemp(prefix="syna-test-")) / "dump.json"
     session.request_delay = 0
     return session
 
 
 def _first_results_body(session):
     results = [
-        m for m in session.messages
-        if is_channel_message(m["content"], "TOOL_RESULTS")
+        m for m in session.messages if is_channel_message(m["content"], "TOOL_RESULTS")
     ]
     assert results, "no tool results message in history"
     return unwrap_channel(results[0]["content"])[1]
@@ -104,7 +104,12 @@ def test_web_interact_failure_marks_error_and_skips_siblings():
         session = _make_session()
         reply = json.dumps(
             [
-                {"web_interact": {"command": "goto", "args": {"url": "http://x.example"}}},
+                {
+                    "web_interact": {
+                        "command": "goto",
+                        "args": {"url": "http://x.example"},
+                    }
+                },
                 {"web_interact": {"command": "click", "args": {"ref": 1}}},
             ]
         )
@@ -122,7 +127,7 @@ def test_web_interact_failure_marks_error_and_skips_siblings():
 
 def test_web_interact_success_has_no_exit_code():
     def fake_snapshot(browser, viewport_only=None):
-        return "[1] heading \"Page\""
+        return '[1] heading "Page"'
 
     original = tools_module.BROWSER_COMMANDS
     tools_module.BROWSER_COMMANDS = {"snapshot": fake_snapshot}
@@ -145,7 +150,13 @@ def test_read_file_missing_path_clean_error():
     try:
         session = _make_session()
         reply = json.dumps(
-            {"read_file": {"file_path": "/workspace/eval_notes.txt", "start": 1, "limit": 10}}
+            {
+                "read_file": {
+                    "file_path": "/workspace/eval_notes.txt",
+                    "start": 1,
+                    "limit": 10,
+                }
+            }
         )
         session.client = FakeChat([reply, REPLY_RESPOND])
         session.run_turn("probe")
@@ -168,7 +179,12 @@ def test_edit_file_missing_path_clean_error():
                 "edit_file": {
                     "file_path": "/workspace/missing.py",
                     "operations": [
-                        {"replace": {"line_num_or_range": [1, 1], "replace_with_lines": ["x"]}}
+                        {
+                            "replace": {
+                                "line_num_or_range": [1, 1],
+                                "replace_with_lines": ["x"],
+                            }
+                        }
                     ],
                 }
             }
@@ -190,7 +206,13 @@ def test_read_file_other_docker_errors_propagate():
     try:
         session = _make_session()
         reply = json.dumps(
-            {"read_file": {"file_path": "/workspace/notes.txt", "start": 1, "limit": 10}}
+            {
+                "read_file": {
+                    "file_path": "/workspace/notes.txt",
+                    "start": 1,
+                    "limit": 10,
+                }
+            }
         )
         session.client = FakeChat([reply, REPLY_RESPOND])
         session.run_turn("probe")

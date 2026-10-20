@@ -106,8 +106,7 @@ def build_tool_results_body(outputs: list[dict], warnings: list[str]) -> str:
     parts = ["<tool_results>"]
     for entry in outputs:
         attributes = (
-            f'call="{entry["call"]}" tool="{entry["name"]}"'
-            f' status="{entry["status"]}"'
+            f'call="{entry["call"]}" tool="{entry["name"]}" status="{entry["status"]}"'
         )
         if entry.get("exit_code") is not None:
             attributes += f' exit_code="{entry["exit_code"]}"'
@@ -463,9 +462,7 @@ class AgentSession:
                     "Repeated identical call detected.",
                 )
 
-    def _nudge_on_repeated_thinks(
-        self, signatures: list[str], counts: dict[str, int]
-    ):
+    def _nudge_on_repeated_thinks(self, signatures: list[str], counts: dict[str, int]):
         """Warn once when identical think notes repeat within the same turn."""
         for signature in signatures:
             counts[signature] = counts.get(signature, 0) + 1
@@ -517,9 +514,7 @@ class AgentSession:
         history = self.messages[1:]
         total_tokens = estimate_history_tokens(self.messages)
         if total_tokens > self.context_budget_tokens:
-            elided = elide_tool_outputs(
-                self.messages, self.elide_keep_recent_messages
-            )
+            elided = elide_tool_outputs(self.messages, self.elide_keep_recent_messages)
             if elided:
                 logger.info("Elided %d old tool outputs from history", elided)
                 self._emit(
@@ -603,7 +598,9 @@ class AgentSession:
             None,
         )
 
-    def _abort_turn(self, logger, notice: str | None = None, error_text: str | None = None):
+    def _abort_turn(
+        self, logger, notice: str | None = None, error_text: str | None = None
+    ):
         """Record the abort in the history and hand control back to the user."""
         if notice is None:
             notice = (

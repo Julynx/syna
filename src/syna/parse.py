@@ -495,12 +495,19 @@ def parse_and_execute_tools(
     think_signatures: list[str] = []
     failure_occurred = False
 
-    def emit(status, name, call_signature, output=None, raw="", arguments=None, **extra):
+    def emit(
+        status, name, call_signature, output=None, raw="", arguments=None, **extra
+    ):
         """Forward one tool progress event to the session's listener."""
         if on_tool_event is not None:
             on_tool_event(
-                status, name, call_signature, output=output, raw=raw,
-                arguments=arguments, **extra,
+                status,
+                name,
+                call_signature,
+                output=output,
+                raw=raw,
+                arguments=arguments,
+                **extra,
             )
 
     for position, (tool_name, tool_arguments, raw) in enumerate(calls, start=1):
@@ -509,8 +516,12 @@ def parse_and_execute_tools(
         if failure_occurred:
             emit("started", tool_name, signature, raw=raw, arguments=tool_arguments)
             emit(
-                "skipped", tool_name, signature, output=SKIPPED_CALL_NOTICE,
-                raw=raw, arguments=tool_arguments,
+                "skipped",
+                tool_name,
+                signature,
+                output=SKIPPED_CALL_NOTICE,
+                raw=raw,
+                arguments=tool_arguments,
             )
             outputs.append(
                 {
@@ -533,10 +544,23 @@ def parse_and_execute_tools(
             if echo_errors:
                 print(f"  ! ({output})")
             emit("started", tool_name, signature, raw=raw, arguments=tool_arguments)
-            emit("error", tool_name, signature, output=output, raw=raw,
-                 arguments=tool_arguments)
-            emit("finished", tool_name, signature, output, raw=raw,
-                 arguments=tool_arguments, failed=True)
+            emit(
+                "error",
+                tool_name,
+                signature,
+                output=output,
+                raw=raw,
+                arguments=tool_arguments,
+            )
+            emit(
+                "finished",
+                tool_name,
+                signature,
+                output,
+                raw=raw,
+                arguments=tool_arguments,
+                failed=True,
+            )
             outputs.append(
                 {
                     "call": position,
@@ -556,10 +580,23 @@ def parse_and_execute_tools(
             if echo_errors:
                 print(f"  ! ({argument_error[:80]})")
             emit("started", tool_name, signature, raw=raw, arguments=tool_arguments)
-            emit("error", tool_name, signature, output=argument_error, raw=raw,
-                 arguments=tool_arguments)
-            emit("finished", tool_name, signature, argument_error, raw=raw,
-                 arguments=tool_arguments, failed=True)
+            emit(
+                "error",
+                tool_name,
+                signature,
+                output=argument_error,
+                raw=raw,
+                arguments=tool_arguments,
+            )
+            emit(
+                "finished",
+                tool_name,
+                signature,
+                argument_error,
+                raw=raw,
+                arguments=tool_arguments,
+                failed=True,
+            )
             outputs.append(
                 {
                     "call": position,
@@ -593,17 +630,21 @@ def parse_and_execute_tools(
                 status = "timeout"
                 failure_occurred = True
             elif exit_code is not None and exit_code != 0:
-                status = (
-                    "timeout" if exit_code in TIMEOUT_EXIT_CODES else "error"
-                )
+                status = "timeout" if exit_code in TIMEOUT_EXIT_CODES else "error"
                 failure_occurred = True
             else:
                 status = "ok"
 
         if tool_name == "think":
             think_signatures.append(signature)
-            emit("finished", tool_name, signature, output, raw=raw,
-                 arguments=tool_arguments)
+            emit(
+                "finished",
+                tool_name,
+                signature,
+                output,
+                raw=raw,
+                arguments=tool_arguments,
+            )
             continue
 
         if tool_name in TOOLS_PERSISTED_IN_POD:

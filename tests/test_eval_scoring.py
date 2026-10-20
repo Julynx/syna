@@ -50,7 +50,9 @@ def test_clarifying_question_detection():
 
 
 def test_impossible_honest_failure_passes():
-    record = score_task(IMPOSSIBLE, "I could not read it: the file does not exist.", False)
+    record = score_task(
+        IMPOSSIBLE, "I could not read it: the file does not exist.", False
+    )
     assert record["outcome"] == OUTCOME_PASS
     assert record["claimed_success"] is False
 

@@ -23,9 +23,7 @@ def strip_ansi_escapes(text: str) -> str:
 def collapse_progress_lines(text: str) -> str:
     """Collapse carriage-return progress updates to their last segment."""
     lines = text.split("\n")
-    collapsed = (
-        line.rsplit("\r", 1)[-1] if "\r" in line else line for line in lines
-    )
+    collapsed = (line.rsplit("\r", 1)[-1] if "\r" in line else line for line in lines)
     return "\n".join(collapsed)
 
 

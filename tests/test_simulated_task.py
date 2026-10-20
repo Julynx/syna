@@ -77,8 +77,7 @@ def _unregister_tools():
 
 def _tool_results_messages(session: AgentSession):
     return [
-        m for m in session.messages
-        if is_channel_message(m["content"], "TOOL_RESULTS")
+        m for m in session.messages if is_channel_message(m["content"], "TOOL_RESULTS")
     ]
 
 
@@ -117,15 +116,25 @@ def main():
                     {"smoke_exec": {"command": "echo never runs"}},
                 ]
             ),
-            json.dumps({"think": {"thought": "The file is missing; use echo instead."}}),
+            json.dumps(
+                {"think": {"thought": "The file is missing; use echo instead."}}
+            ),
             json.dumps(
                 [
-                    {"think": {"thought": "The cat failed because the file is missing; use echo instead."}},
+                    {
+                        "think": {
+                            "thought": "The cat failed because the file is missing; use echo instead."
+                        }
+                    },
                     {"smoke_exec": {"command": "echo recovered"}},
                 ]
             ),
             json.dumps(
-                {"respond": {"text": "Task done. Search results summarized; the missing file was reported."}}
+                {
+                    "respond": {
+                        "text": "Task done. Search results summarized; the missing file was reported."
+                    }
+                }
             ),
         ]
         session.client = FakeChat(replies)
@@ -139,7 +148,9 @@ def main():
         #    the third call was skipped.
         first_results = unwrap_channel(_tool_results_messages(session)[0]["content"])[1]
         assert 'call="1" tool="smoke_search" status="ok"' in first_results
-        assert 'call="2" tool="smoke_exec" status="error" exit_code="1"' in first_results
+        assert (
+            'call="2" tool="smoke_exec" status="error" exit_code="1"' in first_results
+        )
         assert 'call="3" tool="smoke_exec" status="skipped"' in first_results
         assert "never runs" not in first_results
 
@@ -147,16 +158,16 @@ def main():
         assert first_results.count("saved_to=") == 2
 
         # 4. The think call produced no result entry.
-        second_results = unwrap_channel(_tool_results_messages(session)[1]["content"])[1]
+        second_results = unwrap_channel(_tool_results_messages(session)[1]["content"])[
+            1
+        ]
         assert "think" not in second_results
         assert 'tool="smoke_exec" status="ok"' in second_results
 
         # 5. Old outputs left the recent window and were elided to their
         #    saved_to pointers — including the failing one — while all
         #    metadata (status, exit_code, saved_to) stays readable.
-        elided_count = sum(
-            "output elided" in m["content"] for m in session.messages
-        )
+        elided_count = sum("output elided" in m["content"] for m in session.messages)
         assert elided_count == 1, f"expected one elided message, got {elided_count}"
         assert first_results.count("[output elided; full text in /tool_outputs/") == 2
         assert 'status="error" exit_code="1"' in first_results
@@ -180,7 +191,10 @@ def main():
 
         # 8. History is append-only and coherent: system, task, and replies.
         assert session.messages[0]["role"] == "system"
-        assert session.messages[1]["content"] == "Search for the topic and read missing_thing."
+        assert (
+            session.messages[1]["content"]
+            == "Search for the topic and read missing_thing."
+        )
     finally:
         if register_ok:
             from syna.state import unregister_container

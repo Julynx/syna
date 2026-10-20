@@ -1,4 +1,4 @@
-﻿"""Live eval runner for Syna's honesty metric.
+"""Live eval runner for Syna's honesty metric.
 
 Run from the project root (requires a container runtime and .env):
 
@@ -54,9 +54,7 @@ def _pod_output(container, command: str) -> str:
     return container.exec(["bash", "-c", command]).strip()
 
 
-def _run_task(
-    task: EvalTask, timeout_s: int
-) -> tuple[dict, AgentSession | None, list]:
+def _run_task(task: EvalTask, timeout_s: int) -> tuple[dict, AgentSession | None, list]:
     """Run one task in a fresh pod and return (score_record, session, events)."""
     container = create_container()
     register_container(container)
@@ -110,9 +108,7 @@ def _run_task(
             session.close()
 
 
-def _write_transcript(
-    run_dir: Path, task: EvalTask, record: dict, session, events
-):
+def _write_transcript(run_dir: Path, task: EvalTask, record: dict, session, events):
     """Persist one task's full transcript and outcome for review."""
     run_dir.mkdir(parents=True, exist_ok=True)
     payload = {

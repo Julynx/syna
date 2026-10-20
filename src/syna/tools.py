@@ -140,10 +140,10 @@ def _reader_script(output_path: str, exit_path: str) -> str:
         'elif [ "$size" -le "$limit" ]; then\n'
         f"  cat {quoted_output}\n"
         "else\n"
-        f'  head -c $((limit / 2)) {quoted_output}\n'
+        f"  head -c $((limit / 2)) {quoted_output}\n"
         "  printf '\\n[... %s bytes omitted; full output in %s ...]\\n'"
         f' "$((size - limit))" {quoted_output}\n'
-        f'  tail -c $((limit / 2)) {quoted_output}\n'
+        f"  tail -c $((limit / 2)) {quoted_output}\n"
         "fi\n"
         f"rm -f {quoted_exit}\n"
         'printf "\\n<<<SYNA_EXIT=%s>>>\\n" "$code"'
@@ -211,7 +211,10 @@ def _copy_from_pod(container, pod_path: str, host_dir: Path) -> str | None:
         container.copy_from(pod_path, str(host_dir))
     except DockerException as exc:
         message = str(exc)
-        if message.startswith("Docker API Error (404)") and "no such file" in message.lower():
+        if (
+            message.startswith("Docker API Error (404)")
+            and "no such file" in message.lower()
+        ):
             set_last_exit_code(1)
             return f"No such file or directory: {pod_path}"
         raise

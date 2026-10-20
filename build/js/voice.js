@@ -1,6 +1,5 @@
 "use strict";
 
-
 const Voice = (() => {
   const settings = (window.SYNA_CONFIG && window.SYNA_CONFIG.voice) || {};
   const SILENCE_TIMEOUT_MS = settings.silence_timeout_ms || 2000;
@@ -114,9 +113,7 @@ const Voice = (() => {
   }
 
   function willNarrate(rawText) {
-    return (
-      enabled && TTS_AVAILABLE && !!speakableText(String(rawText || ""))
-    );
+    return enabled && TTS_AVAILABLE && !!speakableText(String(rawText || ""));
   }
 
   async function speak(rawText) {

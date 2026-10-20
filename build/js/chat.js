@@ -1,6 +1,5 @@
 "use strict";
 
-
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
 const sendBtn = document.getElementById("send-btn");
@@ -74,12 +73,20 @@ const ICONS = {
 
 const TOOL_META = {
   think: { verb: "Noted", icon: ICONS.think, key: "thought" },
-  execute_command: { verb: "Ran command", icon: ICONS.terminal, key: "command" },
+  execute_command: {
+    verb: "Ran command",
+    icon: ICONS.terminal,
+    key: "command",
+  },
   web_interact: { verb: "Browsed", icon: ICONS.globe },
   web_search: { verb: "Searched", icon: ICONS.search, key: "query" },
   read_file: { verb: "Read file", icon: ICONS.eye, key: "file_path" },
   edit_file: { verb: "Edited file", icon: ICONS.pencil, key: "file_path" },
-  describe_image: { verb: "Described image", icon: ICONS.image, key: "file_path" },
+  describe_image: {
+    verb: "Described image",
+    icon: ICONS.image,
+    key: "file_path",
+  },
   share_file: { verb: "Share file", icon: ICONS.share, key: "path" },
 };
 
@@ -98,7 +105,9 @@ function firstQuotedArg(signature) {
   // directly follows the '=' of the first keyword argument.
   const eq = text.indexOf("=");
   if (eq >= 0) {
-    const m = text.slice(eq + 1).match(/^ *('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")/);
+    const m = text
+      .slice(eq + 1)
+      .match(/^ *('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")/);
     if (m) return m[1].slice(1, -1).replace(/\\(['"\\])/g, "$1");
   }
   const quoted = text.match(/'((?:[^'\\]|\\.)*)'/);
@@ -249,17 +258,11 @@ function webInteractText(event) {
   };
   if (cmd === "goto") return 'Visited "' + truncateArg(arg("url") || "") + '"';
   if (cmd === "click" || cmd === "read") {
-    const ref = args
-      ? args.ref
-      : (signature.match(/'ref':\s*(\d+)/) || [])[1];
+    const ref = args ? args.ref : (signature.match(/'ref':\s*(\d+)/) || [])[1];
     return WEB_VERBS[cmd] + (ref ? " #" + ref : "");
   }
   if (cmd === "back" || cmd === "snapshot") return WEB_VERBS[cmd] || "Browsed";
-  const text =
-    arg("text") ||
-    arg("option") ||
-    arg("key") ||
-    arg("direction");
+  const text = arg("text") || arg("option") || arg("key") || arg("direction");
   return (
     (WEB_VERBS[cmd] || "Browsed") + (text ? ' "' + truncateArg(text) + '"' : "")
   );
@@ -305,7 +308,6 @@ function ensureMoreRow(run) {
   }
   return run.moreRow;
 }
-
 
 const CHAT_GAP = 10;
 
@@ -478,9 +480,16 @@ function addToolRow(event) {
   row.className =
     "tool-row glass " + (event.parse_error ? "failed" : "running");
   row.id = "tool-" + event.id;
-  const icon = meta ? meta.icon : event.parse_error ? ICONS.warn : ICONS.terminal;
+  const icon = meta
+    ? meta.icon
+    : event.parse_error
+      ? ICONS.warn
+      : ICONS.terminal;
   row.innerHTML =
-    '<span class="tool-icon">' + icon + "</span>" + '<span class="tool-text"></span>';
+    '<span class="tool-icon">' +
+    icon +
+    "</span>" +
+    '<span class="tool-text"></span>';
   row.querySelector(".tool-text").textContent = toolEventText(event);
   placeToolRow(row);
 }
@@ -539,7 +548,9 @@ function detailSectionsFor(event) {
   const output = String(event.output || event.output_preview || "");
   const sections = [];
   const cap = (text) =>
-    text.length > DETAIL_CAP_CHARS ? text.slice(0, DETAIL_CAP_CHARS) + "..." : text;
+    text.length > DETAIL_CAP_CHARS
+      ? text.slice(0, DETAIL_CAP_CHARS) + "..."
+      : text;
   if (call.trim()) sections.push({ label: "Call", text: cap(call) });
   if (output.trim()) sections.push({ label: "Output", text: cap(output) });
   return sections;
@@ -683,9 +694,7 @@ let statusHideTimer = null;
 function setStatus(kind, label) {
   statusDot.className = "status-dot " + kind;
   const widthBefore =
-    statusRow.parentNode === chat
-      ? statusRow.getBoundingClientRect().width
-      : 0;
+    statusRow.parentNode === chat ? statusRow.getBoundingClientRect().width : 0;
   statusLabel.textContent = label;
   if (widthBefore && !REDUCE) {
     const widthAfter = statusRow.getBoundingClientRect().width;
@@ -960,7 +969,6 @@ input.addEventListener("keydown", (keyEvent) => {
     sendMessage();
   }
 });
-
 
 let dragDepth = 0;
 

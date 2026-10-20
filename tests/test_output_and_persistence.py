@@ -85,9 +85,7 @@ def test_persistence_saves_host_tool_output_to_pod():
     TOOL_REGISTRY["smoke_tool"] = lambda label="unlabeled": f"ran: {label}"
     pod = FakePod()
     try:
-        outcome = _parse_with_pod(
-            json.dumps({"smoke_tool": {"label": "persist"}}), pod
-        )
+        outcome = _parse_with_pod(json.dumps({"smoke_tool": {"label": "persist"}}), pod)
     finally:
         TOOL_REGISTRY.pop("smoke_tool", None)
 
