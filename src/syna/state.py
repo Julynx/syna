@@ -14,7 +14,12 @@ from contextlib import ExitStack
 
 from bollard import Container, DockerClient
 
+from .config import load_config
+
 CONTAINER_IMAGE = "python:3.14-trixie"
+
+DEFAULT_POD_MEMORY_MB = 8192
+DEFAULT_POD_PIDS_LIMIT = 512
 
 _local = threading.local()
 _call_context = threading.local()
@@ -66,6 +71,28 @@ def get_registered_container() -> Container | None:
     return getattr(_local, "container", None)
 
 
+def build_pod_host_config(
+    memory_mb: int | None = None, pids_limit: int | None = None
+) -> dict:
+    """Assemble the pod's HostConfig: init reaping plus resource ceilings.
+
+    The limits protect the host from runaway processes inside the pod; they
+    do not restrict what the model may do inside the pod. Values of 0 or
+    None leave the corresponding ceiling unset.
+    """
+    if memory_mb is None:
+        memory_mb = load_config().get("pod_memory_mb", DEFAULT_POD_MEMORY_MB)
+    if pids_limit is None:
+        pids_limit = load_config().get("pod_pids_limit", DEFAULT_POD_PIDS_LIMIT)
+
+    host_config: dict = {"Init": True}
+    if memory_mb:
+        host_config["Memory"] = int(memory_mb) * 1024 * 1024
+    if pids_limit:
+        host_config["PidsLimit"] = int(pids_limit)
+    return host_config
+
+
 def create_container() -> Container:
     """Initialize the shared Docker client if needed and run a new container.
 
@@ -78,7 +105,7 @@ def create_container() -> Container:
     return client.run_container(
         CONTAINER_IMAGE,
         command="sleep infinity",
-        HostConfig={"Init": True},
+        HostConfig=build_pod_host_config(),
     )
 
 

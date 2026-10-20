@@ -20,6 +20,7 @@ from .compaction import (
     format_compaction_message,
     load_compaction_prompt,
 )
+from .context import elide_tool_outputs, estimate_history_tokens
 from .config import (
     get_env,
     get_logger,
@@ -38,6 +39,8 @@ DEFAULT_MAX_HISTORY_MESSAGES = 100
 DEFAULT_ENABLE_COMPACTION = True
 DEFAULT_MAX_STEPS_PER_TURN = 100
 DEFAULT_STEP_WARNING_REMAINING = 20
+DEFAULT_CONTEXT_BUDGET_TOKENS = 100000
+DEFAULT_ELIDE_KEEP_RECENT = 12
 MAX_NO_TOOL_RETRIES = 3
 REPEATED_CALL_LIMIT = 3
 
@@ -211,6 +214,12 @@ class AgentSession:
         )
         self.step_warning_remaining = load_config().get(
             "step_warning_remaining", DEFAULT_STEP_WARNING_REMAINING
+        )
+        self.context_budget_tokens = load_config().get(
+            "context_budget_tokens", DEFAULT_CONTEXT_BUDGET_TOKENS
+        )
+        self.elide_keep_recent_messages = load_config().get(
+            "elide_keep_recent_messages", DEFAULT_ELIDE_KEEP_RECENT
         )
         self.compaction_prompt = load_compaction_prompt()
         self.messages: list[dict] = []
@@ -464,16 +473,40 @@ class AgentSession:
         logger.info(str(msg))
 
     def _compact_history_if_needed(self):
-        """Replace old history with a summary once it reaches the interval."""
+        """Keep history within budget: elide old outputs, then summarize.
+
+        Eliding is lossless — elided outputs remain readable in the pod at
+        their saved_to paths. Summarization is the lossy fallback and only
+        runs when the message count hits its interval or the token budget
+        is still exceeded after eliding.
+        """
         if not self.compaction_enabled:
             return
+        logger = get_logger()
         history = self.messages[1:]
-        if len(history) < self.max_history_messages:
+        total_tokens = estimate_history_tokens(self.messages)
+        if total_tokens > self.context_budget_tokens:
+            elided = elide_tool_outputs(
+                self.messages, self.elide_keep_recent_messages
+            )
+            if elided:
+                logger.info("Elided %d old tool outputs from history", elided)
+                self._emit(
+                    {
+                        "type": "status",
+                        "text": "Trimmed old tool outputs...",
+                        "quiet": True,
+                    }
+                )
+                total_tokens = estimate_history_tokens(self.messages)
+        if (
+            len(history) < self.max_history_messages
+            and total_tokens <= self.context_budget_tokens
+        ):
             return
         compactable = self._select_compactable(history)
         if not compactable:
             return
-        logger = get_logger()
         self._emit({"type": "status", "text": "Compacting history..."})
         try:
             summary = ask_question(
