@@ -117,6 +117,11 @@ sources live in `build/`:
   ends, so narration enters and exits with the same fluid crossfade. The
   activity AUDIO layer (`sfx.js` heartbeat/notes, driven by the same
   `data-ambient` attribute) stays silent while `Voice.speaking` is true —
+  the voice is the only sound. Voice context pills ("Listening..." while
+  recording, "Tuning up, please wait..." between a narrated reply and its
+  playback) reuse the `.inline-status` styling with smooth grow-in/collapse
+  transitions and are cleared on every fresh session.
+
 - Rendering cost stays flat as conversations grow: chat children carry
   `content-visibility: auto` (offscreen messages skip layout, paint, and
   backdrop-filter), WebSocket history replay is batched into 8ms
@@ -126,11 +131,10 @@ sources live in `build/`:
   DOM scans. The ambient canvas animation pauses on `visibilitychange`.
   Profiled before/after on a 120-turn synthetic history (Chromium trace):
   replay wall time 11.0s → 6.4s, JS time −73%, style recalc −81%, zero
-  long tasks after the fix.
-  the voice is the only sound. Voice context pills ("Listening..." while
-  recording, "Tuning up, please wait..." between a narrated reply and its
-  playback) reuse the `.inline-status` styling with smooth grow-in/collapse
-  transitions and are cleared on every fresh session.
+  long tasks after the fix. Because a freshly inserted child measures at
+  its intrinsic-size placeholder until the next rendering pass, `growIn`
+  marks entering elements `.entering` (exempted from content-visibility)
+  so entrance animations measure and reveal the real height.
 
 File uploads share one client path: the composer's attach button, a file
 dropped anywhere on the window (a fixed `#drop-overlay` appears while a file
