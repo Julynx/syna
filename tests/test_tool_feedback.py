@@ -22,6 +22,13 @@ REPLY_NO_TOOLS = "Just chatting about the weather, no tool call here."
 REPLY_UNREGISTERED_TOOL = json.dumps({"unregistered_tool": {"arg": "val"}})
 REPLY_MISSING_ARG = json.dumps({"web_search": {}})
 REPLY_FAILING_TOOL = json.dumps({"smoke_fail": {}})
+REPLY_THINK_RESPOND = json.dumps(
+    [
+        {"think": {"thought": "the evidence checks out"}},
+        {"respond": {"text": "task done"}},
+    ]
+)
+REPLY_WITH_TAIL = '{"smoke_tool": {"label": "valid"}} All done!'
 REPLY_RESPOND_MIXED = json.dumps(
     [
         {"smoke_tool": {"label": "side-effect"}},
@@ -125,7 +132,9 @@ def test_session_wipe_multiple_consecutive_failures_on_success():
     assert not any(
         "not-an-object" in str(m.get("content", "")) for m in session.messages
     )
-    assert not any("SYSTEM_NOTE" in str(m.get("content", "")) for m in session.messages)
+    assert not any(
+        "HARNESS_NOTICE" in str(m.get("content", "")) for m in session.messages
+    )
 
     roles = [m["role"] for m in session.messages]
     assert roles == ["system", "user", "assistant", "user", "assistant"]
@@ -145,7 +154,7 @@ def test_session_abort_after_three_failures_preserves_history():
         m for m in session.messages if "The task was aborted" in m["content"]
     ]
     assert len(abort_messages) == 1
-    assert is_channel_message(abort_messages[0]["content"], "SYSTEM_NOTE")
+    assert is_channel_message(abort_messages[0]["content"], "HARNESS_NOTICE")
 
     history_str = json.dumps(session.messages)
     assert "terminated" not in history_str
@@ -205,7 +214,7 @@ def test_session_sentinel_channel_wrapping():
     session = _make_session()
     session.notify_file_upload("test.txt", "/tmp/test.txt")
     upload_msg = session.messages[-1]["content"]
-    assert is_channel_message(upload_msg, "SYSTEM_NOTE")
+    assert is_channel_message(upload_msg, "HARNESS_NOTICE")
     assert "test.txt" in upload_msg
 
     session.client = FakeChat([REPLY_VALID, REPLY_RESPOND])
@@ -328,6 +337,86 @@ def test_corrective_status_is_quiet():
     assert len(corrective) == 1
     assert "retrying" in corrective[0]["text"].lower()
     print("PASS corrective retry statuses are quiet")
+
+
+def test_session_tool_results_use_protocol_markers():
+    session = _make_session()
+    session.client = FakeChat([REPLY_VALID, REPLY_RESPOND])
+    session.run_turn("probe")
+
+    tool_msg = next(
+        m["content"]
+        for m in session.messages
+        if is_channel_message(m["content"], "TOOL_RESULTS")
+    )
+    _kind, body = unwrap_channel(tool_msg)
+    assert body.startswith("<tool_results>")
+    assert '<result call="1" tool="smoke_tool" status="ok">' in body
+    assert body.rstrip().endswith("</tool_results>")
+    assert "ran: valid" in body
+    print("PASS tool results use the labeled <tool_results> markers")
+
+
+def test_session_parser_warnings_surface_as_harness_notice():
+    session = _make_session()
+    session.client = FakeChat([REPLY_WITH_TAIL, REPLY_RESPOND])
+    session.run_turn("probe")
+
+    tool_msg = next(
+        m["content"]
+        for m in session.messages
+        if is_channel_message(m["content"], "TOOL_RESULTS")
+    )
+    assert "<harness_notice>" in tool_msg
+    assert "Text after the JSON value was discarded." in tool_msg
+    print("PASS parser warnings surface as harness notices")
+
+
+def test_session_think_and_respond_turn():
+    session = _make_session()
+    session.client = FakeChat([REPLY_THINK_RESPOND])
+    events = []
+    session.on_event = events.append
+    session.run_turn("probe")
+
+    model_messages = [e for e in events if e["type"] == "model_message"]
+    assert len(model_messages) == 1
+    assert model_messages[0]["content"] == "task done"
+    assert not any(e["type"] == "error" for e in events)
+    print("PASS think may precede respond in one reply")
+
+
+def test_session_step_budget_warning_and_exhaustion():
+    session = _make_session()
+    session.max_steps_per_turn = 3
+    session.step_warning_remaining = 1
+    session.client = FakeChat([REPLY_VALID, REPLY_VALID, REPLY_VALID, REPLY_RESPOND])
+    session.run_turn("probe")
+
+    warnings = [
+        m["content"]
+        for m in session.messages
+        if is_channel_message(m["content"], "HARNESS_NOTICE")
+        and "steps left" in m["content"]
+    ]
+    assert len(warnings) == 1
+    assert any("step budget" in m["content"].lower() for m in session.messages)
+    print("PASS step budget warns before the cap and ends the turn after it")
+
+
+def test_session_repeated_identical_calls_get_nudge():
+    session = _make_session()
+    session.client = FakeChat([REPLY_VALID, REPLY_VALID, REPLY_VALID, REPLY_RESPOND])
+    session.run_turn("probe")
+
+    nudges = [
+        m["content"]
+        for m in session.messages
+        if is_channel_message(m["content"], "HARNESS_NOTICE")
+        and "identical call" in m["content"]
+    ]
+    assert len(nudges) == 1
+    print("PASS repeated identical calls trigger a nudge notice")
 
 
 def main():

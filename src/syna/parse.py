@@ -1,30 +1,54 @@
 """Tool call parsing and execution for agent responses under the JSON protocol.
 
-Under the Syna v5 protocol, the model communicates exclusively via JSON. Every
-reply must be either a single tool call object {"tool_name": {...args}} or a
-non-empty array of such objects. Markdown fences are tolerated only as a single
-outer wrapper. Free-form prose and simulated harness blocks are rejected before
-dispatch.
+Under the Syna v5 protocol the model communicates via JSON: every reply is a
+single tool call object or a non-empty array of them, optionally inside one
+code fence or after one <think> block. The parser decodes only the FIRST JSON
+value; any text around it is discarded and reported back to the model as a
+warning, so a fabricated tail can never execute. Validation happens entirely
+before dispatch: on a structural error nothing runs.
+
+Execution is sequential. The first failing call (bad signature, raised
+exception, timeout, or non-zero command exit) stops the batch; the remaining
+calls are reported as "skipped". Every result is labeled with its position,
+tool name, status, and — when available — exit code and the pod path
+(`/tool_outputs/`) holding the full output.
 """
 
 import json
-import re
+import tempfile
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
-from functools import lru_cache
-from typing import Any, Callable
+from pathlib import Path, PurePosixPath
 
-from .config import get_logger, get_project_root, load_config
-from .state import get_registered_container, register_container, unregister_container
+from .config import (
+    get_logger,
+    get_project_root,
+    load_output_limit_chars,
+    load_tool_call_timeout_s,
+)
+from .output import bounded_output
+from .state import (
+    get_container,
+    get_registered_container,
+    next_call_index,
+    pop_last_exit_code,
+    register_container,
+    set_call_output_path,
+    unregister_container,
+)
 from .tools import TOOL_REGISTRY
 
-DEFAULT_TOOL_CALL_TIMEOUT_S = 60
 CONTENT_EXCERPT_CHARS = 300
-DETAIL_RAW_CAP_CHARS = 6000
 
-WRAPPER_FENCE_PATTERN = re.compile(
-    r"^```[A-Za-z0-9_-]*\s*\n?(.*?)\n?\s*```$", re.DOTALL
-)
+TIMEOUT_EXIT_CODES = {124, 137}
+
+TOOLS_PERSISTED_IN_POD = {"execute_command"}
+SKIPPED_CALL_NOTICE = "Skipped: an earlier call in this reply failed."
+
+
+class ReplyFormatError(ValueError):
+    """Raised when a model reply cannot be turned into tool calls."""
 
 
 @dataclass(frozen=True)
@@ -32,14 +56,17 @@ class ParseOutcome:
     """Result of parsing and executing one reply's tool calls.
 
     'structural_error' is set when the reply fails protocol validation
-    (invalid JSON, wrong shape, respond mixed with other calls, or invalid
-    wrappers), in which case nothing is executed. 'outputs' carries one entry
-    per processed call in reply order; entries for calls that never reached
-    dispatch carry "error": True.
+    (invalid JSON, wrong shape, or respond combined with non-think calls), in
+    which case nothing is executed. 'outputs' carries one entry per processed
+    call in reply order, including skipped calls; entries for calls that
+    never reached dispatch carry "error": True. 'warnings' lists protocol
+    tolerances (ignored surrounding text) that the harness surfaces to the
+    model as harness notices.
     """
 
     structural_error: str | None
     outputs: list[dict]
+    warnings: list[str]
 
 
 def _strip_leading_think_block(text: str) -> str:
@@ -52,31 +79,71 @@ def _strip_leading_think_block(text: str) -> str:
     return stripped
 
 
-def _unwrap_single_code_fence(text: str) -> tuple[str, str | None]:
-    """Strip exactly one markdown code fence wrapper if present.
+def _strip_complete_code_fence(text: str) -> str:
+    """Remove one surrounding Markdown code fence if both ends are present."""
+    stripped = text.strip()
+    if not (
+        stripped.startswith("```") and stripped.endswith("```") and "\n" in stripped
+    ):
+        return stripped
+    body = stripped.split("\n", 1)[1]
+    return body[: body.rfind("```")].rstrip()
 
-    Returns a tuple of (inner_content, error_message).
+
+def _decode_reply(text: str) -> tuple[object, list[str]]:
+    """Decode the first JSON value in a reply and report discarded text.
+
+    Returns (value, warnings). Raises ReplyFormatError when no decodable JSON
+    value exists; nothing is ever executed on error.
     """
-    if not text.startswith("```"):
-        if text.endswith("```"):
-            return "", "Malformed response ending with an unopened code fence."
-        return text, None
-
-    match = WRAPPER_FENCE_PATTERN.match(text)
-    if not match:
-        return "", "Unclosed or malformed markdown code fence wrapper."
-
-    inner = match.group(1).strip()
-    if "```" in inner:
-        return (
-            "",
-            "Multiple code fence blocks are not permitted. Provide a single"
-            " JSON payload (an object or an array of objects).",
+    clean_text = text.lstrip("\ufeff")
+    clean_text = _strip_leading_think_block(clean_text)
+    clean_text = _strip_complete_code_fence(clean_text).strip()
+    if not clean_text:
+        raise ReplyFormatError(
+            "Empty response. Your reply must be a valid JSON tool call or"
+            " array of tool calls."
         )
-    return inner, None
+
+    start_positions = [
+        position
+        for position in (clean_text.find("["), clean_text.find("{"))
+        if position != -1
+    ]
+    if not start_positions:
+        # No object or array; still decode bare primitives ("42", '"text"')
+        # so shape validation can report them precisely.
+        try:
+            value, end = json.JSONDecoder(strict=False).raw_decode(clean_text)
+        except json.JSONDecodeError as exc:
+            excerpt = clean_text[:CONTENT_EXCERPT_CHARS]
+            raise ReplyFormatError(
+                "No JSON value found in the response. Reply with a JSON array"
+                f" of tool calls only. Received content excerpt: {excerpt!r}"
+            ) from exc
+        warnings = []
+        if clean_text[end:].strip():
+            warnings.append("Text after the JSON value was discarded.")
+        return value, warnings
+
+    warnings: list[str] = []
+    start = min(start_positions)
+    if clean_text[:start].strip():
+        warnings.append("Text before the JSON value was ignored.")
+    try:
+        value, end = json.JSONDecoder(strict=False).raw_decode(clean_text, start)
+    except json.JSONDecodeError as exc:
+        excerpt = clean_text[:CONTENT_EXCERPT_CHARS]
+        raise ReplyFormatError(
+            f"The response could not be parsed as JSON: {exc}. Nothing was"
+            f" executed. Received content excerpt: {excerpt!r}"
+        ) from exc
+    if clean_text[end:].strip():
+        warnings.append("Text after the JSON value was discarded.")
+    return value, warnings
 
 
-def _describe_json_shape(value: Any) -> str:
+def _describe_json_shape(value: object) -> str:
     """Describe a decoded JSON value's shape for corrective feedback."""
     if isinstance(value, dict):
         keys = ", ".join(repr(key) for key in list(value)[:4])
@@ -94,7 +161,6 @@ def _describe_json_shape(value: Any) -> str:
     return type(value).__name__
 
 
-@lru_cache(maxsize=1)
 def _tool_signatures() -> dict[str, dict]:
     """Return the parsed signature metadata of every tool, keyed by name."""
     from .inspect_module import get_function_metadata
@@ -113,7 +179,7 @@ def _render_signature(tool_name: str, entry: dict) -> str:
     return f"{tool_name}({parameters})"
 
 
-def _json_type_name(value: Any) -> str:
+def _json_type_name(value: object) -> str:
     """Name a JSON value's type for argument type errors."""
     if isinstance(value, bool):
         return "boolean"
@@ -132,7 +198,7 @@ def _json_type_name(value: Any) -> str:
     return type(value).__name__
 
 
-def _simple_type_match(value: Any, annotation: str) -> bool | None:
+def _simple_type_match(value: object, annotation: str) -> bool | None:
     """Match a JSON value against one simple type annotation."""
     if annotation in ("Any", "...", ""):
         return None
@@ -152,7 +218,7 @@ def _simple_type_match(value: Any, annotation: str) -> bool | None:
 
 
 def _argument_type_error(
-    tool_name: str, arg_name: str, value: Any, annotation: str, signature: str
+    tool_name: str, arg_name: str, value: object, annotation: str, signature: str
 ) -> str | None:
     """Return a type-mismatch error for one argument, or None when valid."""
     alternatives = [part.strip() for part in annotation.split("|")]
@@ -225,7 +291,7 @@ def build_signature(tool_name: str, tool_arguments: dict) -> str:
 
 def load_tool_call_timeout() -> float:
     """Return the per-tool-call timeout in seconds from the configuration."""
-    return load_config().get("tool_call_timeout_s", DEFAULT_TOOL_CALL_TIMEOUT_S)
+    return load_tool_call_timeout_s()
 
 
 def build_detached_call_notice(
@@ -243,22 +309,33 @@ def build_detached_call_notice(
 
 
 def execute_tool_with_timeout(
-    tool_name: str, tool_arguments: dict, timeout_s: float
-) -> tuple[Any, bool]:
-    """Run a tool in a worker thread and return an (output, detached) tuple."""
+    tool_name: str,
+    tool_arguments: dict,
+    timeout_s: float,
+    output_path: str | None = None,
+) -> tuple[object, bool, int | None]:
+    """Run a tool in a worker thread and return (output, detached, exit_code).
+
+    The worker inherits the calling thread's container and the call's output
+    path (both are thread-locals), and reports back the exit code recorded by
+    the tool, if any.
+    """
     tool_fn = TOOL_REGISTRY[tool_name]
     container = get_registered_container()
     finished = threading.Event()
-    outcome: dict[str, Any] = {}
+    outcome: dict = {}
 
     def worker():
         if container is not None:
             register_container(container)
+        set_call_output_path(output_path)
         try:
             outcome["output"] = tool_fn(**tool_arguments)
         except BaseException as exc:
             outcome["error"] = exc
         finally:
+            outcome["exit_code"] = pop_last_exit_code()
+            set_call_output_path(None)
             if container is not None:
                 unregister_container()
             finished.set()
@@ -270,44 +347,39 @@ def execute_tool_with_timeout(
     if finished.wait(timeout_s):
         if "error" in outcome:
             raise outcome["error"]
-        return outcome["output"], False
+        return outcome["output"], False, outcome.get("exit_code")
 
-    return build_detached_call_notice(tool_name, tool_arguments, timeout_s), True
+    return build_detached_call_notice(tool_name, tool_arguments, timeout_s), True, None
 
 
-def _validate_raw_payload(text: str) -> tuple[Any, str | None]:
-    """Validate and decode raw model text into a JSON data structure.
+def _persist_tool_output(
+    output_text: str, saved_to: str | None, persist_outputs: bool
+) -> str | None:
+    """Save a host-side tool output into the pod at its call output path.
 
-    Returns (decoded_value, error_message).
+    Uses the calling thread's container when one is bound (web sessions);
+    with `persist_outputs` (CLI sessions) it falls back to the shared pod.
+    The saved path is what the model sees as `saved_to`.
     """
-    clean_text = text.lstrip("\ufeff")
-    clean_text = _strip_leading_think_block(clean_text)
-    clean_text = clean_text.strip()
-    if not clean_text:
-        return (
-            None,
-            "Empty response. Your reply must be a valid JSON tool call or"
-            " array of tool calls.",
-        )
-
-    inner_json, unwrap_error = _unwrap_single_code_fence(clean_text)
-    if unwrap_error is not None:
-        return None, unwrap_error
-
+    container = get_registered_container()
+    if container is None and persist_outputs:
+        container = get_container()
+    if container is None or saved_to is None:
+        return None
     try:
-        data = json.loads(inner_json)
-    except json.JSONDecodeError as exc:
-        excerpt = clean_text[:CONTENT_EXCERPT_CHARS]
-        return (
-            None,
-            f"The response could not be parsed as JSON: {exc}. Received content"
-            f" excerpt: {excerpt!r}",
-        )
+        container.exec(["bash", "-c", "mkdir -p /tool_outputs"])
+        file_name = PurePosixPath(saved_to).name
+        with tempfile.TemporaryDirectory(prefix="syna-persist-") as temp_dir:
+            host_file = Path(temp_dir, file_name)
+            host_file.write_text(output_text, encoding="utf-8", errors="replace")
+            container.copy_to(str(host_file), "/tool_outputs")
+        return saved_to
+    except Exception:
+        get_logger().exception("Failed to persist tool output to %s", saved_to)
+        return None
 
-    return data, None
 
-
-def _extract_tool_calls(data: Any) -> tuple[list[tuple[str, dict, str]], str | None]:
+def _extract_tool_calls(data: object) -> tuple[list[tuple[str, dict, str]], str | None]:
     """Validate the JSON shape and extract a list of (tool_name, arguments, raw_json) tuples."""
     if not isinstance(data, (dict, list)):
         return (
@@ -316,7 +388,7 @@ def _extract_tool_calls(data: Any) -> tuple[list[tuple[str, dict, str]], str | N
             f" {_describe_json_shape(data)}.",
         )
 
-    items: list[Any]
+    items: list[object]
     if isinstance(data, list):
         if not data:
             return (
@@ -357,10 +429,20 @@ def _extract_tool_calls(data: Any) -> tuple[list[tuple[str, dict, str]], str | N
                 f"The arguments for tool '{tool_name}' at index {index} must"
                 f" be a JSON object; got {_describe_json_shape(tool_arguments)}.",
             )
-        raw_json = json.dumps(item)[:DETAIL_RAW_CAP_CHARS]
+        raw_json = json.dumps(item)[:6000]
         calls.append((tool_name, tool_arguments, raw_json))
 
     return calls, None
+
+
+def _enforce_respond_placement(calls: list[tuple[str, dict, str]]) -> str | None:
+    """Reject replies where respond appears twice or beside non-think calls."""
+    names = [tool_name for tool_name, _, _ in calls]
+    if names.count("respond") > 1:
+        return "'respond' may only appear once in a reply. Nothing was executed."
+    if "respond" in names and set(names) - {"respond", "think"}:
+        return "'respond' may only be combined with 'think'. Nothing was executed."
+    return None
 
 
 def parse_and_execute_tools(
@@ -368,57 +450,74 @@ def parse_and_execute_tools(
     on_tool_event: Callable | None = None,
     echo_errors: bool = True,
     tool_timeout_s: float | None = None,
+    persist_outputs: bool = False,
 ) -> ParseOutcome:
-    """Parse pure JSON tool invocations and execute them sequentially.
+    """Parse JSON tool invocations and execute them sequentially.
 
-    Parameters:
+    The first failing call stops the batch; later calls are recorded as
+    skipped. Parameters:
         text: Raw response string from the model.
         on_tool_event: Optional callback receiving tool progress events.
         echo_errors: Whether to echo failure summaries to standard output.
         tool_timeout_s: Execution timeout per individual tool call in seconds.
+        persist_outputs: Whether host-side tool outputs may be saved into a
+            lazily created shared pod (CLI). Web sessions persist through the
+            thread's bound container regardless.
     """
     if tool_timeout_s is None:
         tool_timeout_s = load_tool_call_timeout()
     logger = get_logger()
+    output_limit = load_output_limit_chars()
 
-    data, validation_error = _validate_raw_payload(text)
-    if validation_error is not None:
-        logger.warning("Response failed validation: %s", validation_error)
-        return ParseOutcome(validation_error, [])
+    try:
+        data, warnings = _decode_reply(text)
+    except ReplyFormatError as exc:
+        structural_error = str(exc)
+        logger.warning("Response failed validation: %s", structural_error)
+        return ParseOutcome(structural_error, [], [])
 
     calls, shape_error = _extract_tool_calls(data)
     if shape_error is not None:
+        structural_error = " ".join([*warnings, shape_error]).strip()
         logger.warning("Response shape invalid: %s", shape_error)
-        return ParseOutcome(shape_error, [])
+        return ParseOutcome(structural_error, [], warnings)
 
-    has_respond = any(tool_name == "respond" for tool_name, _, _ in calls)
-    if has_respond and len(calls) > 1:
-        respond_error = (
-            "The 'respond' tool cannot be combined with other tool calls in the"
-            " same reply. 'respond' must be alone in its reply. Nothing was"
-            " executed."
-        )
+    respond_error = _enforce_respond_placement(calls)
+    if respond_error is not None:
         logger.warning(respond_error)
-        return ParseOutcome(respond_error, [])
+        return ParseOutcome(respond_error, [], warnings)
 
     outputs: list[dict] = []
+    failure_occurred = False
 
-    def _record_never_ran(entry_name: str, entry_signature: str, output: str, raw: str):
-        if echo_errors:
-            print(f"  ! ({output[:80]})")
+    def emit(status, name, call_signature, output=None, raw="", arguments=None, **extra):
+        """Forward one tool progress event to the session's listener."""
         if on_tool_event is not None:
-            on_tool_event("error", entry_name, entry_signature, output=output, raw=raw)
-        outputs.append(
-            {
-                "name": entry_name,
-                "signature": entry_signature,
-                "output": output,
-                "error": True,
-            }
-        )
+            on_tool_event(
+                status, name, call_signature, output=output, raw=raw,
+                arguments=arguments, **extra,
+            )
 
-    for tool_name, tool_arguments, raw in calls:
+    for position, (tool_name, tool_arguments, raw) in enumerate(calls, start=1):
         signature = build_signature(tool_name, tool_arguments)
+
+        if failure_occurred:
+            emit("started", tool_name, signature, raw=raw, arguments=tool_arguments)
+            emit(
+                "skipped", tool_name, signature, output=SKIPPED_CALL_NOTICE,
+                raw=raw, arguments=tool_arguments,
+            )
+            outputs.append(
+                {
+                    "call": position,
+                    "name": tool_name,
+                    "signature": signature,
+                    "output": SKIPPED_CALL_NOTICE,
+                    "status": "skipped",
+                    "error": True,
+                }
+            )
+            continue
 
         if tool_name not in TOOL_REGISTRY:
             output = (
@@ -428,38 +527,22 @@ def parse_and_execute_tools(
             logger.warning(output)
             if echo_errors:
                 print(f"  ! ({output})")
-            if on_tool_event is not None:
-                on_tool_event(
-                    "started",
-                    tool_name,
-                    signature,
-                    raw=raw,
-                    arguments=tool_arguments,
-                )
-                on_tool_event(
-                    "error",
-                    tool_name,
-                    signature,
-                    output=output,
-                    raw=raw,
-                    arguments=tool_arguments,
-                )
-                on_tool_event(
-                    "finished",
-                    tool_name,
-                    signature,
-                    output,
-                    raw=raw,
-                    arguments=tool_arguments,
-                )
+            emit("started", tool_name, signature, raw=raw, arguments=tool_arguments)
+            emit("error", tool_name, signature, output=output, raw=raw,
+                 arguments=tool_arguments)
+            emit("finished", tool_name, signature, output, raw=raw,
+                 arguments=tool_arguments, failed=True)
             outputs.append(
                 {
+                    "call": position,
                     "name": tool_name,
                     "signature": signature,
                     "output": output,
+                    "status": "error",
                     "error": True,
                 }
             )
+            failure_occurred = True
             continue
 
         argument_error = _signature_error(tool_name, tool_arguments)
@@ -467,99 +550,99 @@ def parse_and_execute_tools(
             logger.warning(argument_error)
             if echo_errors:
                 print(f"  ! ({argument_error[:80]})")
-            if on_tool_event is not None:
-                on_tool_event(
-                    "started",
-                    tool_name,
-                    signature,
-                    raw=raw,
-                    arguments=tool_arguments,
-                )
-                on_tool_event(
-                    "error",
-                    tool_name,
-                    signature,
-                    output=argument_error,
-                    raw=raw,
-                    arguments=tool_arguments,
-                )
-                on_tool_event(
-                    "finished",
-                    tool_name,
-                    signature,
-                    argument_error,
-                    raw=raw,
-                    arguments=tool_arguments,
-                )
+            emit("started", tool_name, signature, raw=raw, arguments=tool_arguments)
+            emit("error", tool_name, signature, output=argument_error, raw=raw,
+                 arguments=tool_arguments)
+            emit("finished", tool_name, signature, argument_error, raw=raw,
+                 arguments=tool_arguments, failed=True)
             outputs.append(
                 {
+                    "call": position,
                     "name": tool_name,
                     "signature": signature,
                     "output": argument_error,
+                    "status": "error",
                     "error": True,
                 }
             )
+            failure_occurred = True
             continue
 
-        if on_tool_event is not None:
-            on_tool_event(
-                "started",
-                tool_name,
-                signature,
-                raw=raw,
-                arguments=tool_arguments,
-            )
+        emit("started", tool_name, signature, raw=raw, arguments=tool_arguments)
 
+        call_output_path = f"/tool_outputs/{next_call_index():04d}_{tool_name}.txt"
         try:
-            output, detached = execute_tool_with_timeout(
-                tool_name, tool_arguments, tool_timeout_s
+            output, detached, exit_code = execute_tool_with_timeout(
+                tool_name, tool_arguments, tool_timeout_s, call_output_path
             )
         except Exception as exc:
             if echo_errors:
                 print(f"  ! (Tool execution failed: {str(exc)[:64]})")
             output = f"Tool execution error: {exc}"
             detached = False
-            if on_tool_event is not None:
-                on_tool_event(
-                    "error",
-                    tool_name,
-                    signature,
-                    output=output,
-                    raw=raw,
-                    arguments=tool_arguments,
+            exit_code = None
+            status = "error"
+            failure_occurred = True
+        else:
+            if detached:
+                status = "timeout"
+                failure_occurred = True
+            elif exit_code is not None and exit_code != 0:
+                status = (
+                    "timeout" if exit_code in TIMEOUT_EXIT_CODES else "error"
                 )
+                failure_occurred = True
+            else:
+                status = "ok"
 
-        if detached:
-            if echo_errors:
-                print(f"  ! (Tool call detached after {tool_timeout_s} seconds)")
-            logger.warning(
-                "Tool call detached after %s seconds: %s",
-                tool_timeout_s,
-                signature,
+        if tool_name == "think":
+            emit("finished", tool_name, signature, output, raw=raw,
+                 arguments=tool_arguments)
+            continue
+
+        if tool_name in TOOLS_PERSISTED_IN_POD:
+            saved_to = call_output_path if exit_code is not None else None
+        else:
+            saved_to = _persist_tool_output(
+                str(output), call_output_path, persist_outputs
             )
-            if on_tool_event is not None:
-                on_tool_event(
-                    "error",
-                    tool_name,
-                    signature,
-                    output=output,
-                    raw=raw,
-                    arguments=tool_arguments,
-                )
 
-        if on_tool_event is not None:
-            on_tool_event(
-                "finished",
+        failed_run = status in ("error", "timeout")
+        model_output = bounded_output(str(output), output_limit, saved_to)
+        if failed_run and echo_errors:
+            print(f"  ! ({status}: {str(output)[:80]})")
+
+        if failed_run:
+            emit(
+                "error",
                 tool_name,
                 signature,
-                output,
+                output=model_output,
                 raw=raw,
                 arguments=tool_arguments,
             )
+        emit(
+            "finished",
+            tool_name,
+            signature,
+            model_output,
+            raw=raw,
+            arguments=tool_arguments,
+            failed=failed_run,
+        )
+        outputs.append(
+            {
+                "call": position,
+                "name": tool_name,
+                "signature": signature,
+                "output": model_output,
+                "status": status,
+                **({"exit_code": exit_code} if exit_code is not None else {}),
+                **({"saved_to": saved_to} if saved_to else {}),
+            }
+        )
 
-        outputs.append({"name": tool_name, "signature": signature, "output": output})
-
-    return ParseOutcome(None, outputs)
+    return ParseOutcome(None, outputs, warnings)
 
 
 parse_and_execute_reply = parse_and_execute_tools

@@ -23,7 +23,8 @@ def wrap_channel(kind: str, body: str) -> str:
     """Wrap content in system sentinel markers with a specific channel kind.
 
     Parameters:
-        kind: Channel identifier such as TOOL_RESULTS, SYSTEM_NOTE, or COMPACTION.
+        kind: Channel identifier such as TOOL_RESULTS, HARNESS_NOTICE, or
+        COMPACTION.
         body: Plain text or JSON payload of the message.
     """
     normalized_kind = kind.strip().upper()
@@ -68,3 +69,34 @@ def contains_sentinel(text: str) -> bool:
 def defang_sentinels(text: str) -> str:
     """Replace raw and escaped sentinel characters with safe placeholder text."""
     return SENTINEL_PATTERN.sub("[FORBIDDEN_SENTINEL]", text)
+
+
+HARNESS_NOTICE_OPEN = "<harness_notice>"
+HARNESS_NOTICE_CLOSE = "</harness_notice>"
+
+IMPERSONATABLE_MARKERS = (
+    "<tool_results",
+    "</tool_results",
+    "<result",
+    "</result",
+    HARNESS_NOTICE_OPEN,
+    HARNESS_NOTICE_CLOSE,
+)
+
+
+def harness_notice(text: str) -> str:
+    """Wrap a harness message body in the notice tags the system prompt describes."""
+    return f"{HARNESS_NOTICE_OPEN}\n{text.strip()}\n{HARNESS_NOTICE_CLOSE}"
+
+
+def escape_channel_text(text: str) -> str:
+    """Neutralize channel markers and sentinels inside untrusted text.
+
+    Tool output is data and may deliberately contain harness marker strings
+    or sentinel characters to forge system messages. Escaping them keeps the
+    framing of <tool_results> and <harness_notice> blocks unambiguous.
+    """
+    escaped = defang_sentinels(text)
+    for marker in IMPERSONATABLE_MARKERS:
+        escaped = escaped.replace(marker, marker.replace("<", "&lt;", 1))
+    return escaped

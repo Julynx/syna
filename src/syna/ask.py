@@ -43,7 +43,7 @@ def _handle_slash_command(query: str, session: AgentSession):
 def ask_loop():
     """Execute the interactive conversation and tool execution loop."""
     show_welcome()
-    session = AgentSession(on_event=_print_event)
+    session = AgentSession(on_event=_print_event, persist_outputs=True)
     with session.client:
         while True:
             query = input("(Ask Syna): ")

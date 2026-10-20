@@ -1,7 +1,7 @@
 """Reusable agent session shared by the CLI and the web server."""
 
-import json
 import threading
+from datetime import date
 
 from openrouter import OpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
@@ -10,6 +10,8 @@ from .ask_utils import ReplyRejected, ask_question
 from .channel import (
     contains_sentinel,
     defang_sentinels,
+    escape_channel_text,
+    harness_notice,
     is_channel_message,
     wrap_channel,
 )
@@ -23,7 +25,9 @@ from .config import (
     get_logger,
     get_project_root,
     get_session_dump_path,
+    load_command_timeout_s,
     load_config,
+    load_output_limit_chars,
 )
 from .parse import parse_and_execute_tools
 
@@ -32,8 +36,10 @@ DETAIL_CAP_CHARS = 6000
 DEFAULT_REQUEST_DELAY_S = 2
 DEFAULT_MAX_HISTORY_MESSAGES = 100
 DEFAULT_ENABLE_COMPACTION = True
+DEFAULT_MAX_STEPS_PER_TURN = 100
+DEFAULT_STEP_WARNING_REMAINING = 20
 MAX_NO_TOOL_RETRIES = 3
-SYSTEM_NOTE_PREFIX = "[System]: "
+REPEATED_CALL_LIMIT = 3
 
 VALID_THINKING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
@@ -52,46 +58,65 @@ def load_thinking_effort():
     return effort
 
 
-def build_tool_format_warning(response: str) -> str:
-    """Compose the retry warning for a response without a tool call."""
-    return (
-        "WARNING: Your previous message contained no executable tool calls.\n"
-        "Under the Syna protocol, your entire reply must be a single JSON tool"
-        " call object or an array of tool call objects.\n"
-        "Example of a single tool call:\n"
-        '{"tool_name": {"argument": "value"}}\n\n'
-        "Example of multiple tool calls:\n"
-        '[{"tool_1": {"argument": "value"}}, {"tool_2": {"argument": "value"}}]\n\n'
-        "- Text outside JSON is not permitted.\n"
-        '- To end the task and talk to the user, call the tool "respond".\n'
-        '- "respond" must be alone in its reply.\n'
-        "After repeated violations the task is ended and control returns to the user."
-    )
-
-
 def build_unparsed_tool_warning(reasons: list[str] | None = None) -> str:
     """Compose the corrective warning for tool markup that executed nothing."""
-    warning = "WARNING: Your reply could not be executed as a valid tool call."
+    warning = "Your reply could not be executed as a valid tool call."
     if reasons:
         listed = "".join(f"\n- {reason[:250]}" for reason in reasons[:3])
         warning += f" The parser reported:{listed}"
     warning += (
-        "\n\nEvery reply must be a valid JSON object or array of objects"
-        ' of the form {"tool_name": {"argument": "value"}}.'
-        ' "respond" must be alone in its reply.'
+        "\n\nEvery reply must be a JSON array of one or more tool calls"
+        ' of the form {"tool_name": {"argument": "value"}} (a single JSON'
+        " object is also tolerated). Nothing outside the JSON is executed."
         " After repeated violations the task is ended and control returns to the user."
     )
     return warning
 
 
+def build_think_only_warning() -> str:
+    """Compose the notice for a reply that only recorded reasoning."""
+    return (
+        "Your reply contained only 'think' calls, which produce no result:"
+        " nothing ran and the task did not advance. Continue with a tool"
+        ' call (or "respond" when the task is done).'
+    )
+
+
 def build_sentinel_violation_warning() -> str:
     """Compose the corrective warning for channel impersonation attempts."""
     return (
-        "WARNING: Your reply contained reserved system channel sentinels."
-        " System messages arrive through a separate channel that you"
+        "Your reply contained reserved system channel sentinels."
+        " Results and notices arrive through a separate channel that you"
         " cannot write. Provide pure JSON tool calls only."
         " After repeated violations the task is ended and control returns to the user."
     )
+
+
+def build_tool_results_body(outputs: list[dict], warnings: list[str]) -> str:
+    """Render tool results and parser warnings in the protocol's markers.
+
+    Each result is labeled with its position in the model's array, the tool
+    name, its status, and — when available — exit code and the pod path
+    holding the full output. Untrusted output text is escaped so it cannot
+    forge the surrounding markers.
+    """
+    parts = ["<tool_results>"]
+    for entry in outputs:
+        attributes = (
+            f'call="{entry["call"]}" tool="{entry["name"]}"'
+            f' status="{entry["status"]}"'
+        )
+        if entry.get("exit_code") is not None:
+            attributes += f' exit_code="{entry["exit_code"]}"'
+        if entry.get("saved_to"):
+            attributes += f' saved_to="{entry["saved_to"]}"'
+        parts.append(f"<result {attributes}>")
+        parts.append(escape_channel_text(str(entry["output"])))
+        parts.append("</result>")
+    parts.append("</tool_results>")
+    for warning in warnings:
+        parts.append(harness_notice(warning))
+    return "\n".join(parts)
 
 
 class TurnCancelled(Exception):
@@ -99,21 +124,17 @@ class TurnCancelled(Exception):
 
 
 def build_prompt():
-    """Build the system prompt template populated with tool definitions."""
+    """Build the system prompt with tool docs, date, and limits filled in."""
     root = get_project_root()
     template = (root / "assets" / "prompt.md").read_text(encoding="utf-8")
     tools = _get_tool_metadata(root / "src" / "syna" / "tools.py")
 
-    tool_blocks = []
-    for tool in tools:
-        args_dict = {arg["name"]: f"<{arg['type']}>" for arg in tool["arguments"]}
-        body_json = json.dumps({tool["name"]: args_dict}, indent=2)
-        tool_blocks.append(f"### {tool['name']}")
-        tool_blocks.append(f"{tool['docstring']}")
-        tool_blocks.append(f"```json\n{body_json}\n```")
-
-    tool_str = "\n\n".join(tool_blocks)
-    return template.replace("{tools}", tool_str)
+    tool_blocks = [f"### {tool['name']}\n{tool['docstring']}" for tool in tools]
+    prompt = template.replace("{tools}", "\n\n".join(tool_blocks))
+    prompt = prompt.replace("{{CURRENT_DATE}}", date.today().isoformat())
+    prompt = prompt.replace("{{COMMAND_TIMEOUT}}", str(load_command_timeout_s()))
+    prompt = prompt.replace("{{OUTPUT_LIMIT}}", str(load_output_limit_chars()))
+    return prompt
 
 
 def _get_tool_metadata(tools_path):
@@ -172,16 +193,24 @@ class AgentSession:
         on_event=None,
         request_delay: float = DEFAULT_REQUEST_DELAY_S,
         emit_tool_errors: bool = False,
+        persist_outputs: bool = False,
         session_id: str | None = None,
     ):
         self.on_event = on_event or (lambda event: None)
         self.request_delay = request_delay
         self.emit_tool_errors = emit_tool_errors
+        self.persist_outputs = persist_outputs
         self.max_history_messages = load_config().get(
             "max_history_messages", DEFAULT_MAX_HISTORY_MESSAGES
         )
         self.compaction_enabled = load_config().get(
             "enable_compaction", DEFAULT_ENABLE_COMPACTION
+        )
+        self.max_steps_per_turn = load_config().get(
+            "max_steps_per_turn", DEFAULT_MAX_STEPS_PER_TURN
+        )
+        self.step_warning_remaining = load_config().get(
+            "step_warning_remaining", DEFAULT_STEP_WARNING_REMAINING
         )
         self.compaction_prompt = load_compaction_prompt()
         self.messages: list[dict] = []
@@ -219,7 +248,7 @@ class AgentSession:
         )
         msg = {
             "role": "user",
-            "content": wrap_channel("SYSTEM_NOTE", notice),
+            "content": wrap_channel("HARNESS_NOTICE", harness_notice(notice)),
         }
         self.messages.append(msg)
         logger.info(str(msg))
@@ -254,9 +283,33 @@ class AgentSession:
         logger.info(str(msg))
 
         no_tool_streak = 0
+        steps_used = 0
+        step_warning_sent = False
+        repeated_calls: dict[str, int] = {}
         while True:
             try:
                 self._check_cancelled()
+                steps_used += 1
+                remaining_steps = self.max_steps_per_turn - steps_used
+                if remaining_steps < 0:
+                    self._abort_turn(
+                        logger,
+                        "The step budget for this task ran out. Report what was"
+                        " done, what was verified, and what remains.",
+                        f"Step budget exhausted after {self.max_steps_per_turn} steps.",
+                    )
+                    return
+                if (
+                    not step_warning_sent
+                    and remaining_steps <= self.step_warning_remaining
+                ):
+                    step_warning_sent = True
+                    self._append_harness_notice(
+                        f"You have {remaining_steps} steps left. Finish up:"
+                        " save your notes, verify your results, and respond"
+                        " with your status.",
+                        "Step budget warning sent.",
+                    )
                 self._compact_history_if_needed()
                 self._emit({"type": "status", "text": "Thinking..."})
                 response = ask_question(
@@ -298,6 +351,7 @@ class AgentSession:
                     response,
                     on_tool_event=self._on_tool_event,
                     echo_errors=not self.emit_tool_errors,
+                    persist_outputs=self.persist_outputs,
                 )
             except TurnCancelled:
                 self._finish_cancelled_turn()
@@ -324,8 +378,8 @@ class AgentSession:
                     return
                 self._append_corrective_warning(
                     response,
-                    build_tool_format_warning(response),
-                    "No tool detected, retrying...",
+                    build_think_only_warning(),
+                    "No executable tool call, retrying...",
                 )
                 continue
 
@@ -356,20 +410,55 @@ class AgentSession:
                 self._emit({"type": "model_message", "content": respond_tool["output"]})
                 return
 
-            tool_results_str = json.dumps(outcome.outputs)
+            tool_results_str = build_tool_results_body(
+                outcome.outputs, outcome.warnings
+            )
             msg = {
                 "role": "user",
                 "content": wrap_channel("TOOL_RESULTS", tool_results_str),
             }
             self.messages.append(msg)
             logger.info(str(msg))
+            self._nudge_on_repeated_calls(outcome.outputs, repeated_calls)
+
+    def _nudge_on_repeated_calls(self, outputs: list[dict], counts: dict[str, int]):
+        """Warn once when identical calls repeat within the same turn."""
+        for result in outputs:
+            if result["name"] in ("think", "respond") or result.get("error"):
+                continue
+            signature = result["signature"]
+            counts[signature] = counts.get(signature, 0) + 1
+            if counts[signature] == REPEATED_CALL_LIMIT:
+                short_signature = signature[:160]
+                self._append_harness_notice(
+                    "You have made this identical call"
+                    f" {REPEATED_CALL_LIMIT} times: {short_signature}."
+                    " Repeating it will not change the result. Read the error,"
+                    " change something, or try a different approach.",
+                    "Repeated identical call detected.",
+                )
+
+    def _append_harness_notice(self, notice: str, status_text: str):
+        """Append a mid-turn harness notice that does not count as a failure."""
+        logger = get_logger()
+        logger.info("%s: %s", status_text, notice)
+        self._emit({"type": "status", "text": status_text, "quiet": True})
+        msg = {
+            "role": "user",
+            "content": wrap_channel("HARNESS_NOTICE", harness_notice(notice)),
+        }
+        self.messages.append(msg)
+        logger.info(str(msg))
 
     def _append_corrective_warning(self, response: str, warning: str, status_text: str):
-        """Append a corrective SYSTEM_NOTE warning directly after the failed reply."""
+        """Append a corrective harness notice directly after the failed reply."""
         logger = get_logger()
         logger.warning("%s: %.200r", status_text, response)
         self._emit({"type": "status", "text": status_text, "quiet": True})
-        msg = {"role": "user", "content": wrap_channel("SYSTEM_NOTE", warning)}
+        msg = {
+            "role": "user",
+            "content": wrap_channel("HARNESS_NOTICE", harness_notice(warning)),
+        }
         self.messages.append(msg)
         self._pending_failed_messages.append(msg)
         logger.info(str(msg))
@@ -446,47 +535,47 @@ class AgentSession:
                 for index, message in enumerate(history)
                 if message["role"] == "user"
                 and not is_channel_message(message["content"])
-                and not message["content"].startswith(SYSTEM_NOTE_PREFIX)
             ),
             None,
         )
 
-    def _abort_turn(self, logger):
+    def _abort_turn(self, logger, notice: str | None = None, error_text: str | None = None):
         """Record the abort in the history and hand control back to the user."""
-        notice = (
-            "The task was aborted because you weren't able to"
-            " follow the instructions to call a tool properly."
-        )
+        if notice is None:
+            notice = (
+                "The task was aborted because you weren't able to"
+                " follow the instructions to call a tool properly."
+            )
+        if error_text is None:
+            error_text = (
+                "Task aborted: no valid tool call after"
+                f" {MAX_NO_TOOL_RETRIES} consecutive attempts."
+            )
         msg = {
             "role": "user",
-            "content": wrap_channel("SYSTEM_NOTE", notice),
+            "content": wrap_channel("HARNESS_NOTICE", harness_notice(notice)),
         }
         self.messages.append(msg)
         self._pending_failed_messages.clear()
         logger.info(str(msg))
-        self._emit(
-            {
-                "type": "error",
-                "text": (
-                    "Task aborted: no valid tool call after"
-                    f" {MAX_NO_TOOL_RETRIES} consecutive attempts."
-                ),
-            }
-        )
+        self._emit({"type": "error", "text": error_text})
 
     def _finish_cancelled_turn(self):
         """Record the interruption in the conversation and notify listeners."""
         logger = get_logger()
         msg = {
             "role": "user",
-            "content": wrap_channel("SYSTEM_NOTE", "The user interrupted the task."),
+            "content": wrap_channel(
+                "HARNESS_NOTICE",
+                harness_notice("The user interrupted the task."),
+            ),
         }
         self.messages.append(msg)
         logger.info(str(msg))
         self._emit({"type": "status", "text": "Interrupted."})
 
     def _on_tool_event(
-        self, status, name, signature, output=None, raw="", arguments=None
+        self, status, name, signature, output=None, raw="", arguments=None, failed=False
     ):
         """Translate parser tool events into session events."""
         if name == "respond":
@@ -546,7 +635,7 @@ class AgentSession:
             "output": _detail_text(output),
             "output_preview": _preview_text(output),
         }
-        if self._tool_errored:
+        if self._tool_errored or failed:
             event["failed"] = True
         if name == "share_file":
             event["output"] = output

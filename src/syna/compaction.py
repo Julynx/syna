@@ -1,6 +1,6 @@
 """Transcript rendering and request assembly for history compaction."""
 
-from .channel import is_channel_message, unwrap_channel, wrap_channel
+from .channel import harness_notice, is_channel_message, unwrap_channel, wrap_channel
 from .config import get_project_root
 
 COMPACTION_CHANNEL_KIND = "COMPACTION"
@@ -14,12 +14,12 @@ def load_compaction_prompt() -> str:
 
 
 def format_compaction_message(summary: str) -> str:
-    """Format a compaction summary into a channel-wrapped message content."""
+    """Format a compaction summary into a harness notice on the compaction channel."""
     explanation = (
-        "The conversation grew too long, so the earlier messages (except the first)"
-        f" were replaced by the following summary:\n\n{summary.strip()}"
+        "The conversation grew too long, so the earlier messages (except the"
+        f" first) were replaced by the following summary:\n\n{summary.strip()}"
     )
-    return wrap_channel(COMPACTION_CHANNEL_KIND, explanation)
+    return wrap_channel(COMPACTION_CHANNEL_KIND, harness_notice(explanation))
 
 
 def is_summary_message(content: str) -> bool:

@@ -9,6 +9,15 @@ from typing import Any
 
 from dotenv import dotenv_values
 
+DEFAULT_COMMAND_TIMEOUT_S = 50
+DEFAULT_TOOL_CALL_TIMEOUT_S = 60
+DEFAULT_OUTPUT_LIMIT_CHARS = 40000
+
+
+def load_output_limit_chars() -> int:
+    """Return the character limit at which tool output is cut to head and tail."""
+    return load_config().get("max_command_output_chars", DEFAULT_OUTPUT_LIMIT_CHARS)
+
 
 @lru_cache(maxsize=1)
 def get_env() -> dict[str, str]:
@@ -70,23 +79,11 @@ def get_session_dump_path(session_id: str | None = None) -> Path:
     return get_project_root() / dump_file_name
 
 
-def truncate_command_output(output: str, max_chars: int | None = None) -> str:
-    """Truncate command output exceeding character limit with an explanatory notice."""
-    if not isinstance(output, str):
-        output = str(output)
+def load_command_timeout_s() -> int:
+    """Return the per-command timeout in seconds from the configuration."""
+    return load_config().get("command_timeout_s", DEFAULT_COMMAND_TIMEOUT_S)
 
-    if max_chars is None:
-        config = load_config()
-        max_chars = config.get("max_command_output_chars", 4000)
 
-    if len(output) <= max_chars:
-        return output
-
-    total_chars = len(output)
-    truncated_content = output[:max_chars]
-    notice = (
-        f"\n\n[Output truncated: displaying first {max_chars}"
-        f" of {total_chars} characters. "
-        "Filter or refine your command to view specific output.]"
-    )
-    return f"{truncated_content}{notice}"
+def load_tool_call_timeout_s() -> float:
+    """Return the per-tool-call timeout in seconds from the configuration."""
+    return load_config().get("tool_call_timeout_s", DEFAULT_TOOL_CALL_TIMEOUT_S)

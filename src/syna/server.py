@@ -62,6 +62,7 @@ class SessionRecord:
         self.session = AgentSession(
             on_event=self._on_session_event,
             emit_tool_errors=True,
+            persist_outputs=True,
             session_id=client_id,
         )
         self.worker = threading.Thread(

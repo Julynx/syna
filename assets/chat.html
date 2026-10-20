@@ -2385,16 +2385,20 @@ const ICONS = {
   check: GLYPH("check", "i-check"),
   history: GLYPH("history"),
   mic: GLYPH("mic"),
+  think: GLYPH("psychology"),
+  image: GLYPH("image"),
   speakerOn: GLYPH("record_voice_over", "s-on"),
   speakerOff: GLYPH("voice_over_off", "s-off"),
 };
 
 const TOOL_META = {
+  think: { verb: "Noted", icon: ICONS.think, key: "thought" },
   execute_command: { verb: "Ran command", icon: ICONS.terminal, key: "command" },
   web_interact: { verb: "Browsed", icon: ICONS.globe },
   web_search: { verb: "Searched", icon: ICONS.search, key: "query" },
   read_file: { verb: "Read file", icon: ICONS.eye, key: "file_path" },
   edit_file: { verb: "Edited file", icon: ICONS.pencil, key: "file_path" },
+  describe_image: { verb: "Described image", icon: ICONS.image, key: "file_path" },
   share_file: { verb: "Share file", icon: ICONS.share, key: "path" },
 };
 
