@@ -18,6 +18,7 @@
   "step_warning_remaining": 20,
   "context_budget_tokens": 100000,
   "elide_keep_recent_messages": 12,
+  "elide_interval_messages": 30,
   "max_history_messages": 100,
   "enable_compaction": true,
   "max_visible_tool_calls": 3,

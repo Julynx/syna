@@ -41,6 +41,7 @@ DEFAULT_MAX_STEPS_PER_TURN = 100
 DEFAULT_STEP_WARNING_REMAINING = 20
 DEFAULT_CONTEXT_BUDGET_TOKENS = 100000
 DEFAULT_ELIDE_KEEP_RECENT = 12
+DEFAULT_ELIDE_INTERVAL_MESSAGES = 30
 MAX_NO_TOOL_RETRIES = 3
 REPEATED_CALL_LIMIT = 3
 
@@ -238,6 +239,9 @@ class AgentSession:
         )
         self.elide_keep_recent_messages = load_config().get(
             "elide_keep_recent_messages", DEFAULT_ELIDE_KEEP_RECENT
+        )
+        self.elide_interval_messages = load_config().get(
+            "elide_interval_messages", DEFAULT_ELIDE_INTERVAL_MESSAGES
         )
         self.compaction_prompt = load_compaction_prompt()
         self.messages: list[dict] = []
@@ -519,31 +523,48 @@ class AgentSession:
         self._pending_failed_messages.append(msg)
         logger.info(str(msg))
 
+    def _elide_old_outputs(self, history, total_tokens, logger) -> int:
+        """Elide saved tool outputs once history passes its interval.
+
+        Elision runs when the message count reaches
+        `elide_interval_messages` — keeping prompts small throughout a long
+        run without waiting for the token budget — and whenever the budget
+        is exceeded regardless of count. Lossless: elided output stays
+        readable in the pod at its saved_to path.
+        """
+        interval = self.elide_interval_messages
+        interval_reached = bool(interval) and len(history) >= interval
+        if not (interval_reached or total_tokens > self.context_budget_tokens):
+            return 0
+        elided = elide_tool_outputs(self.messages, self.elide_keep_recent_messages)
+        if elided:
+            logger.info("Elided %d old tool outputs from history", elided)
+            self._emit(
+                {
+                    "type": "status",
+                    "text": "Trimmed old tool outputs...",
+                    "quiet": True,
+                }
+            )
+        return elided
+
     def _compact_history_if_needed(self):
         """Keep history within budget: elide old outputs, then summarize.
 
         Eliding is lossless — elided outputs remain readable in the pod at
-        their saved_to paths. Summarization is the lossy fallback and only
-        runs when the message count hits its interval or the token budget
-        is still exceeded after eliding.
+        their saved_to paths. It runs on its own message-count interval so
+        prompts stay small throughout a long run, and additionally whenever
+        the token budget is exceeded. Summarization is the lossy fallback and
+        only runs when the message count hits its interval or the token
+        budget is still exceeded after eliding.
         """
         if not self.compaction_enabled:
             return
         logger = get_logger()
         history = self.messages[1:]
         total_tokens = estimate_history_tokens(self.messages)
-        if total_tokens > self.context_budget_tokens:
-            elided = elide_tool_outputs(self.messages, self.elide_keep_recent_messages)
-            if elided:
-                logger.info("Elided %d old tool outputs from history", elided)
-                self._emit(
-                    {
-                        "type": "status",
-                        "text": "Trimmed old tool outputs...",
-                        "quiet": True,
-                    }
-                )
-                total_tokens = estimate_history_tokens(self.messages)
+        if self._elide_old_outputs(history, total_tokens, logger):
+            total_tokens = estimate_history_tokens(self.messages)
         if (
             len(history) < self.max_history_messages
             and total_tokens <= self.context_budget_tokens

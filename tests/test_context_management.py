@@ -167,6 +167,45 @@ def test_session_elides_old_outputs_under_token_budget():
     assert "ran: " not in body
 
 
+def test_session_elides_old_outputs_on_message_interval():
+    TOOL_REGISTRY["smoke_tool"] = lambda label="unlabeled": f"ran: {label}"
+    pod = FakePod()
+    register_container(pod)
+    try:
+        from syna.session import AgentSession
+
+        session = AgentSession(session_id="context-interval-test")
+        session.dump_path = Path(tempfile.mkdtemp(prefix="syna-context-")) / "dump.json"
+        session.request_delay = 0
+        session.context_budget_tokens = 10**9
+        session.max_history_messages = 10**6
+        session.elide_keep_recent_messages = 1
+        session.elide_interval_messages = 2
+        session.client = FakeChat(
+            [
+                json.dumps({"smoke_tool": {"label": "first"}}),
+                json.dumps({"smoke_tool": {"label": "second"}}),
+                json.dumps({"respond": {"text": "done"}}),
+            ]
+        )
+        session.run_turn("probe")
+    finally:
+        unregister_container()
+        TOOL_REGISTRY.pop("smoke_tool", None)
+
+    assert not session.client.replies, "summarization must not run"
+
+    tool_messages = [
+        m for m in session.messages if is_channel_message(m["content"], "TOOL_RESULTS")
+    ]
+    assert len(tool_messages) == 2
+    _, first_body = unwrap_channel(tool_messages[0]["content"])
+    _, second_body = unwrap_channel(tool_messages[1]["content"])
+    assert "[output elided; full text in /tool_outputs/" in first_body
+    assert "ran: first" not in first_body
+    assert "ran: second" in second_body, "recent output must stay intact"
+
+
 class FakeMessage:
     def __init__(self, content):
         self.content = content
@@ -205,6 +244,7 @@ def main():
     test_pod_host_config_assembles_limits()
     test_pod_host_config_allows_unset_limits()
     test_session_elides_old_outputs_under_token_budget()
+    test_session_elides_old_outputs_on_message_interval()
     print("ALL CONTEXT AND POD LIMIT TESTS PASSED")
 
 
