@@ -117,6 +117,7 @@ def main():
                     {"smoke_exec": {"command": "echo never runs"}},
                 ]
             ),
+            json.dumps({"think": {"thought": "The file is missing; use echo instead."}}),
             json.dumps(
                 [
                     {"think": {"thought": "The cat failed because the file is missing; use echo instead."}},
@@ -130,8 +131,9 @@ def main():
         session.client = FakeChat(replies)
         session.run_turn("Search for the topic and read missing_thing.")
 
-        # 1. Exactly three model requests were made.
-        assert len(session.client.requests) == 3, len(session.client.requests)
+        # 1. Exactly four model requests were made (lone think, batch,
+        #    think+retry, respond).
+        assert len(session.client.requests) == 4, len(session.client.requests)
 
         # 2. The first batch ran in order; the failing command stopped it and
         #    the third call was skipped.
@@ -169,7 +171,14 @@ def main():
         assert "Task done" in model_messages[0]["content"]
         assert not any(e["type"] == "error" for e in events)
 
-        # 7. History is append-only and coherent: system, task, and replies.
+        # 7. The lone think reply persisted in history and produced no
+        #    result message; the turn ended cleanly.
+        assert any(
+            m["role"] == "assistant" and "The file is missing" in m["content"]
+            for m in session.messages
+        )
+
+        # 8. History is append-only and coherent: system, task, and replies.
         assert session.messages[0]["role"] == "system"
         assert session.messages[1]["content"] == "Search for the topic and read missing_thing."
     finally:

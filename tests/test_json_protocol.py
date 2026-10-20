@@ -209,6 +209,8 @@ def test_think_only_reply_produces_no_results():
     outcome, _ = _parse(text)
     assert outcome.structural_error is None
     assert outcome.outputs == []
+    assert len(outcome.think_signatures) == 1
+    assert "think" in outcome.think_signatures[0]
 
 
 def test_think_produces_no_output_entry_in_batch():
@@ -222,6 +224,7 @@ def test_think_produces_no_output_entry_in_batch():
     assert outcome.structural_error is None
     assert [entry["name"] for entry in outcome.outputs] == ["smoke_tool"]
     assert outcome.outputs[0]["call"] == 2
+    assert len(outcome.think_signatures) == 1
 
 
 def test_batch_stops_after_raising_call_and_skips_rest():

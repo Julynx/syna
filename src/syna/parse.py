@@ -18,7 +18,7 @@ import json
 import tempfile
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from .config import (
@@ -61,12 +61,16 @@ class ParseOutcome:
     call in reply order, including skipped calls; entries for calls that
     never reached dispatch carry "error": True. 'warnings' lists protocol
     tolerances (ignored surrounding text) that the harness surfaces to the
-    model as harness notices.
+    model as harness notices. 'think_signatures' lists the signature of every
+    think call in the reply; think calls produce no output row, so an empty
+    'outputs' together with non-empty 'think_signatures' identifies a
+    think-only reply.
     """
 
     structural_error: str | None
     outputs: list[dict]
     warnings: list[str]
+    think_signatures: list[str] = field(default_factory=list)
 
 
 def _strip_leading_think_block(text: str) -> str:
@@ -488,6 +492,7 @@ def parse_and_execute_tools(
         return ParseOutcome(respond_error, [], warnings)
 
     outputs: list[dict] = []
+    think_signatures: list[str] = []
     failure_occurred = False
 
     def emit(status, name, call_signature, output=None, raw="", arguments=None, **extra):
@@ -596,6 +601,7 @@ def parse_and_execute_tools(
                 status = "ok"
 
         if tool_name == "think":
+            think_signatures.append(signature)
             emit("finished", tool_name, signature, output, raw=raw,
                  arguments=tool_arguments)
             continue
@@ -642,7 +648,7 @@ def parse_and_execute_tools(
             }
         )
 
-    return ParseOutcome(None, outputs, warnings)
+    return ParseOutcome(None, outputs, warnings, think_signatures)
 
 
 parse_and_execute_reply = parse_and_execute_tools

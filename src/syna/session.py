@@ -76,12 +76,12 @@ def build_unparsed_tool_warning(reasons: list[str] | None = None) -> str:
     return warning
 
 
-def build_think_only_warning() -> str:
-    """Compose the notice for a reply that only recorded reasoning."""
+def build_discarded_text_warning(warnings: list[str]) -> str:
+    """Compose the notice for a think-only reply that carried extra text."""
+    listed = " ".join(warnings)[:400]
     return (
-        "Your reply contained only 'think' calls, which produce no result:"
-        " nothing ran and the task did not advance. Continue with a tool"
-        ' call (or "respond" when the task is done).'
+        "Your reply contained only 'think' calls, which is valid, but text"
+        f" around the JSON was discarded: {listed}"
     )
 
 
@@ -295,6 +295,7 @@ class AgentSession:
         steps_used = 0
         step_warning_sent = False
         repeated_calls: dict[str, int] = {}
+        repeated_thinks: dict[str, int] = {}
         while True:
             try:
                 self._check_cancelled()
@@ -379,7 +380,7 @@ class AgentSession:
                 )
                 continue
 
-            if not outcome.outputs:
+            if not outcome.outputs and not outcome.think_signatures:
                 self._pending_failed_messages.append(self.messages[-1])
                 no_tool_streak += 1
                 if no_tool_streak >= MAX_NO_TOOL_RETRIES:
@@ -387,9 +388,23 @@ class AgentSession:
                     return
                 self._append_corrective_warning(
                     response,
-                    build_think_only_warning(),
+                    build_unparsed_tool_warning(),
                     "No executable tool call, retrying...",
                 )
+                continue
+
+            if not outcome.outputs:
+                no_tool_streak = 0
+                self._purge_pending_failures()
+                self._nudge_on_repeated_thinks(
+                    outcome.think_signatures, repeated_thinks
+                )
+                if outcome.warnings:
+                    self._append_corrective_warning(
+                        response,
+                        build_discarded_text_warning(outcome.warnings),
+                        "Text discarded beside think calls.",
+                    )
                 continue
 
             never_ran = [result for result in outcome.outputs if result.get("error")]
@@ -429,6 +444,7 @@ class AgentSession:
             self.messages.append(msg)
             logger.info(str(msg))
             self._nudge_on_repeated_calls(outcome.outputs, repeated_calls)
+            self._nudge_on_repeated_thinks(outcome.think_signatures, repeated_thinks)
 
     def _nudge_on_repeated_calls(self, outputs: list[dict], counts: dict[str, int]):
         """Warn once when identical calls repeat within the same turn."""
@@ -445,6 +461,21 @@ class AgentSession:
                     " Repeating it will not change the result. Read the error,"
                     " change something, or try a different approach.",
                     "Repeated identical call detected.",
+                )
+
+    def _nudge_on_repeated_thinks(
+        self, signatures: list[str], counts: dict[str, int]
+    ):
+        """Warn once when identical think notes repeat within the same turn."""
+        for signature in signatures:
+            counts[signature] = counts.get(signature, 0) + 1
+            if counts[signature] == REPEATED_CALL_LIMIT:
+                self._append_harness_notice(
+                    "You have recorded this identical think note"
+                    f" {REPEATED_CALL_LIMIT} times: {signature[:160]}."
+                    " Repeating it will not change the result. Act on it, or"
+                    " move on.",
+                    "Repeated identical think note detected.",
                 )
 
     def _append_harness_notice(self, notice: str, status_text: str):
