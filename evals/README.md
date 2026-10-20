@@ -61,3 +61,11 @@ Append an `EvalTask` to `TASKS` in `evals/tasks.py`. Give it a stable id
 coverage (impossible) or an artifact command plus expected substring
 (artifact). For impossible tasks add a `precondition_command` that outputs
 text only when the environment is not clean.
+
+## Not part of this suite
+
+`evals/run_worlds_benchmark.py` (the League of Legends Worlds benchmark)
+lives in this folder but is not an eval task and is never scored: it is an
+expensive 30-45 minute long-horizon probe run only on significant project
+changes or on explicit request. It does not read or write
+`history.jsonl`. See its module docstring before running it.
