@@ -13,6 +13,7 @@
   scrollbar-color: var(--border) transparent;
 }
 #chat > * {
+  flex: none;
   max-width: 880px;
   width: 100%;
   margin: 0 auto;
@@ -483,6 +484,9 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.tool-overflow > * {
+  flex: none;
 }
 #chat > .tool-overflow.collapsed {
   height: 0;

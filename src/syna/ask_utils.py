@@ -7,10 +7,11 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
-from .config import get_logger
+from .config import get_logger, load_config
 
 EMPTY_RESPONSE_MAX_ATTEMPTS = 3
 DEFAULT_RESPONSE_FORMAT = {"type": "json_object"}
+DEFAULT_MAX_OUTPUT_TOKENS = 16384
 
 
 class ReplyRejected(Exception):
@@ -61,6 +62,24 @@ def _write_dump(dump_path: Path | None, payload: dict) -> None:
         )
 
 
+def _log_response_meta(logger, response, attempt: int) -> None:
+    """Log finish reason and the reasoning/completion token split of a reply."""
+    choice = response.choices[0]
+    parts = [f"attempt={attempt}", f"finish_reason={choice.finish_reason!r}"]
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        details = getattr(usage, "completion_tokens_details", None)
+        parts.append(
+            "tokens(prompt=%s, completion=%s, reasoning=%s)"
+            % (
+                getattr(usage, "prompt_tokens", None),
+                getattr(usage, "completion_tokens", None),
+                getattr(details, "reasoning_tokens", None),
+            )
+        )
+    logger.info("Model response meta: %s", ", ".join(parts))
+
+
 def ask_question(
     client,
     model,
@@ -88,13 +107,20 @@ def ask_question(
     try:
         for attempt in range(1, EMPTY_RESPONSE_MAX_ATTEMPTS + 1):
             time.sleep(delay)
-            request = {"model": model, "messages": messages}
+            request = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": load_config().get(
+                    "max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS
+                ),
+            }
             if response_format is not None:
                 request["response_format"] = response_format
             if effort:
                 request["reasoning"] = {"effort": effort}
             _write_dump(dump_path, request)
             response = client.chat.send(**request)
+            _log_response_meta(logger, response, attempt)
             message = response.choices[0].message
             if message.refusal:
                 raise RuntimeError(f"Model refused to respond: {message.refusal}")

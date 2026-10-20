@@ -76,7 +76,9 @@ def describe_image(file_path: str, question: str):
         from .session import create_model_client  # noqa: PLC0415
 
         with create_model_client() as client:
-            description = ask_question(client, model, messages, delay=0)
+            description = ask_question(
+                client, model, messages, delay=0, response_format=None
+            )
 
     logger.info(
         "Described image '%s' (%d chars of description)",

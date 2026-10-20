@@ -9,6 +9,7 @@
     "retry_connection_errors": false
   },
   "max_command_output_chars": 40000,
+  "max_output_tokens": 16384,
   "tool_call_timeout_s": 60,
   "max_history_messages": 100,
   "enable_compaction": true,
