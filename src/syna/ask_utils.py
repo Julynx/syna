@@ -69,13 +69,14 @@ def _log_response_meta(logger, response, attempt: int) -> None:
     usage = getattr(response, "usage", None)
     if usage is not None:
         details = getattr(usage, "completion_tokens_details", None)
+        prompt_details = getattr(usage, "prompt_tokens_details", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", None)
+        completion_tokens = getattr(usage, "completion_tokens", None)
+        reasoning_tokens = getattr(details, "reasoning_tokens", None)
+        cached_tokens = getattr(prompt_details, "cached_tokens", None)
         parts.append(
-            "tokens(prompt=%s, completion=%s, reasoning=%s)"
-            % (
-                getattr(usage, "prompt_tokens", None),
-                getattr(usage, "completion_tokens", None),
-                getattr(details, "reasoning_tokens", None),
-            )
+            f"tokens(prompt={prompt_tokens}, completion={completion_tokens},"
+            f" reasoning={reasoning_tokens}, cached={cached_tokens})"
         )
     logger.info("Model response meta: %s", ", ".join(parts))
 
@@ -89,6 +90,7 @@ def ask_question(
     dump_path=None,
     response_format: dict | None = DEFAULT_RESPONSE_FORMAT,
     accept_reply: Callable[[str], str | None] | None = None,
+    session_id: str | None = None,
 ):
     """Send conversation messages to the model and record its response.
 
@@ -102,6 +104,9 @@ def ask_question(
         response_format: Structured output format dict, or None for unconstrained output.
         accept_reply: Optional callable receiving raw response text. Returning a
             non-None string rejects the response and raises ReplyRejected.
+        session_id: Optional OpenRouter session id. It pins provider sticky
+            routing for the conversation so provider-side prompt caches stay
+            warm across requests.
     """
     logger = get_logger()
     try:
@@ -118,6 +123,8 @@ def ask_question(
                 request["response_format"] = response_format
             if effort:
                 request["reasoning"] = {"effort": effort}
+            if session_id:
+                request["session_id"] = session_id
             _write_dump(dump_path, request)
             response = client.chat.send(**request)
             _log_response_meta(logger, response, attempt)

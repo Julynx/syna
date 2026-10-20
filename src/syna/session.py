@@ -244,6 +244,7 @@ class AgentSession:
             "elide_interval_messages", DEFAULT_ELIDE_INTERVAL_MESSAGES
         )
         self.compaction_prompt = load_compaction_prompt()
+        self.session_id = session_id
         self.messages: list[dict] = []
         self._pending_failed_messages: list[dict] = []
         self.dump_path = get_session_dump_path(session_id)
@@ -352,6 +353,7 @@ class AgentSession:
                     effort=self.thinking_effort,
                     dump_path=self.dump_path,
                     accept_reply=self._sanitize_reply,
+                    session_id=self.session_id,
                 )
             except ReplyRejected as exc:
                 defanged = defang_sentinels(exc.raw_content)
@@ -582,6 +584,7 @@ class AgentSession:
                 delay=self.request_delay,
                 effort=self.thinking_effort,
                 response_format=None,
+                session_id=self.session_id,
             )
         except Exception as exc:
             logger.exception("History compaction failed")
