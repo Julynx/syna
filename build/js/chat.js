@@ -37,6 +37,40 @@ let reconnectDelay = 1000;
 let busy = false;
 let replaying = true;
 
+/* Performance state: cached layout constants and tracked elements so
+   per-event work stays O(1) instead of scanning a long chat. The replay
+   queue batches history rendering into animation-frame slices so a long
+   reconnect cannot freeze the page. */
+const CHAT_ROW_GAP = parseFloat(getComputedStyle(chat).rowGap) || 10;
+const REPLAY_FRAME_BUDGET_MS = 8;
+let runningToolRow = null;
+let openFileGroup = null;
+let thinkingRow = null;
+let replayQueue = [];
+let replayFlushPending = false;
+
+function scheduleReplayFlush() {
+  if (replayFlushPending) return;
+  replayFlushPending = true;
+  requestAnimationFrame(flushReplay);
+}
+
+function flushReplay() {
+  replayFlushPending = false;
+  if (!replayQueue.length) return;
+  const stick = isAtBottom();
+  const start = performance.now();
+  while (
+    replayQueue.length &&
+    performance.now() - start < REPLAY_FRAME_BUDGET_MS
+  ) {
+    render(replayQueue.shift());
+  }
+  if (stick) scrollToBottom();
+  if (replayQueue.length) scheduleReplayFlush();
+  else if (!replaying) followBottom(700);
+}
+
 const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
 const EASE_IN = "cubic-bezier(0.65, 0, 0.35, 1)";
@@ -139,9 +173,10 @@ function scrollToBottom() {
 }
 
 function append(element) {
-  const stick = isAtBottom();
+  const stick = replaying ? false : isAtBottom();
   if (statusRow.parentNode === chat) chat.insertBefore(element, statusRow);
   else chat.appendChild(element);
+  if (replaying) return;
   growIn(element);
   if (stick) followBottom(700);
 }
@@ -269,8 +304,9 @@ function webInteractText(event) {
 }
 
 function closeFileGroup() {
-  const group = chat.querySelector(".files-group.open");
-  if (group) group.classList.remove("open");
+  if (!openFileGroup) return;
+  openFileGroup.classList.remove("open");
+  openFileGroup = null;
 }
 
 function resetToolRun() {
@@ -278,13 +314,14 @@ function resetToolRun() {
 }
 
 function updateToolRunThinking() {
-  chat.querySelectorAll(".see-more.thinking").forEach((row) => {
-    if (!(toolRun && toolRun.moreRow === row) || !busy || toolRun.expanded) {
-      row.classList.remove("thinking");
-    }
-  });
-  if (busy && toolRun && !toolRun.expanded && toolRun.moreRow) {
-    toolRun.moreRow.classList.add("thinking");
+  const current = busy && toolRun && !toolRun.expanded ? toolRun.moreRow : null;
+  if (thinkingRow && thinkingRow !== current) {
+    thinkingRow.classList.remove("thinking");
+    thinkingRow = null;
+  }
+  if (current && thinkingRow !== current) {
+    current.classList.add("thinking");
+    thinkingRow = current;
   }
 }
 
@@ -457,7 +494,7 @@ function placeToolRow(row) {
     toolRun = { rows: [], moreRow: null, expanded: false, wrap: null };
   }
   toolRun.rows.push(row);
-  const stick = isAtBottom();
+  const stick = !replaying && isAtBottom();
   if (toolRun.rows.length > MAX_VISIBLE_TOOL_CALLS) {
     ensureMoreRow(toolRun);
     const wrap = ensureOverflowWrap(toolRun);
@@ -491,6 +528,7 @@ function addToolRow(event) {
     "</span>" +
     '<span class="tool-text"></span>';
   row.querySelector(".tool-text").textContent = toolEventText(event);
+  runningToolRow = row;
   placeToolRow(row);
 }
 
@@ -523,14 +561,20 @@ const boxOf = (el, cs) => ({
 });
 
 function growIn(el, delay) {
-  if (REDUCE || !el.isConnected || !el.getBoundingClientRect().height) return;
+  if (
+    REDUCE ||
+    replaying ||
+    !el.isConnected ||
+    !el.getBoundingClientRect().height
+  )
+    return;
   const cs = getComputedStyle(el);
-  const gap = parseFloat(getComputedStyle(chat).rowGap) || 0;
+  const box = boxOf(el, cs);
   el.style.overflow = "hidden";
   const a = el.animate(
     [
-      { ...BOX_ZERO, marginTop: -gap + "px" },
-      { ...boxOf(el, cs), marginTop: cs.marginTop },
+      { ...BOX_ZERO, marginTop: -CHAT_ROW_GAP + "px" },
+      { ...box, marginTop: cs.marginTop },
     ],
     { duration: 520, delay: delay || 0, easing: EASE_OUT, fill: "backwards" },
   );
@@ -622,6 +666,7 @@ function finishToolRow(event) {
     row = document.getElementById("tool-" + event.id);
   }
   row.classList.remove("running");
+  if (runningToolRow === row) runningToolRow = null;
   row.classList.add("settling");
   setTimeout(() => row.classList.remove("settling"), 1200);
   if (!event.failed) row.classList.add("just-done");
@@ -657,6 +702,7 @@ function addFileChip(event) {
   chip.children[1].textContent = event.name;
   chip.children[2].textContent = event.size ? formatSize(event.size) : "";
   chipHost.appendChild(chip);
+  openFileGroup = chipHost;
   append(chipHost);
 }
 
@@ -834,6 +880,11 @@ function connect() {
     chat.innerHTML = "";
     toolRun = null;
     replaying = true;
+    replayQueue = [];
+    replayFlushPending = false;
+    runningToolRow = null;
+    openFileGroup = null;
+    thinkingRow = null;
     if (window.Voice) Voice.reset();
     setStatus("ready", "Ready");
     updateAmbient();
@@ -841,7 +892,13 @@ function connect() {
 
   ws.onmessage = (message) => {
     try {
-      render(JSON.parse(message.data));
+      const event = JSON.parse(message.data);
+      if (replaying) {
+        replayQueue.push(event);
+        scheduleReplayFlush();
+      } else {
+        render(event);
+      }
     } catch (err) {
       console.error(err);
     }
@@ -915,6 +972,10 @@ async function newChat() {
     }
     chat.innerHTML = "";
     toolRun = null;
+    replayQueue = [];
+    runningToolRow = null;
+    openFileGroup = null;
+    thinkingRow = null;
     busy = false;
     setSendState();
     addEventRow("Starting a fresh session...");

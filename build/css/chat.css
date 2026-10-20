@@ -16,6 +16,12 @@
   max-width: 880px;
   width: 100%;
   margin: 0 auto;
+  /* Skip layout, paint, and backdrop-filter for offscreen messages so
+     per-message cost stops growing with conversation length. The "auto"
+     intrinsic size reuses each element's last rendered height, keeping
+     the scrollbar stable. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
 }
 
 @media (min-width: 1024px) {

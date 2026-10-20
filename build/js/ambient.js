@@ -3,7 +3,7 @@
 let ambientState = "";
 function updateAmbient() {
   const narrating = window.Voice ? Voice.speaking : false;
-  const toolActive = document.querySelector(".tool-row.running") !== null;
+  const toolActive = runningToolRow !== null;
   const next = narrating
     ? "tool"
     : !busy
@@ -201,12 +201,23 @@ function updateAmbient() {
     c.arc(cx, cy, R, 0, TAU);
     c.fill();
   }
+  let raf = 0;
   function frame(now) {
     const dt = Math.max(0.001, Math.min((now - last) / 1000, 0.05));
     last = now;
     draw(dt);
-    requestAnimationFrame(frame);
+    raf = requestAnimationFrame(frame);
   }
   resize();
-  if (!reduce) requestAnimationFrame(frame);
+  if (!reduce) raf = requestAnimationFrame(frame);
+  document.addEventListener("visibilitychange", () => {
+    if (reduce) return;
+    if (document.hidden) {
+      cancelAnimationFrame(raf);
+      raf = 0;
+    } else if (!raf) {
+      last = performance.now();
+      raf = requestAnimationFrame(frame);
+    }
+  });
 })();
