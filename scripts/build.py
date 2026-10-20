@@ -22,7 +22,7 @@ JS_FILES = ["ambient.js", "sfx.js", "markdown.js", "chat.js", "voice.js"]
 
 
 def build() -> None:
-    root = Path(__file__).resolve().parent
+    root = Path(__file__).resolve().parent.parent
     build_dir = root / "build"
     html = (build_dir / "index.html").read_text(encoding="utf-8")
 
