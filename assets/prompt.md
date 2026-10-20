@@ -108,6 +108,7 @@ Facts in deliverables (names, numbers, dates, prices, quotes, links, and other c
 - Stdin is closed, so anything that waits for input fails. Use non-interactive forms (`apt-get install -y`, `git --no-pager`, `git commit -m "..."`) and don't start editors, pagers, REPLs, or full-screen programs (`vim`, `less`, `top`, a bare `python3`).
 - Commands time out after {{COMMAND_TIMEOUT}} seconds. Run anything longer (servers, large builds, big downloads) in the background with output sent to a log, e.g. `nohup python3 server.py > /workspace/logs/server.log 2>&1 &`, then check the log with `tail`.
 - Output longer than {{OUTPUT_LIMIT}} characters is cut to its beginning and end; the full text is in the `saved_to` file.
+- In a pipeline the reported exit code is the last command's; prefix with `set -o pipefail` when the failure point of the pipe matters.
 - You have root access. Use `python3` (there may be no `python`). If `pip install` fails with "externally-managed-environment", create a virtualenv (`python3 -m venv /workspace/.venv`) rather than forcing a system install.
 
 ## Tools

@@ -18,6 +18,8 @@ from pathlib import Path
 from posixpath import basename, dirname
 from typing import Any
 
+from bollard import DockerException
+
 from .browser import Browser
 from .config import (
     get_logger,
@@ -187,11 +189,33 @@ def web_interact(command: str, args: dict[str, Any]):
 
     function = BROWSER_COMMANDS.get(command)
     if function is None:
+        set_last_exit_code(1)
         return (
             f"ERROR: unknown browser command '{command}'. Available commands:"
             f" {', '.join(sorted(BROWSER_COMMANDS))}"
         )
-    return function(BROWSER, **args)
+    view = function(BROWSER, **args)
+    if isinstance(view, str) and view.startswith("ERROR:"):
+        set_last_exit_code(1)
+    return view
+
+
+def _copy_from_pod(container, pod_path: str, host_dir: Path) -> str | None:
+    """Copy a file out of the pod; report a missing path as a clean error.
+
+    Returns None on success, or an error message (with the call's exit code
+    set to 1) when the Docker API reports the pod path as absent. Any other
+    Docker failure propagates unchanged.
+    """
+    try:
+        container.copy_from(pod_path, str(host_dir))
+    except DockerException as exc:
+        message = str(exc)
+        if message.startswith("Docker API Error (404)") and "no such file" in message.lower():
+            set_last_exit_code(1)
+            return f"No such file or directory: {pod_path}"
+        raise
+    return None
 
 
 def read_file(file_path: str, start: int = 1, limit: int = 200):
@@ -208,7 +232,9 @@ def read_file(file_path: str, start: int = 1, limit: int = 200):
     with tempfile.TemporaryDirectory(prefix="syna-") as temp_dir:
         temp_path = Path(temp_dir)
         container = get_container()
-        container.copy_from(file_path, str(temp_path))
+        error = _copy_from_pod(container, file_path, temp_path)
+        if error:
+            return error
         output = e_read_file(Path(temp_path, basename(file_path)), start, limit)
     return output
 
@@ -229,7 +255,9 @@ def edit_file(file_path: str, operations: list[dict]):
     with tempfile.TemporaryDirectory(prefix="syna-") as temp_dir:
         temp_path = Path(temp_dir)
         container = get_container()
-        container.copy_from(file_path, str(temp_path))
+        error = _copy_from_pod(container, file_path, temp_path)
+        if error:
+            return error
         temp_file_path = Path(temp_path, basename(file_path))
         e_edit_file(temp_file_path, operations)
         container.copy_to(str(temp_file_path), dirname(file_path) or "/")
