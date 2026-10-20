@@ -68,4 +68,6 @@ text only when the environment is not clean.
 lives in this folder but is not an eval task and is never scored: it is an
 expensive 30-45 minute long-horizon probe run only on significant project
 changes or on explicit request. It does not read or write
-`history.jsonl`. See its module docstring before running it.
+`history.jsonl`. It refuses to run without `--i-understand-the-cost`
+(exit code 2, cost notice printed). See its module docstring before
+running it.

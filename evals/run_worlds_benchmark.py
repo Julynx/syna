@@ -26,8 +26,15 @@ only produces the logs.
 
 Usage (requires a container runtime and .env):
 
-    uv run python evals/run_worlds_benchmark.py
-    uv run python evals/run_worlds_benchmark.py --timeout-s 1800
+    uv run python evals/run_worlds_benchmark.py --i-understand-the-cost
+    uv run python evals/run_worlds_benchmark.py --i-understand-the-cost --timeout-s 1800
+
+Without --i-understand-the-cost the runner refuses to start: it prints
+a cost notice and exits with code 2, before touching Docker or the
+model. Exit codes: 0 completed, 1 ran but unfinished, 2 refused. The
+flag exists so an agent that runs every test after a change cannot
+start this blindly; asking the person who pays the bill first is
+advised.
 
 The watchdog is soft: at the budget the agent is asked to interrupt at
 its next pause, so a run can overshoot slightly if a model call or a
@@ -81,6 +88,18 @@ PROMPT = (
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 DEFAULT_TIMEOUT_S = 2400
 DEFAULT_MAX_STEPS = 1000
+COST_NOTICE = """\
+This is the League of Legends Worlds benchmark, not a regular test.
+
+One run takes 30-45 minutes, spends hundreds of model steps on a real
+API budget, and creates a fresh container. It is meant to be run only
+when the project changed significantly, or when someone explicitly
+asks for it. It is not a regression test; do not run it as part of a
+test suite after making a change.
+
+Ask the person who will pay the bill for this run before deciding.
+When you have that understanding, re-run with --i-understand-the-cost.
+"""
 
 
 class ConsoleFeed:
@@ -277,7 +296,15 @@ def main():
         " default so only the wall clock stops the run (default:"
         f" {DEFAULT_MAX_STEPS}).",
     )
+    parser.add_argument(
+        "--i-understand-the-cost",
+        action="store_true",
+        help="Confirm you mean to run this expensive benchmark.",
+    )
     arguments = parser.parse_args()
+    if not arguments.i_understand_the_cost:
+        print(COST_NOTICE)
+        sys.exit(2)
     sys.exit(run_benchmark(arguments.timeout_s, arguments.max_steps))
 
 
