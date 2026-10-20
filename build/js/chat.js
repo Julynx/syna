@@ -561,13 +561,15 @@ const boxOf = (el, cs) => ({
 });
 
 function growIn(el, delay) {
-  if (
-    REDUCE ||
-    replaying ||
-    !el.isConnected ||
-    !el.getBoundingClientRect().height
-  )
+  if (REDUCE || replaying || !el.isConnected) return;
+  /* A freshly inserted child of #chat is measured at its intrinsic-size
+     placeholder until the browser's next rendering pass, so force a real
+     render for the duration of the entrance animation. */
+  el.classList.add("entering");
+  if (!el.getBoundingClientRect().height) {
+    el.classList.remove("entering");
     return;
+  }
   const cs = getComputedStyle(el);
   const box = boxOf(el, cs);
   el.style.overflow = "hidden";
@@ -578,8 +580,9 @@ function growIn(el, delay) {
     ],
     { duration: 520, delay: delay || 0, easing: EASE_OUT, fill: "backwards" },
   );
-  a.onfinish = () => {
+  a.onfinish = a.oncancel = () => {
     el.style.overflow = "";
+    el.classList.remove("entering");
   };
 }
 

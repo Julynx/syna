@@ -24,6 +24,13 @@
   contain-intrinsic-size: auto 320px;
 }
 
+/* A freshly inserted child is measured at its intrinsic-size placeholder
+   until the next rendering pass; growIn marks it .entering to render it
+   for real while its entrance animation plays. */
+#chat > .entering {
+  content-visibility: visible;
+}
+
 @media (min-width: 1024px) {
   #chat > * {
     max-width: 1060px;
