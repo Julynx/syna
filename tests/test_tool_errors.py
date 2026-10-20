@@ -76,6 +76,13 @@ class BrokenPod(FakePod):
         raise DockerException(SERVER_ERROR_500)
 
 
+class MissingSharePathPod(FakePod):
+    """Container whose existence probe reports every path as absent."""
+
+    def exec(self, argv, **kwargs):
+        return "missing"
+
+
 def _make_session():
     session = AgentSession(session_id="tool-errors")
     session.dump_path = Path(tempfile.mkdtemp(prefix="syna-test-")) / "dump.json"
@@ -225,6 +232,22 @@ def test_read_file_other_docker_errors_propagate():
     print("PASS unrelated Docker errors propagate unchanged")
 
 
+def test_share_file_missing_path_reports_error():
+    register_container(MissingSharePathPod())
+    try:
+        session = _make_session()
+        reply = json.dumps({"share_file": {"file_path": "/workspace/gone.pdf"}})
+        session.client = FakeChat([reply, REPLY_RESPOND])
+        session.run_turn("probe")
+    finally:
+        unregister_container()
+
+    body = _first_results_body(session)
+    assert 'tool="share_file" status="error" exit_code="1"' in body
+    assert "Path not found inside the pod: /workspace/gone.pdf" in body
+    print("PASS missing-path share_file is an error row, not a successful dict")
+
+
 def main():
     assert "read_file" in TOOL_REGISTRY and "edit_file" in TOOL_REGISTRY
     test_web_interact_failure_marks_error_and_skips_siblings()
@@ -232,6 +255,7 @@ def main():
     test_read_file_missing_path_clean_error()
     test_edit_file_missing_path_clean_error()
     test_read_file_other_docker_errors_propagate()
+    test_share_file_missing_path_reports_error()
     print("ALL TOOL ERROR TESTS PASSED")
 
 

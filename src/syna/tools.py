@@ -293,7 +293,8 @@ def share_file(file_path: str):
         ]
     ).strip()
     if probe == "missing":
-        return {"error": f"Path not found inside the pod: {file_path}"}
+        set_last_exit_code(1)
+        return f"Path not found inside the pod: {file_path}"
     return {
         "path": file_path,
         "name": basename(file_path.rstrip("/")) or file_path,
