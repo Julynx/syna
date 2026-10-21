@@ -501,9 +501,9 @@ def share_file(file_path: str):
 
 def ask_user(question_text: str, choices: list):
     """
-    Ask the user a question and wait for their answer. Call this tool when you need information from the user to complete a task, and you cannot reasonably assume or deduce the answer yourself (e.g., a key fact is missing and/or there are competing options and none is generally better than the others). The conversation pauses until the user answers. Tool calls that share a response with this one might not execute until later. You don't need to include an "Other: Type your own response" option, it will be added automatically. For open-ended questions, send an empty array in `choices`, a text field will be shown to the user instead.
-    - `question_text` (string, required): the question itself, phrased clearly and self-contained.
-    - `choices` (array of strings, required): short answer options to show, each a self-contained phrase; send an empty array for open-ended questions.
+    Ask the user a question and wait for their answer. The conversation pauses until they respond. Call this tool when you need information from the user to complete a task, and you cannot reasonably assume or deduce the answer yourself (e.g., a key fact is missing and/or there are competing options and none is generally better than the others). Note: tool calls in the same response as this one might not execute until later.
+    - `question_text` (string, required): the question itself, clear and self-contained.
+    - `choices` (array of strings, required): short answer options to show, each a self-contained phrase. An "Other: Type your own response" option is always added automatically, so users can always answer outside your choices. Never include your own "Other" option. For open-ended questions, pass an empty array and a text field will be shown instead.
     """
     if not isinstance(question_text, str) or not question_text.strip():
         set_last_exit_code(1)
