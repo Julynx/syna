@@ -73,10 +73,10 @@ def test_bounded_output_cleans_before_counting():
     assert "characters omitted" in result
 
 
-def _parse_with_pod(text: str, pod: FakePod):
+def _parse_with_pod(tool_calls, pod: FakePod):
     register_container(pod)
     try:
-        return parse_and_execute_tools(text, echo_errors=False)
+        return parse_and_execute_tools(tool_calls, echo_errors=False)
     finally:
         unregister_container()
 
@@ -85,7 +85,17 @@ def test_persistence_saves_host_tool_output_to_pod():
     TOOL_REGISTRY["smoke_tool"] = lambda label="unlabeled": f"ran: {label}"
     pod = FakePod()
     try:
-        outcome = _parse_with_pod(json.dumps({"smoke_tool": {"label": "persist"}}), pod)
+        call = [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "smoke_tool",
+                    "arguments": json.dumps({"label": "persist"}),
+                },
+            }
+        ]
+        outcome = _parse_with_pod(call, pod)
     finally:
         TOOL_REGISTRY.pop("smoke_tool", None)
 
@@ -115,9 +125,17 @@ def test_persistence_skipped_for_pod_native_tools():
     original_exec = TOOL_REGISTRY["execute_command"]
     TOOL_REGISTRY["execute_command"] = fake_execute
     try:
-        outcome = _parse_with_pod(
-            json.dumps({"execute_command": {"command": "true"}}), pod
-        )
+        call = [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "execute_command",
+                    "arguments": json.dumps({"command": "true"}),
+                },
+            }
+        ]
+        outcome = _parse_with_pod(call, pod)
     finally:
         TOOL_REGISTRY["execute_command"] = original_exec
 
@@ -136,9 +154,17 @@ def test_persistence_failure_keeps_output_and_drops_saved_to():
 
     TOOL_REGISTRY["smoke_tool"] = lambda label="unlabeled": f"ran: {label}"
     try:
-        outcome = _parse_with_pod(
-            json.dumps({"smoke_tool": {"label": "persist"}}), BrokenPod()
-        )
+        call = [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "smoke_tool",
+                    "arguments": json.dumps({"label": "persist"}),
+                },
+            }
+        ]
+        outcome = _parse_with_pod(call, BrokenPod())
     finally:
         TOOL_REGISTRY.pop("smoke_tool", None)
 

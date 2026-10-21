@@ -443,14 +443,14 @@ class BrowserSession:
         except Exception:
             pass
 
-    def _on_download(self, download) -> None:
+    async def _on_download(self, download) -> None:
         """Belt-and-braces guard: kill any download attempt in flight.
 
         accept_downloads=False already blocks the save; cancelling here also
         stops the browser from holding partial data in memory.
         """
         try:
-            download.cancel()
+            await download.cancel()
         except Exception:
             pass
 

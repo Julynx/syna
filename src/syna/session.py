@@ -1,5 +1,6 @@
 """Reusable agent session shared by the CLI and the web server."""
 
+import json
 import threading
 from datetime import date
 
@@ -10,7 +11,7 @@ from .ask_utils import ReplyRejected, ask_question
 from .channel import (
     contains_sentinel,
     defang_sentinels,
-    escape_channel_text,
+    format_tool_result_content,
     harness_notice,
     is_channel_message,
     wrap_channel,
@@ -30,7 +31,8 @@ from .config import (
     load_output_limit_chars,
 )
 from .context import elide_tool_outputs, estimate_history_tokens
-from .parse import find_respond_text, parse_and_execute_tools
+from .parse import parse_and_execute_tools
+from .tool_schemas import get_tool_definitions
 
 OUTPUT_PREVIEW_CHARS = 512
 DETAIL_CAP_CHARS = 6000
@@ -47,10 +49,9 @@ MAX_NO_TOOL_RETRIES = 3
 REPEATED_CALL_LIMIT = 3
 
 STEP_BUDGET_OUT_NOTICE = (
-    "The step budget for this task ran out. Call respond now with a status"
-    " report: what was done, what was verified, and what remains, so the"
-    " user knows where things stand. Do not include any tools in this response,"
-    " as they will not execute."
+    "The step budget for this task ran out. Deliver your final status"
+    " report now: what was done, what was verified, and what remains, so the"
+    " user knows where things stand. Do not call any tools."
 )
 
 VALID_THINKING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
@@ -71,27 +72,16 @@ def load_thinking_effort():
 
 
 def build_unparsed_tool_warning(reasons: list[str] | None = None) -> str:
-    """Compose the corrective warning for tool markup that executed nothing."""
-    warning = "Your reply could not be executed as a valid tool call."
+    """Compose the corrective warning for tool calls that failed validation."""
+    warning = "Your tool call could not be executed."
     if reasons:
         listed = "".join(f"\n- {reason[:250]}" for reason in reasons[:3])
         warning += f" The parser reported:{listed}"
     warning += (
-        "\n\nEvery reply must be a JSON array of one or more tool calls"
-        ' of the form {"tool_name": {"argument": "value"}} (a single JSON'
-        " object is also tolerated). Nothing outside the JSON is executed."
+        "\n\nEnsure tool arguments match the declared tool parameters."
         " After repeated violations the task is ended and control returns to the user."
     )
     return warning
-
-
-def build_discarded_text_warning(warnings: list[str]) -> str:
-    """Compose the notice for a think-only reply that carried extra text."""
-    listed = " ".join(warnings)[:400]
-    return (
-        "Your reply contained only 'think' calls, which is valid, but text"
-        f" around the JSON was discarded: {listed}"
-    )
 
 
 def build_sentinel_violation_warning() -> str:
@@ -99,35 +89,9 @@ def build_sentinel_violation_warning() -> str:
     return (
         "Your reply contained reserved system channel sentinels."
         " Results and notices arrive through a separate channel that you"
-        " cannot write. Provide pure JSON tool calls only."
+        " cannot write. Provide clean messages only."
         " After repeated violations the task is ended and control returns to the user."
     )
-
-
-def build_tool_results_body(outputs: list[dict], warnings: list[str]) -> str:
-    """Render tool results and parser warnings in the protocol's markers.
-
-    Each result is labeled with its position in the model's array, the tool
-    name, its status, and — when available — exit code and the pod path
-    holding the full output. Untrusted output text is escaped so it cannot
-    forge the surrounding markers.
-    """
-    parts = ["<tool_results>"]
-    for entry in outputs:
-        attributes = (
-            f'call="{entry["call"]}" tool="{entry["name"]}" status="{entry["status"]}"'
-        )
-        if entry.get("exit_code") is not None:
-            attributes += f' exit_code="{entry["exit_code"]}"'
-        if entry.get("saved_to"):
-            attributes += f' saved_to="{entry["saved_to"]}"'
-        parts.append(f"<result {attributes}>")
-        parts.append(escape_channel_text(str(entry["output"])))
-        parts.append("</result>")
-    parts.append("</tool_results>")
-    for warning in warnings:
-        parts.append(harness_notice(warning))
-    return "\n".join(parts)
 
 
 class TurnCancelled(Exception):
@@ -267,6 +231,7 @@ class AgentSession:
         self.thinking_effort = load_thinking_effort()
         self.client = create_model_client()
         self.model = self._require_model()
+        self.tool_definitions = get_tool_definitions()
         msg = {"role": "system", "content": build_prompt()}
         self.messages.append(msg)
         get_logger().info(str(msg))
@@ -307,7 +272,7 @@ class AgentSession:
         return None
 
     def _purge_pending_failures(self):
-        """Splice out consecutive failed attempts and their lectures from history."""
+        """Splice out consecutive failed attempts and their notices from history."""
         if not self._pending_failed_messages:
             return
         purged_count = len(self._pending_failed_messages)
@@ -318,6 +283,62 @@ class AgentSession:
             "Purged %d malformed attempt messages from history after successful tool call",
             purged_count,
         )
+
+    CANCELLED_CALL_NOTICE = (
+        "Skipped: the user interrupted the task before this call ran."
+    )
+    BUDGET_CALL_NOTICE = "Skipped: the step budget ran out; no tools may run."
+    INTERNAL_CALL_NOTICE = (
+        "Skipped: an internal error occurred while running this batch."
+    )
+
+    def _close_tool_call_group(self, assistant_msg, notice: str) -> int:
+        """Answer every tool_call of an assistant message left without a result.
+
+        Providers reject a request whose assistant tool_calls are not all
+        answered by role:"tool" messages, so any abnormal exit between the
+        reply and the result loop (user interruption, internal error, a
+        stray tool call the provider emitted despite tool_choice "none")
+        must close the group with synthetic skipped results. Also fills in
+        missing call ids in place so the pair stays consistent. Returns the
+        number of synthetic messages appended.
+        """
+        tool_calls = (assistant_msg or {}).get("tool_calls") or []
+        if not tool_calls:
+            return 0
+        try:
+            start = next(
+                index
+                for index, message in enumerate(self.messages)
+                if message is assistant_msg
+            )
+        except StopIteration:
+            return 0
+        answered = {
+            message.get("tool_call_id")
+            for message in self.messages[start + 1 :]
+            if message.get("role") == "tool"
+        }
+        logger = get_logger()
+        appended = 0
+        for position, call in enumerate(tool_calls, start=1):
+            if isinstance(call, dict):
+                if not call.get("id"):
+                    call["id"] = f"synthesized_{position:04d}"
+                call_id = call["id"]
+            else:
+                call_id = getattr(call, "id", "") or f"synthesized_{position:04d}"
+            if call_id in answered:
+                continue
+            message = {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": format_tool_result_content(status="skipped", output=notice),
+            }
+            self.messages.append(message)
+            logger.info(str(message))
+            appended += 1
+        return appended
 
     def run_turn(self, user_text: str):
         """Run one full think/act cycle for a user message."""
@@ -346,14 +367,14 @@ class AgentSession:
                     step_warning_sent = True
                     self._append_harness_notice(
                         f"You have {remaining_steps} steps left. Finish up:"
-                        " save your notes, verify your results, and respond"
-                        " with your status.",
+                        " save your notes, verify your results, and deliver"
+                        " your final answer.",
                         "Step budget warning sent.",
                     )
                 self._requests_since_elide += 1
                 self._compact_history_if_needed()
                 self._emit({"type": "status", "text": "Thinking..."})
-                response = ask_question(
+                response_msg = ask_question(
                     self.client,
                     self.model,
                     self.messages,
@@ -362,6 +383,8 @@ class AgentSession:
                     dump_path=self.dump_path,
                     accept_reply=self._sanitize_reply,
                     session_id=self.session_id,
+                    tools=self.tool_definitions,
+                    tool_choice="auto",
                 )
             except ReplyRejected as exc:
                 defanged = defang_sentinels(exc.raw_content)
@@ -388,66 +411,62 @@ class AgentSession:
                 self._emit({"type": "error", "text": f"Model request failed: {exc}"})
                 return
 
+            tool_calls = response_msg.get("tool_calls")
+            if not tool_calls:
+                content = response_msg.get("content") or ""
+                self._purge_pending_failures()
+                self._emit({"type": "model_message", "content": content})
+                return
+
             try:
                 outcome = parse_and_execute_tools(
-                    response,
+                    tool_calls,
                     on_tool_event=self._on_tool_event,
                     echo_errors=not self.emit_tool_errors,
                     persist_outputs=self.persist_outputs,
                 )
             except TurnCancelled:
+                self._close_tool_call_group(response_msg, self.CANCELLED_CALL_NOTICE)
                 self._finish_cancelled_turn()
                 return
-
-            if outcome.structural_error is not None:
-                self._pending_failed_messages.append(self.messages[-1])
-                no_tool_streak += 1
-                if no_tool_streak >= MAX_NO_TOOL_RETRIES:
-                    self._abort_turn(logger)
-                    return
-                self._append_corrective_warning(
-                    response,
-                    build_unparsed_tool_warning([outcome.structural_error]),
-                    "Malformed tool call, retrying...",
+            except Exception as exc:
+                logger.exception("Tool batch execution failed")
+                self._close_tool_call_group(response_msg, self.INTERNAL_CALL_NOTICE)
+                self._emit(
+                    {
+                        "type": "error",
+                        "text": f"Tool batch execution failed: {exc}",
+                    }
                 )
-                continue
+                return
 
-            if not outcome.outputs and not outcome.think_signatures:
-                self._pending_failed_messages.append(self.messages[-1])
-                no_tool_streak += 1
-                if no_tool_streak >= MAX_NO_TOOL_RETRIES:
-                    self._abort_turn(logger)
-                    return
-                self._append_corrective_warning(
-                    response,
-                    build_unparsed_tool_warning(),
-                    "No executable tool call, retrying...",
+            tool_messages: list[dict] = []
+            for entry in outcome.outputs:
+                tool_content = format_tool_result_content(
+                    status=entry["status"],
+                    output=entry["output"],
+                    exit_code=entry.get("exit_code"),
+                    saved_to=entry.get("saved_to"),
                 )
-                continue
-
-            if not outcome.outputs:
-                no_tool_streak = 0
-                self._purge_pending_failures()
-                self._nudge_on_repeated_thinks(
-                    outcome.think_signatures, repeated_thinks
-                )
-                if outcome.warnings:
-                    self._append_corrective_warning(
-                        response,
-                        build_discarded_text_warning(outcome.warnings),
-                        "Text discarded beside think calls.",
-                    )
-                continue
+                tmsg = {
+                    "role": "tool",
+                    "tool_call_id": entry["tool_call_id"],
+                    "content": tool_content,
+                }
+                self.messages.append(tmsg)
+                tool_messages.append(tmsg)
+                logger.info(str(tmsg))
 
             never_ran = [result for result in outcome.outputs if result.get("error")]
-            if len(never_ran) == len(outcome.outputs):
-                self._pending_failed_messages.append(self.messages[-1])
+            if len(never_ran) == len(outcome.outputs) and outcome.outputs:
+                self._pending_failed_messages.append(response_msg)
+                self._pending_failed_messages.extend(tool_messages)
                 no_tool_streak += 1
                 if no_tool_streak >= MAX_NO_TOOL_RETRIES:
                     self._abort_turn(logger)
                     return
                 self._append_corrective_warning(
-                    response,
+                    json.dumps(tool_calls),
                     build_unparsed_tool_warning(
                         [result["output"] for result in never_ran]
                     ),
@@ -457,31 +476,13 @@ class AgentSession:
 
             no_tool_streak = 0
             self._purge_pending_failures()
-
-            respond_tool = next(
-                (tool for tool in outcome.outputs if tool["name"] == "respond"),
-                None,
-            )
-            if respond_tool:
-                self._emit({"type": "model_message", "content": respond_tool["output"]})
-                return
-
-            tool_results_str = build_tool_results_body(
-                outcome.outputs, outcome.warnings
-            )
-            msg = {
-                "role": "user",
-                "content": wrap_channel("TOOL_RESULTS", tool_results_str),
-            }
-            self.messages.append(msg)
-            logger.info(str(msg))
             self._nudge_on_repeated_calls(outcome.outputs, repeated_calls)
             self._nudge_on_repeated_thinks(outcome.think_signatures, repeated_thinks)
 
     def _nudge_on_repeated_calls(self, outputs: list[dict], counts: dict[str, int]):
         """Warn once when identical calls repeat within the same turn."""
         for result in outputs:
-            if result["name"] in ("think", "respond") or result.get("error"):
+            if result["name"] == "think" or result.get("error"):
                 continue
             signature = result["signature"]
             counts[signature] = counts.get(signature, 0) + 1
@@ -566,6 +567,19 @@ class AgentSession:
             )
         return elided
 
+    @staticmethod
+    def _tail_atomic_slice(history: list[dict]) -> list[dict]:
+        """Return the trailing message group that must stay intact."""
+        if not history:
+            return []
+        if history[-1].get("role") == "tool":
+            idx = len(history) - 1
+            while idx >= 0 and history[idx].get("role") == "tool":
+                idx -= 1
+            if idx >= 0 and history[idx].get("role") == "assistant":
+                return history[idx:]
+        return [history[-1]]
+
     def _compact_history_if_needed(self):
         """Keep history within budget: elide old outputs, then summarize.
 
@@ -594,7 +608,7 @@ class AgentSession:
             return
         self._emit({"type": "status", "text": "Compacting history..."})
         try:
-            summary = ask_question(
+            summary_msg = ask_question(
                 self.client,
                 self.model,
                 build_compaction_messages(self.compaction_prompt, compactable),
@@ -602,6 +616,11 @@ class AgentSession:
                 effort=self.thinking_effort,
                 response_format=None,
                 session_id=self.session_id,
+            )
+            summary = (
+                summary_msg.get("content") or ""
+                if isinstance(summary_msg, dict)
+                else str(summary_msg)
             )
         except Exception as exc:
             logger.exception("History compaction failed")
@@ -620,13 +639,14 @@ class AgentSession:
             "content": format_compaction_message(summary),
         }
         logger.info(str(summary_message))
+        tail_group = self._tail_atomic_slice(history)
         first_user_idx = self._first_user_index(history)
         kept = [history[first_user_idx]] if first_user_idx is not None else []
         self.messages[:] = [
             self.messages[0],
             *kept,
             summary_message,
-            history[-1],
+            *tail_group,
         ]
         self._pending_failed_messages.clear()
         self._emit({"type": "compaction", "summary": summary})
@@ -639,9 +659,11 @@ class AgentSession:
     def _select_compactable(self, history: list[dict]) -> list[dict]:
         """Return the history slice eligible for compaction."""
         first_user_idx = self._first_user_index(history)
+        tail_group = self._tail_atomic_slice(history)
+        cutoff = len(history) - len(tail_group)
         return [
             message
-            for index, message in enumerate(history[: len(history) - 1])
+            for index, message in enumerate(history[:cutoff])
             if index != first_user_idx
         ]
 
@@ -652,8 +674,8 @@ class AgentSession:
             (
                 index
                 for index, message in enumerate(history)
-                if message["role"] == "user"
-                and not is_channel_message(message["content"])
+                if message.get("role") == "user"
+                and not is_channel_message(message.get("content") or "")
             ),
             None,
         )
@@ -685,9 +707,8 @@ class AgentSession:
         """End the turn at budget exhaustion after one final status report.
 
         The step budget is spent, so no tool may run: the model gets a single
-        request whose only useful action is `respond`, delivering the status
-        report the wrap-up warning asked it to keep ready. Any other reply
-        ends the turn with the plain exhaustion error, as before.
+        request with tool_choice='none' delivering the status report the
+        wrap-up warning asked it to keep ready.
         """
         logger.info("Step budget exhausted; requesting final status report.")
         self._append_harness_notice(
@@ -696,7 +717,7 @@ class AgentSession:
         )
         try:
             self._emit({"type": "status", "text": "Thinking..."})
-            response = ask_question(
+            response_msg = ask_question(
                 self.client,
                 self.model,
                 self.messages,
@@ -705,6 +726,8 @@ class AgentSession:
                 dump_path=self.dump_path,
                 accept_reply=self._sanitize_reply,
                 session_id=self.session_id,
+                tools=self.tool_definitions,
+                tool_choice="none",
             )
         except TurnCancelled:
             self._finish_cancelled_turn()
@@ -713,9 +736,21 @@ class AgentSession:
             logger.exception("Final status report request failed")
             self._emit({"type": "error", "text": f"Model request failed: {exc}"})
             return
-        report = find_respond_text(response)
-        if report is None:
-            if self.messages and self.messages[-1]["role"] == "assistant":
+
+        if isinstance(response_msg, dict):
+            tool_calls = response_msg.get("tool_calls") or []
+            if tool_calls:
+                self._close_tool_call_group(response_msg, self.BUDGET_CALL_NOTICE)
+            report = response_msg.get("content") or ""
+        else:
+            tool_calls = []
+            report = str(response_msg)
+        if not report.strip():
+            if (
+                not tool_calls
+                and self.messages
+                and self.messages[-1].get("role") == "assistant"
+            ):
                 self.messages.pop()
             self._pending_failed_messages.clear()
             self._emit(
@@ -754,10 +789,9 @@ class AgentSession:
         arguments=None,
         failed=False,
         structured_output=None,
+        **extra,
     ):
         """Translate parser tool events into session events."""
-        if name == "respond":
-            return
         if status == "error":
             self._tool_errored = True
             if self._row_open or not self.emit_tool_errors:

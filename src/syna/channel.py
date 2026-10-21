@@ -100,3 +100,19 @@ def escape_channel_text(text: str) -> str:
     for marker in IMPERSONATABLE_MARKERS:
         escaped = escaped.replace(marker, marker.replace("<", "&lt;", 1))
     return escaped
+
+
+def format_tool_result_content(
+    status: str,
+    output: str,
+    exit_code: int | None = None,
+    saved_to: str | None = None,
+) -> str:
+    """Format a single tool result into sentinel-wrapped channel content."""
+    attributes = f'status="{status}"'
+    if exit_code is not None:
+        attributes += f' exit_code="{exit_code}"'
+    if saved_to:
+        attributes += f' saved_to="{saved_to}"'
+    body = f"<result {attributes}>\n{escape_channel_text(str(output))}\n</result>"
+    return wrap_channel("TOOL_RESULTS", body)

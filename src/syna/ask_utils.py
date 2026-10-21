@@ -10,7 +10,6 @@ from pathlib import Path
 from .config import get_logger, load_config
 
 EMPTY_RESPONSE_MAX_ATTEMPTS = 3
-DEFAULT_RESPONSE_FORMAT = {"type": "json_object"}
 DEFAULT_MAX_OUTPUT_TOKENS = 16384
 
 
@@ -88,10 +87,12 @@ def ask_question(
     delay=2,
     effort=None,
     dump_path=None,
-    response_format: dict | None = DEFAULT_RESPONSE_FORMAT,
+    response_format: dict | None = None,
     accept_reply: Callable[[str], str | None] | None = None,
     session_id: str | None = None,
-):
+    tools: list[dict] | None = None,
+    tool_choice: str | dict | None = None,
+) -> dict:
     """Send conversation messages to the model and record its response.
 
     Parameters:
@@ -102,11 +103,16 @@ def ask_question(
         effort: Optional reasoning effort parameter for reasoning models.
         dump_path: Optional path for diagnostic request dumps.
         response_format: Structured output format dict, or None for unconstrained output.
-        accept_reply: Optional callable receiving raw response text. Returning a
-            non-None string rejects the response and raises ReplyRejected.
+        accept_reply: Optional callable receiving serialized content and tool calls.
+            Returning a non-None string rejects the response and raises ReplyRejected.
         session_id: Optional OpenRouter session id. It pins provider sticky
             routing for the conversation so provider-side prompt caches stay
             warm across requests.
+        tools: Optional list of tool schema dictionaries.
+        tool_choice: Optional tool choice setting ('auto', 'none', or specific tool).
+
+    Returns:
+        The assistant message dictionary appended to history.
     """
     logger = get_logger()
     try:
@@ -121,6 +127,10 @@ def ask_question(
             }
             if response_format is not None:
                 request["response_format"] = response_format
+            if tools is not None:
+                request["tools"] = tools
+            if tool_choice is not None:
+                request["tool_choice"] = tool_choice
             if effort:
                 request["reasoning"] = {"effort": effort}
             if session_id:
@@ -131,18 +141,58 @@ def ask_question(
             message = response.choices[0].message
             if message.refusal:
                 raise RuntimeError(f"Model refused to respond: {message.refusal}")
+
             content = _content_text(message.content)
-            if content:
+            raw_tool_calls = getattr(message, "tool_calls", None)
+
+            formatted_tool_calls: list[dict] = []
+            if raw_tool_calls:
+                for index, tc in enumerate(raw_tool_calls, start=1):
+                    if isinstance(tc, dict):
+                        call = dict(tc)
+                    else:
+                        fn = getattr(tc, "function", None)
+                        fn_name = getattr(fn, "name", "") if fn else ""
+                        fn_args = getattr(fn, "arguments", "") if fn else ""
+                        tc_id = getattr(tc, "id", "")
+                        tc_type = getattr(tc, "type", "function")
+                        call = {
+                            "id": tc_id,
+                            "type": tc_type,
+                            "function": {
+                                "name": fn_name,
+                                "arguments": fn_args,
+                            },
+                        }
+                    if not call.get("id"):
+                        call["id"] = f"synthesized_{index:04d}"
+                    formatted_tool_calls.append(call)
+
+            if content or formatted_tool_calls:
+                text_to_check = content or ""
+                if formatted_tool_calls:
+                    text_to_check = (
+                        text_to_check + " " + json.dumps(formatted_tool_calls)
+                    ).strip()
+
                 if accept_reply is not None:
-                    rejection_reason = accept_reply(content)
+                    rejection_reason = accept_reply(text_to_check)
                     if rejection_reason is not None:
                         logger.warning("Assistant reply rejected: %s", rejection_reason)
-                        raise ReplyRejected(rejection_reason, content)
-                msg = {"role": "assistant", "content": content}
+                        raise ReplyRejected(rejection_reason, text_to_check)
+
+                msg: dict = {
+                    "role": "assistant",
+                    "content": content if content else None,
+                }
+                if formatted_tool_calls:
+                    msg["tool_calls"] = formatted_tool_calls
+
                 messages.append(msg)
                 logger.info(str(msg))
                 _write_dump(dump_path, request)
-                return content
+                return msg
+
             logger.warning(
                 "Empty model response (attempt %d of %d, finish_reason=%r)",
                 attempt,

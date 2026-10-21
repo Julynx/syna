@@ -20,7 +20,7 @@ def with_line_numbers(text, start=1, limit=200):
 
 
 def read_file(file: Path | str, start=1, limit=200):
-    text = Path(file).read_text()
+    text = Path(file).read_text(encoding="utf-8", errors="replace")
     return with_line_numbers(text, start, limit)
 
 
@@ -39,7 +39,7 @@ def edit_file(file_path, operations: list[dict]):
     removed: set[int] = set()
     replacements: dict[int, list[str]] = {}
 
-    lines = Path(file_path).read_text().splitlines()
+    lines = Path(file_path).read_text(encoding="utf-8", errors="replace").splitlines()
     occupied: set[int] = set()
 
     required_keys = {
@@ -117,4 +117,4 @@ def edit_file(file_path, operations: list[dict]):
 
     result.extend(inserts.get(len(lines) + 1, []))
     result = "\n".join(result) + "\n"
-    Path(file_path).write_text(result, newline="\n")
+    Path(file_path).write_text(result, encoding="utf-8", errors="replace", newline="\n")

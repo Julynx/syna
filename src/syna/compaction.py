@@ -51,7 +51,8 @@ def build_transcript(messages: list[dict]) -> str:
     """
     blocks = []
     for message in messages:
-        content = message["content"]
+        content = message.get("content") or ""
+        tool_calls = message.get("tool_calls")
         if is_summary_message(content):
             summary = extract_summary_text(content)
             blocks.append(f"[previous summary]:\n{summary}")
@@ -60,6 +61,31 @@ def build_transcript(messages: list[dict]) -> str:
             if unwrapped is not None:
                 kind, body = unwrapped
                 blocks.append(f"[{kind.lower()}]:\n{body}")
+            elif tool_calls:
+                tc_strs = []
+                for tc in tool_calls:
+                    fn = (
+                        tc.get("function")
+                        if isinstance(tc, dict)
+                        else getattr(tc, "function", None)
+                    )
+                    fn_name = (
+                        fn.get("name")
+                        if isinstance(fn, dict)
+                        else getattr(fn, "name", "")
+                    )
+                    fn_args = (
+                        fn.get("arguments")
+                        if isinstance(fn, dict)
+                        else getattr(fn, "arguments", "")
+                    )
+                    tc_strs.append(f"{fn_name}({fn_args})")
+                text = (
+                    (content + "\n" if content else "")
+                    + "tool calls: "
+                    + ", ".join(tc_strs)
+                )
+                blocks.append(f"[{message['role']}]:\n{text}")
             else:
                 blocks.append(f"[{message['role']}]:\n{content}")
     return "\n\n".join(blocks)

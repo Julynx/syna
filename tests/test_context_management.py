@@ -7,7 +7,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna.channel import is_channel_message, unwrap_channel, wrap_channel
+from syna.channel import (
+    format_tool_result_content,
+    is_channel_message,
+    unwrap_channel,
+    wrap_channel,
+)
 from syna.context import (
     elide_tool_outputs,
     estimate_history_tokens,
@@ -30,13 +35,8 @@ class FakePod:
 def _tool_results_message(
     call: int, tool: str, output: str, saved_to: str | None
 ) -> dict:
-    attributes = f'call="{call}" tool="{tool}" status="ok"'
-    if saved_to:
-        attributes += f' saved_to="{saved_to}"'
-    body = (
-        f"<tool_results>\n<result {attributes}>\n{output}\n</result>\n</tool_results>"
-    )
-    return {"role": "user", "content": wrap_channel("TOOL_RESULTS", body)}
+    content = format_tool_result_content(status="ok", output=output, saved_to=saved_to)
+    return {"role": "tool", "tool_call_id": f"call_{call}", "content": content}
 
 
 def test_estimate_tokens_bounds():
@@ -67,7 +67,7 @@ def test_elide_replaces_old_saved_outputs_with_pointers():
     _kind, body = unwrap_channel(messages[2]["content"])
     assert "[output elided; full text in /tool_outputs/0001_web_search.txt]" in body
     assert "long result body" not in body
-    assert '<result call="1" tool="web_search" status="ok"' in body
+    assert '<result status="ok"' in body
     assert is_channel_message(messages[2]["content"], "TOOL_RESULTS")
 
 
@@ -132,6 +132,26 @@ def test_pod_host_config_allows_unset_limits():
     assert host_config == {"Init": True}
 
 
+def _make_tool_call_reply(name, args, call_id="call_1"):
+    return FakeMessage(
+        content=None,
+        tool_calls=[
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(args),
+                },
+            }
+        ],
+    )
+
+
+def _make_text_reply(text):
+    return FakeMessage(content=text, tool_calls=None)
+
+
 def test_session_elides_old_outputs_under_token_budget():
     TOOL_REGISTRY["smoke_tool"] = lambda label="unlabeled": f"ran: {label}"
     pod = FakePod()
@@ -146,8 +166,8 @@ def test_session_elides_old_outputs_under_token_budget():
         session.elide_keep_recent_messages = 0
         session.client = FakeChat(
             [
-                json.dumps({"smoke_tool": {"label": "x" * 24000}}),
-                json.dumps({"respond": {"text": "done"}}),
+                _make_tool_call_reply("smoke_tool", {"label": "x" * 24000}),
+                _make_text_reply("done"),
             ]
         )
         session.run_turn("probe")
@@ -159,7 +179,9 @@ def test_session_elides_old_outputs_under_token_budget():
     assert session.client.replies == []
 
     tool_messages = [
-        m for m in session.messages if is_channel_message(m["content"], "TOOL_RESULTS")
+        m
+        for m in session.messages
+        if is_channel_message(m.get("content") or "", "TOOL_RESULTS")
     ]
     assert len(tool_messages) == 1
     _, body = unwrap_channel(tool_messages[0]["content"])
@@ -184,9 +206,13 @@ def test_session_elides_old_outputs_on_message_interval():
         session.elide_every_requests = 1
         session.client = FakeChat(
             [
-                json.dumps({"smoke_tool": {"label": "first"}}),
-                json.dumps({"smoke_tool": {"label": "second"}}),
-                json.dumps({"respond": {"text": "done"}}),
+                _make_tool_call_reply(
+                    "smoke_tool", {"label": "first"}, call_id="call_1"
+                ),
+                _make_tool_call_reply(
+                    "smoke_tool", {"label": "second"}, call_id="call_2"
+                ),
+                _make_text_reply("done"),
             ]
         )
         session.run_turn("probe")
@@ -197,7 +223,9 @@ def test_session_elides_old_outputs_on_message_interval():
     assert not session.client.replies, "summarization must not run"
 
     tool_messages = [
-        m for m in session.messages if is_channel_message(m["content"], "TOOL_RESULTS")
+        m
+        for m in session.messages
+        if is_channel_message(m.get("content") or "", "TOOL_RESULTS")
     ]
     assert len(tool_messages) == 2
     _, first_body = unwrap_channel(tool_messages[0]["content"])
@@ -224,10 +252,16 @@ def test_session_elision_is_batched_by_request_interval():
         session.elide_every_requests = 10
         session.client = FakeChat(
             [
-                json.dumps({"smoke_tool": {"label": "first"}}),
-                json.dumps({"smoke_tool": {"label": "second"}}),
-                json.dumps({"smoke_tool": {"label": "third"}}),
-                json.dumps({"respond": {"text": "done"}}),
+                _make_tool_call_reply(
+                    "smoke_tool", {"label": "first"}, call_id="call_1"
+                ),
+                _make_tool_call_reply(
+                    "smoke_tool", {"label": "second"}, call_id="call_2"
+                ),
+                _make_tool_call_reply(
+                    "smoke_tool", {"label": "third"}, call_id="call_3"
+                ),
+                _make_text_reply("done"),
             ]
         )
         session.run_turn("probe")
@@ -245,20 +279,23 @@ def test_session_elision_is_batched_by_request_interval():
 
 
 class FakeMessage:
-    def __init__(self, content):
+    def __init__(self, content=None, tool_calls=None):
         self.content = content
+        self.tool_calls = tool_calls
         self.refusal = None
 
 
 class FakeChoice:
-    def __init__(self, content):
-        self.message = FakeMessage(content)
-        self.finish_reason = "stop"
+    def __init__(self, message):
+        self.message = message
+        self.finish_reason = (
+            "stop" if not getattr(message, "tool_calls", None) else "tool_calls"
+        )
 
 
 class FakeResponse:
-    def __init__(self, content):
-        self.choices = [FakeChoice(content)]
+    def __init__(self, message):
+        self.choices = [FakeChoice(message)]
 
 
 class FakeChat:
@@ -269,7 +306,10 @@ class FakeChat:
 
     def send(self, **request):
         self.requests.append(request)
-        return FakeResponse(self.replies.pop(0))
+        reply = self.replies.pop(0)
+        if isinstance(reply, FakeMessage):
+            return FakeResponse(reply)
+        return FakeResponse(FakeMessage(content=reply))
 
 
 def main():

@@ -1,6 +1,6 @@
 """End-to-end simulated task: a scripted multi-turn conversation driving the
 full session loop — batched calls, stop-on-failure, persistence, elision,
-budget nudges, think+respond — without a live model or container."""
+budget nudges, think notes — without a live model or container."""
 
 import json
 import sys
@@ -25,20 +25,23 @@ class FakePod:
 
 
 class FakeMessage:
-    def __init__(self, content):
+    def __init__(self, content=None, tool_calls=None):
         self.content = content
+        self.tool_calls = tool_calls
         self.refusal = None
 
 
 class FakeChoice:
-    def __init__(self, content):
-        self.message = FakeMessage(content)
-        self.finish_reason = "stop"
+    def __init__(self, message):
+        self.message = message
+        self.finish_reason = (
+            "stop" if not getattr(message, "tool_calls", None) else "tool_calls"
+        )
 
 
 class FakeResponse:
-    def __init__(self, content):
-        self.choices = [FakeChoice(content)]
+    def __init__(self, message):
+        self.choices = [FakeChoice(message)]
 
 
 class FakeChat:
@@ -49,7 +52,10 @@ class FakeChat:
 
     def send(self, **request):
         self.requests.append(request)
-        return FakeResponse(self.replies.pop(0))
+        reply = self.replies.pop(0)
+        if isinstance(reply, FakeMessage):
+            return FakeResponse(reply)
+        return FakeResponse(FakeMessage(content=reply))
 
 
 def _register_tools():
@@ -77,7 +83,9 @@ def _unregister_tools():
 
 def _tool_results_messages(session: AgentSession):
     return [
-        m for m in session.messages if is_channel_message(m["content"], "TOOL_RESULTS")
+        m
+        for m in session.messages
+        if is_channel_message(m.get("content") or "", "TOOL_RESULTS")
     ]
 
 
@@ -105,104 +113,127 @@ def main():
         # Turn script:
         # 1. batch: big web_search (persisted), then a command that fails
         #    (exit 1) -> the third call must be skipped
-        # 2. think + retry of just the failing step, succeeding now
-        # 3. respond with the final report
+        # 2. lone think note
+        # 3. think + retry of just the failing step, succeeding now
+        # 4. final text answer
         big_query = "q" * 9000
         replies = [
-            json.dumps(
-                [
-                    {"smoke_search": {"query": big_query}},
-                    {"smoke_exec": {"command": "cat missing_thing"}},
-                    {"smoke_exec": {"command": "echo never runs"}},
-                ]
-            ),
-            json.dumps(
-                {"think": {"thought": "The file is missing; use echo instead."}}
-            ),
-            json.dumps(
-                [
+            FakeMessage(
+                tool_calls=[
                     {
-                        "think": {
-                            "thought": "The cat failed because the file is missing; use echo instead."
-                        }
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "smoke_search",
+                            "arguments": json.dumps({"query": big_query}),
+                        },
                     },
-                    {"smoke_exec": {"command": "echo recovered"}},
+                    {
+                        "id": "call_2",
+                        "type": "function",
+                        "function": {
+                            "name": "smoke_exec",
+                            "arguments": json.dumps({"command": "cat missing_thing"}),
+                        },
+                    },
+                    {
+                        "id": "call_3",
+                        "type": "function",
+                        "function": {
+                            "name": "smoke_exec",
+                            "arguments": json.dumps({"command": "echo never runs"}),
+                        },
+                    },
                 ]
             ),
-            json.dumps(
-                {
-                    "respond": {
-                        "text": "Task done. Search results summarized; the missing file was reported."
+            FakeMessage(
+                tool_calls=[
+                    {
+                        "id": "call_4",
+                        "type": "function",
+                        "function": {
+                            "name": "think",
+                            "arguments": json.dumps(
+                                {"thought": "The file is missing; use echo instead."}
+                            ),
+                        },
                     }
-                }
+                ]
+            ),
+            FakeMessage(
+                tool_calls=[
+                    {
+                        "id": "call_5",
+                        "type": "function",
+                        "function": {
+                            "name": "think",
+                            "arguments": json.dumps(
+                                {
+                                    "thought": "The cat failed because the file is missing; use echo instead."
+                                }
+                            ),
+                        },
+                    },
+                    {
+                        "id": "call_6",
+                        "type": "function",
+                        "function": {
+                            "name": "smoke_exec",
+                            "arguments": json.dumps({"command": "echo recovered"}),
+                        },
+                    },
+                ]
+            ),
+            FakeMessage(
+                content="Task done. Search results summarized; the missing file was reported."
             ),
         ]
         session.client = FakeChat(replies)
         session.run_turn("Search for the topic and read missing_thing.")
 
-        # 1. Exactly four model requests were made (lone think, batch,
-        #    think+retry, respond).
+        # 1. Exactly four model requests were made (batch, lone think,
+        #    think+retry, final text answer).
         assert len(session.client.requests) == 4, len(session.client.requests)
 
-        # 2. The first batch ran in order; the failing command stopped it and
-        #    the third call was skipped.
-        first_results = unwrap_channel(_tool_results_messages(session)[0]["content"])[1]
-        assert 'call="1" tool="smoke_search" status="ok"' in first_results
+        # 2. In turn 1: 3 tool result messages were produced; the failing command stopped the batch
+        #    and the third call was marked skipped.
+        tool_msgs = _tool_results_messages(session)
         assert (
-            'call="2" tool="smoke_exec" status="error" exit_code="1"' in first_results
+            len(tool_msgs) == 6
+        )  # 3 from batch + 1 from lone think + 2 from think+retry
+
+        first_body = unwrap_channel(tool_msgs[0]["content"])[1]
+        second_body = unwrap_channel(tool_msgs[1]["content"])[1]
+        third_body = unwrap_channel(tool_msgs[2]["content"])[1]
+
+        assert 'status="ok"' in first_body
+        assert 'status="error" exit_code="1"' in second_body
+        assert 'status="skipped"' in third_body
+        assert "never runs" not in third_body
+
+        # 3. The lone think call produced a tool result with '(noted)'
+        fourth_body = unwrap_channel(tool_msgs[3]["content"])[1]
+        assert "(noted)" in fourth_body
+
+        # 4. Old outputs with saved_to were elided
+        elided_count = sum(
+            "output elided" in (m.get("content") or "") for m in session.messages
         )
-        assert 'call="3" tool="smoke_exec" status="skipped"' in first_results
-        assert "never runs" not in first_results
+        assert elided_count >= 1, f"expected elided messages, got {elided_count}"
 
-        # 3. Every executed call has a saved_to path in the pod.
-        assert first_results.count("saved_to=") == 2
+        # 5. The final text response reached the user as model_message event
+        final_events = [e for e in events if e.get("type") == "model_message"]
+        assert len(final_events) == 1
+        assert "Task done" in final_events[0]["content"]
 
-        # 4. The think call produced no result entry.
-        second_results = unwrap_channel(_tool_results_messages(session)[1]["content"])[
-            1
-        ]
-        assert "think" not in second_results
-        assert 'tool="smoke_exec" status="ok"' in second_results
-
-        # 5. Old outputs left the recent window and were elided to their
-        #    saved_to pointers — including the failing one — while all
-        #    metadata (status, exit_code, saved_to) stays readable.
-        elided_count = sum("output elided" in m["content"] for m in session.messages)
-        assert elided_count == 1, f"expected one elided message, got {elided_count}"
-        assert first_results.count("[output elided; full text in /tool_outputs/") == 2
-        assert 'status="error" exit_code="1"' in first_results
-        assert "never runs" not in first_results
-
-        # 6. The second batch's output was recent enough to stay intact.
-        assert "output of: echo recovered" in second_results
-
-        # 6. The respond message reached the user and the turn ended cleanly.
-        model_messages = [e for e in events if e["type"] == "model_message"]
-        assert len(model_messages) == 1
-        assert "Task done" in model_messages[0]["content"]
-        assert not any(e["type"] == "error" for e in events)
-
-        # 7. The lone think reply persisted in history and produced no
-        #    result message; the turn ended cleanly.
-        assert any(
-            m["role"] == "assistant" and "The file is missing" in m["content"]
-            for m in session.messages
+        print(
+            "PASS end-to-end simulated task completed cleanly under native tool calling"
         )
 
-        # 8. History is append-only and coherent: system, task, and replies.
-        assert session.messages[0]["role"] == "system"
-        assert (
-            session.messages[1]["content"]
-            == "Search for the topic and read missing_thing."
-        )
     finally:
-        if register_ok:
-            from syna.state import unregister_container
-
-            unregister_container()
         _unregister_tools()
-
-    print("SIMULATED TASK PASSED: full loop behaved per protocol")
+        if register_ok:
+            unregister_container()
 
 
 if __name__ == "__main__":

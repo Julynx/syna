@@ -1,17 +1,14 @@
-"""Tool call parsing and execution for agent responses under the JSON protocol.
+"""Tool call parsing and execution for agent responses under native tool calling.
 
-Under the Syna v5 protocol the model communicates via JSON: every reply is a
-single tool call object or a non-empty array of them, optionally inside one
-code fence or after one <think> block. The parser decodes only the FIRST JSON
-value; any text around it is discarded and reported back to the model as a
-warning, so a fabricated tail can never execute. Validation happens entirely
-before dispatch: on a structural error nothing runs.
+Under native OpenRouter tool calling, the model returns structured tool_calls.
+Each tool call carries a tool_call_id, function name, and JSON-encoded arguments.
+The parser decodes and validates arguments before executing.
 
-Execution is sequential. The first failing call (bad signature, raised
+Execution is sequential. The first failing call (argument error, raised
 exception, timeout, or non-zero command exit) stops the batch; the remaining
-calls are reported as "skipped". Every result is labeled with its position,
-tool name, status, and — when available — exit code and the pod path
-(`/tool_outputs/`) holding the full output.
+calls are reported as "skipped". Every call receives a result labeled with its
+position, tool_call_id, tool name, status, and — when available — exit code and
+the pod path (/tool_outputs/) holding the full output.
 """
 
 import json
@@ -39,149 +36,26 @@ from .state import (
 )
 from .tools import TOOL_REGISTRY
 
-CONTENT_EXCERPT_CHARS = 300
-
 TIMEOUT_EXIT_CODES = {124, 137}
-
 TOOLS_PERSISTED_IN_POD = {"execute_command"}
 SKIPPED_CALL_NOTICE = "Skipped: an earlier call in this reply failed."
-
-
-class ReplyFormatError(ValueError):
-    """Raised when a model reply cannot be turned into tool calls."""
 
 
 @dataclass(frozen=True)
 class ParseOutcome:
     """Result of parsing and executing one reply's tool calls.
 
-    'structural_error' is set when the reply fails protocol validation
-    (invalid JSON, wrong shape, or respond combined with non-think calls), in
-    which case nothing is executed. 'outputs' carries one entry per processed
-    call in reply order, including skipped calls; entries for calls that
-    never reached dispatch carry "error": True. 'warnings' lists protocol
-    tolerances (ignored surrounding text) that the harness surfaces to the
-    model as harness notices. 'think_signatures' lists the signature of every
-    think call in the reply; think calls produce no output row, so an empty
-    'outputs' together with non-empty 'think_signatures' identifies a
-    think-only reply.
+    'structural_error' is reserved for protocol-level errors.
+    'outputs' carries one entry per processed call in reply order, including
+    skipped calls; entries for calls that failed or were skipped carry "error": True.
+    'warnings' lists protocol notices surfaced to the model.
+    'think_signatures' lists the signature of every think call in the batch.
     """
 
     structural_error: str | None
     outputs: list[dict]
     warnings: list[str]
     think_signatures: list[str] = field(default_factory=list)
-
-
-def _strip_leading_think_block(text: str) -> str:
-    """Strip one leading <think>...</think> block if present."""
-    stripped = text.strip()
-    if stripped.startswith("<think>"):
-        end_idx = stripped.find("</think>")
-        if end_idx != -1:
-            return stripped[end_idx + len("</think>") :].strip()
-    return stripped
-
-
-def _strip_complete_code_fence(text: str) -> str:
-    """Remove one surrounding Markdown code fence if both ends are present."""
-    stripped = text.strip()
-    if not (
-        stripped.startswith("```") and stripped.endswith("```") and "\n" in stripped
-    ):
-        return stripped
-    body = stripped.split("\n", 1)[1]
-    return body[: body.rfind("```")].rstrip()
-
-
-def _decode_reply(text: str) -> tuple[object, list[str]]:
-    """Decode the first JSON value in a reply and report discarded text.
-
-    Returns (value, warnings). Raises ReplyFormatError when no decodable JSON
-    value exists; nothing is ever executed on error.
-    """
-    clean_text = text.lstrip("\ufeff")
-    clean_text = _strip_leading_think_block(clean_text)
-    clean_text = _strip_complete_code_fence(clean_text).strip()
-    if not clean_text:
-        raise ReplyFormatError(
-            "Empty response. Your reply must be a valid JSON tool call or"
-            " array of tool calls."
-        )
-
-    start_positions = [
-        position
-        for position in (clean_text.find("["), clean_text.find("{"))
-        if position != -1
-    ]
-    if not start_positions:
-        # No object or array; still decode bare primitives ("42", '"text"')
-        # so shape validation can report them precisely.
-        try:
-            value, end = json.JSONDecoder(strict=False).raw_decode(clean_text)
-        except json.JSONDecodeError as exc:
-            excerpt = clean_text[:CONTENT_EXCERPT_CHARS]
-            raise ReplyFormatError(
-                "No JSON value found in the response. Reply with a JSON array"
-                f" of tool calls only. Received content excerpt: {excerpt!r}"
-            ) from exc
-        warnings = []
-        if clean_text[end:].strip():
-            warnings.append("Text after the JSON value was discarded.")
-        return value, warnings
-
-    warnings: list[str] = []
-    start = min(start_positions)
-    if clean_text[:start].strip():
-        warnings.append("Text before the JSON value was ignored.")
-    try:
-        value, end = json.JSONDecoder(strict=False).raw_decode(clean_text, start)
-    except json.JSONDecodeError as exc:
-        excerpt = clean_text[:CONTENT_EXCERPT_CHARS]
-        message = (
-            f"The response could not be parsed as JSON: {exc}. Nothing was"
-            f" executed. Received content excerpt: {excerpt!r}"
-        )
-        if _looks_truncated(clean_text):
-            message += (
-                " The reply appears to have been cut off by the provider"
-                " before it was complete. This sometimes happens when a"
-                " reply is too long. Send the tool call again; shorten it if"
-                " needed."
-            )
-        raise ReplyFormatError(message) from exc
-    if clean_text[end:].strip():
-        warnings.append("Text after the JSON value was discarded.")
-    return value, warnings
-
-
-def _looks_truncated(clean_text: str) -> bool:
-    """Heuristically decide whether a failed-to-parse reply was cut off.
-
-    A complete reply under the protocol always ends with the closing brace
-    or bracket of its JSON. Anything else that fails to decode was most
-    likely truncated mid-generation by the provider.
-    """
-    stripped = clean_text.rstrip()
-    return bool(stripped) and not stripped.endswith(("}", "]"))
-
-
-def _describe_json_shape(value: object) -> str:
-    """Describe a decoded JSON value's shape for corrective feedback."""
-    if isinstance(value, dict):
-        keys = ", ".join(repr(key) for key in list(value)[:4])
-        return f"an object with {len(value)} key(s): {keys}"
-    if isinstance(value, list):
-        return f"an array with {len(value)} item(s)"
-    if isinstance(value, bool):
-        return "a boolean"
-    if isinstance(value, str):
-        return "a string"
-    if isinstance(value, (int, float)):
-        return "a number"
-    if value is None:
-        return "null"
-    return type(value).__name__
 
 
 def _tool_signatures() -> dict[str, dict]:
@@ -402,133 +276,95 @@ def _persist_tool_output(
         return None
 
 
-def _extract_tool_calls(data: object) -> tuple[list[tuple[str, dict, str]], str | None]:
-    """Validate the JSON shape and extract a list of (tool_name, arguments, raw_json) tuples.
-
-    A single object holding 'think' alongside other calls — a frequent model
-    slip against the one-key rule — is accepted and split into the sequential
-    calls it obviously means, with 'think' first. Multi-key objects without
-    'think' stay rejected: their intent is genuinely ambiguous.
-    """
-    if not isinstance(data, (dict, list)):
-        return (
-            [],
-            "A response must be a JSON object or array of objects; got"
-            f" {_describe_json_shape(data)}.",
+def _unpack_tool_call(raw_call: object) -> tuple[str, str, dict, str, str | None]:
+    """Extract (call_id, tool_name, arguments_dict, raw_str, error) from a raw tool call."""
+    if isinstance(raw_call, dict):
+        call_id = raw_call.get("id") or ""
+        fn = raw_call.get("function")
+        if isinstance(fn, dict):
+            tool_name = fn.get("name") or ""
+            raw_args = fn.get("arguments")
+        else:
+            tool_name = raw_call.get("name") or ""
+            raw_args = raw_call.get("arguments")
+    else:
+        call_id = getattr(raw_call, "id", "") or ""
+        fn = getattr(raw_call, "function", None)
+        tool_name = getattr(fn, "name", "") if fn else getattr(raw_call, "name", "")
+        raw_args = (
+            getattr(fn, "arguments", "{}")
+            if fn
+            else getattr(raw_call, "arguments", "{}")
         )
 
-    items: list[object]
-    if isinstance(data, list):
-        if not data:
-            return (
-                [],
-                "The response array is empty. Every reply must contain at least"
-                " one tool call.",
-            )
-        items = data
-    else:
-        items = [data]
+    if isinstance(raw_args, dict):
+        tool_arguments = raw_args
+        raw_str = json.dumps(raw_args)
+        return call_id, tool_name, tool_arguments, raw_str, None
 
-    calls: list[tuple[str, dict, str]] = []
-    for index, item in enumerate(items):
-        if not isinstance(item, dict):
+    if isinstance(raw_args, str):
+        raw_str = raw_args
+        clean_args = raw_args.strip()
+        if not clean_args:
+            return call_id, tool_name, {}, raw_str, None
+        try:
+            decoded = json.loads(clean_args)
+        except json.JSONDecodeError as exc:
             return (
-                [],
-                f"Item at index {index} in the tool call array must be a JSON"
-                f" object; got {_describe_json_shape(item)}.",
+                call_id,
+                tool_name,
+                {},
+                raw_str,
+                f"The arguments for tool '{tool_name}' could not be parsed as JSON: {exc}.",
             )
-        if not item:
+        if not isinstance(decoded, dict):
             return (
-                [],
-                f"Tool call object at index {index} is empty; each call must"
-                " have exactly one key (the tool name).",
+                call_id,
+                tool_name,
+                {},
+                raw_str,
+                f"The arguments for tool '{tool_name}' must be a JSON object; got {_json_type_name(decoded)}.",
             )
-        if len(item) > 1:
-            if "think" not in item:
-                keys = ", ".join(repr(key) for key in list(item)[:4])
-                return (
-                    [],
-                    f"Tool call object at index {index} must have exactly one key"
-                    f" (the tool name); got {len(item)}: {keys}.",
-                )
-            ordered = ["think"] + [key for key in item if key != "think"]
-            for key in ordered:
-                tool_arguments = item[key]
-                if not isinstance(tool_arguments, dict):
-                    return (
-                        [],
-                        f"The arguments for tool '{key}' at index {index} must"
-                        f" be a JSON object; got {_describe_json_shape(tool_arguments)}.",
-                    )
-                calls.append(
-                    (key, tool_arguments, json.dumps({key: tool_arguments})[:6000])
-                )
-            continue
-        tool_name = next(iter(item))
-        tool_arguments = item[tool_name]
-        if not isinstance(tool_arguments, dict):
-            return (
-                [],
-                f"The arguments for tool '{tool_name}' at index {index} must"
-                f" be a JSON object; got {_describe_json_shape(tool_arguments)}.",
-            )
-        raw_json = json.dumps(item)[:6000]
-        calls.append((tool_name, tool_arguments, raw_json))
+        return call_id, tool_name, decoded, raw_str, None
 
-    return calls, None
-
-
-def _enforce_respond_placement(calls: list[tuple[str, dict, str]]) -> str | None:
-    """Reject replies where respond appears twice or beside non-think calls."""
-    names = [tool_name for tool_name, _, _ in calls]
-    if names.count("respond") > 1:
-        return "'respond' may only appear once in a reply. Nothing was executed."
-    if "respond" in names and set(names) - {"respond", "think"}:
-        return "'respond' may only be combined with 'think'. Nothing was executed."
-    return None
+    return (
+        call_id,
+        tool_name,
+        {},
+        str(raw_args),
+        f"Invalid argument payload for tool '{tool_name}': expected string or dict, got {type(raw_args).__name__}.",
+    )
 
 
 def parse_and_execute_tools(
-    text: str,
+    tool_calls: list | dict | None,
     on_tool_event: Callable | None = None,
     echo_errors: bool = True,
     tool_timeout_s: float | None = None,
     persist_outputs: bool = False,
 ) -> ParseOutcome:
-    """Parse JSON tool invocations and execute them sequentially.
+    """Execute model tool calls sequentially with stop-on-first-failure.
 
-    The first failing call stops the batch; later calls are recorded as
-    skipped. Parameters:
-        text: Raw response string from the model.
+    The first failing call stops the batch; subsequent calls are recorded as
+    skipped so every tool_call_id receives a result message.
+
+    Parameters:
+        tool_calls: List of tool call objects/dicts, or an assistant message dict.
         on_tool_event: Optional callback receiving tool progress events.
         echo_errors: Whether to echo failure summaries to standard output.
         tool_timeout_s: Execution timeout per individual tool call in seconds.
         persist_outputs: Whether host-side tool outputs may be saved into a
-            lazily created shared pod (CLI). Web sessions persist through the
-            thread's bound container regardless.
+            lazily created shared pod (CLI).
     """
     if tool_timeout_s is None:
         tool_timeout_s = load_tool_call_timeout()
     logger = get_logger()
     output_limit = load_output_limit_chars()
 
-    try:
-        data, warnings = _decode_reply(text)
-    except ReplyFormatError as exc:
-        structural_error = str(exc)
-        logger.warning("Response failed validation: %s", structural_error)
-        return ParseOutcome(structural_error, [], [])
-
-    calls, shape_error = _extract_tool_calls(data)
-    if shape_error is not None:
-        structural_error = " ".join([*warnings, shape_error]).strip()
-        logger.warning("Response shape invalid: %s", shape_error)
-        return ParseOutcome(structural_error, [], warnings)
-
-    respond_error = _enforce_respond_placement(calls)
-    if respond_error is not None:
-        logger.warning(respond_error)
-        return ParseOutcome(respond_error, [], warnings)
+    if isinstance(tool_calls, dict):
+        tool_calls = tool_calls.get("tool_calls")
+    if not tool_calls:
+        return ParseOutcome(None, [], [])
 
     outputs: list[dict] = []
     think_signatures: list[str] = []
@@ -549,29 +385,92 @@ def parse_and_execute_tools(
                 **extra,
             )
 
-    for position, (tool_name, tool_arguments, raw) in enumerate(calls, start=1):
+    for position, raw_call in enumerate(tool_calls, start=1):
+        call_id, tool_name, tool_arguments, raw_json, decode_error = _unpack_tool_call(
+            raw_call
+        )
+        if not call_id:
+            call_id = f"synthesized_{position:04d}"
         signature = build_signature(tool_name, tool_arguments)
 
         if failure_occurred:
-            emit("started", tool_name, signature, raw=raw, arguments=tool_arguments)
+            emit(
+                "started",
+                tool_name,
+                signature,
+                raw=raw_json,
+                arguments=tool_arguments,
+                tool_call_id=call_id,
+            )
             emit(
                 "skipped",
                 tool_name,
                 signature,
                 output=SKIPPED_CALL_NOTICE,
-                raw=raw,
+                raw=raw_json,
                 arguments=tool_arguments,
+                tool_call_id=call_id,
             )
             outputs.append(
                 {
                     "call": position,
+                    "tool_call_id": call_id,
                     "name": tool_name,
                     "signature": signature,
                     "output": SKIPPED_CALL_NOTICE,
                     "status": "skipped",
                     "error": True,
+                    "raw": raw_json[:6000],
+                    "arguments": tool_arguments,
                 }
             )
+            continue
+
+        if decode_error is not None:
+            logger.warning(decode_error)
+            if echo_errors:
+                print(f"  ! ({decode_error[:80]})")
+            emit(
+                "started",
+                tool_name,
+                signature,
+                raw=raw_json,
+                arguments=tool_arguments,
+                tool_call_id=call_id,
+            )
+            emit(
+                "error",
+                tool_name,
+                signature,
+                output=decode_error,
+                raw=raw_json,
+                arguments=tool_arguments,
+                tool_call_id=call_id,
+            )
+            emit(
+                "finished",
+                tool_name,
+                signature,
+                decode_error,
+                raw=raw_json,
+                arguments=tool_arguments,
+                failed=True,
+                tool_call_id=call_id,
+            )
+            outputs.append(
+                {
+                    "call": position,
+                    "tool_call_id": call_id,
+                    "name": tool_name,
+                    "signature": signature,
+                    "output": decode_error,
+                    "status": "error",
+                    "error": True,
+                    "raw": raw_json[:6000],
+                    "arguments": tool_arguments,
+                }
+            )
+            failure_occurred = True
             continue
 
         if tool_name not in TOOL_REGISTRY:
@@ -582,32 +481,44 @@ def parse_and_execute_tools(
             logger.warning(output)
             if echo_errors:
                 print(f"  ! ({output})")
-            emit("started", tool_name, signature, raw=raw, arguments=tool_arguments)
+            emit(
+                "started",
+                tool_name,
+                signature,
+                raw=raw_json,
+                arguments=tool_arguments,
+                tool_call_id=call_id,
+            )
             emit(
                 "error",
                 tool_name,
                 signature,
                 output=output,
-                raw=raw,
+                raw=raw_json,
                 arguments=tool_arguments,
+                tool_call_id=call_id,
             )
             emit(
                 "finished",
                 tool_name,
                 signature,
                 output,
-                raw=raw,
+                raw=raw_json,
                 arguments=tool_arguments,
                 failed=True,
+                tool_call_id=call_id,
             )
             outputs.append(
                 {
                     "call": position,
+                    "tool_call_id": call_id,
                     "name": tool_name,
                     "signature": signature,
                     "output": output,
                     "status": "error",
                     "error": True,
+                    "raw": raw_json[:6000],
+                    "arguments": tool_arguments,
                 }
             )
             failure_occurred = True
@@ -618,38 +529,57 @@ def parse_and_execute_tools(
             logger.warning(argument_error)
             if echo_errors:
                 print(f"  ! ({argument_error[:80]})")
-            emit("started", tool_name, signature, raw=raw, arguments=tool_arguments)
+            emit(
+                "started",
+                tool_name,
+                signature,
+                raw=raw_json,
+                arguments=tool_arguments,
+                tool_call_id=call_id,
+            )
             emit(
                 "error",
                 tool_name,
                 signature,
                 output=argument_error,
-                raw=raw,
+                raw=raw_json,
                 arguments=tool_arguments,
+                tool_call_id=call_id,
             )
             emit(
                 "finished",
                 tool_name,
                 signature,
                 argument_error,
-                raw=raw,
+                raw=raw_json,
                 arguments=tool_arguments,
                 failed=True,
+                tool_call_id=call_id,
             )
             outputs.append(
                 {
                     "call": position,
+                    "tool_call_id": call_id,
                     "name": tool_name,
                     "signature": signature,
                     "output": argument_error,
                     "status": "error",
                     "error": True,
+                    "raw": raw_json[:6000],
+                    "arguments": tool_arguments,
                 }
             )
             failure_occurred = True
             continue
 
-        emit("started", tool_name, signature, raw=raw, arguments=tool_arguments)
+        emit(
+            "started",
+            tool_name,
+            signature,
+            raw=raw_json,
+            arguments=tool_arguments,
+            tool_call_id=call_id,
+        )
 
         call_output_path = f"/tool_outputs/{next_call_index():04d}_{tool_name}.txt"
         try:
@@ -681,8 +611,21 @@ def parse_and_execute_tools(
                 tool_name,
                 signature,
                 output,
-                raw=raw,
+                raw=raw_json,
                 arguments=tool_arguments,
+                tool_call_id=call_id,
+            )
+            outputs.append(
+                {
+                    "call": position,
+                    "tool_call_id": call_id,
+                    "name": tool_name,
+                    "signature": signature,
+                    "output": str(output) if output else "(noted)",
+                    "status": "ok",
+                    "raw": raw_json[:6000],
+                    "arguments": tool_arguments,
+                }
             )
             continue
 
@@ -704,54 +647,37 @@ def parse_and_execute_tools(
                 tool_name,
                 signature,
                 output=model_output,
-                raw=raw,
+                raw=raw_json,
                 arguments=tool_arguments,
+                tool_call_id=call_id,
             )
         emit(
             "finished",
             tool_name,
             signature,
             model_output,
-            raw=raw,
+            raw=raw_json,
             arguments=tool_arguments,
             failed=failed_run,
+            tool_call_id=call_id,
             **({"structured_output": output} if isinstance(output, dict) else {}),
         )
         outputs.append(
             {
                 "call": position,
+                "tool_call_id": call_id,
                 "name": tool_name,
                 "signature": signature,
                 "output": model_output,
                 "status": status,
+                "raw": raw_json[:6000],
+                "arguments": tool_arguments,
                 **({"exit_code": exit_code} if exit_code is not None else {}),
                 **({"saved_to": saved_to} if saved_to else {}),
             }
         )
 
-    return ParseOutcome(None, outputs, warnings, think_signatures)
+    return ParseOutcome(None, outputs, [], think_signatures)
 
 
 parse_and_execute_reply = parse_and_execute_tools
-
-
-def find_respond_text(text: str) -> str | None:
-    """Return the text of a valid respond call in a reply, without running it.
-
-    Used at step-budget exhaustion, when no tool may execute but a final
-    status report is still wanted. Returns None when the reply does not
-    decode, fails shape or respond-placement validation, or contains no
-    respond call with a string `text` argument.
-    """
-    try:
-        data, _ = _decode_reply(text)
-    except ReplyFormatError:
-        return None
-    calls, shape_error = _extract_tool_calls(data)
-    if shape_error is not None or _enforce_respond_placement(calls) is not None:
-        return None
-    for tool_name, tool_arguments, _ in calls:
-        if tool_name == "respond":
-            value = tool_arguments.get("text")
-            return value if isinstance(value, str) else None
-    return None

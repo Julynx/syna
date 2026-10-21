@@ -30,10 +30,16 @@ def estimate_tokens(text: str) -> int:
 
 def estimate_history_tokens(messages: list[dict]) -> int:
     """Estimate the total token size of a message list."""
-    return sum(
-        estimate_tokens(message.get("content", "")) + MESSAGE_OVERHEAD_TOKENS
-        for message in messages
-    )
+    total = 0
+    for message in messages:
+        content = message.get("content") or ""
+        total += estimate_tokens(content) + MESSAGE_OVERHEAD_TOKENS
+        for tc in message.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            total += estimate_tokens(fn.get("name") or "")
+            total += estimate_tokens(fn.get("arguments") or "")
+            total += MESSAGE_OVERHEAD_TOKENS
+    return total
 
 
 def elide_tool_outputs(messages: list[dict], keep_recent: int) -> int:
@@ -52,13 +58,16 @@ def elide_tool_outputs(messages: list[dict], keep_recent: int) -> int:
     elided_count = 0
 
     for message in messages[1:last_editable]:
-        content = message.get("content", "")
+        content = message.get("content") or ""
         if ELIDED_MARKER in content:
             continue
         if not is_channel_message(content, "TOOL_RESULTS"):
             continue
 
-        kind, body = unwrap_channel(content)
+        unwrapped = unwrap_channel(content)
+        if unwrapped is None:
+            continue
+        kind, body = unwrapped
         new_body, count = _elide_result_blocks(body)
         if count:
             message["content"] = wrap_channel(kind, new_body)

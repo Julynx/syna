@@ -15,8 +15,6 @@ from syna.session import AgentSession
 from syna.state import register_container, unregister_container
 from syna.tools import TOOL_REGISTRY
 
-REPLY_RESPOND = json.dumps({"respond": {"text": "task done"}})
-
 MISSING_FILE_404 = (
     'Docker API Error (404): {"cause":"no such file or directory",'
     '"message":"no such file or directory","response":404}'
@@ -25,20 +23,23 @@ SERVER_ERROR_500 = 'Docker API Error (500): {"message":"server error"}'
 
 
 class FakeMessage:
-    def __init__(self, content):
+    def __init__(self, content=None, tool_calls=None):
         self.content = content
+        self.tool_calls = tool_calls
         self.refusal = None
 
 
 class FakeChoice:
-    def __init__(self, content):
-        self.message = FakeMessage(content)
-        self.finish_reason = "stop"
+    def __init__(self, message):
+        self.message = message
+        self.finish_reason = (
+            "stop" if not getattr(message, "tool_calls", None) else "tool_calls"
+        )
 
 
 class FakeResponse:
-    def __init__(self, content):
-        self.choices = [FakeChoice(content)]
+    def __init__(self, message):
+        self.choices = [FakeChoice(message)]
 
 
 class FakeChat:
@@ -49,7 +50,29 @@ class FakeChat:
 
     def send(self, **request):
         self.requests.append(request)
-        return FakeResponse(self.replies.pop(0))
+        reply = self.replies.pop(0)
+        if isinstance(reply, FakeMessage):
+            return FakeResponse(reply)
+        return FakeResponse(FakeMessage(content=reply))
+
+
+REPLY_FINAL = FakeMessage(content="task done")
+
+
+def _tool_call_reply(name: str, args: dict, call_id: str = "call_1") -> FakeMessage:
+    return FakeMessage(
+        content=None,
+        tool_calls=[
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(args),
+                },
+            }
+        ],
+    )
 
 
 class FakePod:
@@ -90,12 +113,14 @@ def _make_session():
     return session
 
 
-def _first_results_body(session):
+def _tool_result_bodies(session) -> list[str]:
     results = [
-        m for m in session.messages if is_channel_message(m["content"], "TOOL_RESULTS")
+        unwrap_channel(m["content"])[1]
+        for m in session.messages
+        if is_channel_message(m.get("content") or "", "TOOL_RESULTS")
     ]
     assert results, "no tool results message in history"
-    return unwrap_channel(results[0]["content"])[1]
+    return results
 
 
 def test_web_interact_failure_marks_error_and_skips_siblings():
@@ -109,26 +134,40 @@ def test_web_interact_failure_marks_error_and_skips_siblings():
     tools_module.BROWSER_COMMANDS = {"goto": fake_goto, "click": fake_click}
     try:
         session = _make_session()
-        reply = json.dumps(
-            [
+        reply = FakeMessage(
+            tool_calls=[
                 {
-                    "web_interact": {
-                        "command": "goto",
-                        "args": {"url": "http://x.example"},
-                    }
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "web_interact",
+                        "arguments": json.dumps(
+                            {"command": "goto", "args": {"url": "http://x.example"}}
+                        ),
+                    },
                 },
-                {"web_interact": {"command": "click", "args": {"ref": 1}}},
+                {
+                    "id": "call_2",
+                    "type": "function",
+                    "function": {
+                        "name": "web_interact",
+                        "arguments": json.dumps(
+                            {"command": "click", "args": {"ref": 1}}
+                        ),
+                    },
+                },
             ]
         )
-        session.client = FakeChat([reply, REPLY_RESPOND])
+        session.client = FakeChat([reply, REPLY_FINAL])
         session.run_turn("probe")
     finally:
         tools_module.BROWSER_COMMANDS = original
 
-    body = _first_results_body(session)
-    assert 'tool="web_interact" status="error" exit_code="1"' in body
-    assert 'status="skipped"' in body
-    assert "NS_ERROR_UNKNOWN_HOST" in body
+    bodies = _tool_result_bodies(session)
+    assert len(bodies) == 2
+    assert 'status="error" exit_code="1"' in bodies[0]
+    assert "NS_ERROR_UNKNOWN_HOST" in bodies[0]
+    assert 'status="skipped"' in bodies[1]
     print("PASS failed browser command becomes an error row and stops the batch")
 
 
@@ -140,15 +179,15 @@ def test_web_interact_success_has_no_exit_code():
     tools_module.BROWSER_COMMANDS = {"snapshot": fake_snapshot}
     try:
         session = _make_session()
-        reply = json.dumps({"web_interact": {"command": "snapshot", "args": {}}})
-        session.client = FakeChat([reply, REPLY_RESPOND])
+        reply = _tool_call_reply("web_interact", {"command": "snapshot", "args": {}})
+        session.client = FakeChat([reply, REPLY_FINAL])
         session.run_turn("probe")
     finally:
         tools_module.BROWSER_COMMANDS = original
 
-    body = _first_results_body(session)
-    assert 'tool="web_interact" status="ok"' in body
-    assert "exit_code" not in body
+    bodies = _tool_result_bodies(session)
+    assert 'status="ok"' in bodies[0]
+    assert "exit_code" not in bodies[0]
     print("PASS successful browser command stays a plain ok row")
 
 
@@ -156,24 +195,19 @@ def test_read_file_missing_path_clean_error():
     register_container(MissingPathPod())
     try:
         session = _make_session()
-        reply = json.dumps(
-            {
-                "read_file": {
-                    "file_path": "/workspace/eval_notes.txt",
-                    "start": 1,
-                    "limit": 10,
-                }
-            }
+        reply = _tool_call_reply(
+            "read_file",
+            {"file_path": "/workspace/eval_notes.txt", "start": 1, "limit": 10},
         )
-        session.client = FakeChat([reply, REPLY_RESPOND])
+        session.client = FakeChat([reply, REPLY_FINAL])
         session.run_turn("probe")
     finally:
         unregister_container()
 
-    body = _first_results_body(session)
-    assert 'tool="read_file" status="error" exit_code="1"' in body
-    assert "No such file or directory: /workspace/eval_notes.txt" in body
-    assert "Docker API Error" not in body
+    bodies = _tool_result_bodies(session)
+    assert 'status="error" exit_code="1"' in bodies[0]
+    assert "No such file or directory: /workspace/eval_notes.txt" in bodies[0]
+    assert "Docker API Error" not in bodies[0]
     print("PASS missing-file read reports a clean error, not a Docker 404")
 
 
@@ -181,30 +215,29 @@ def test_edit_file_missing_path_clean_error():
     register_container(MissingPathPod())
     try:
         session = _make_session()
-        reply = json.dumps(
+        reply = _tool_call_reply(
+            "edit_file",
             {
-                "edit_file": {
-                    "file_path": "/workspace/missing.py",
-                    "operations": [
-                        {
-                            "replace": {
-                                "line_num_or_range": [1, 1],
-                                "replace_with_lines": ["x"],
-                            }
+                "file_path": "/workspace/missing.py",
+                "operations": [
+                    {
+                        "replace": {
+                            "line_num_or_range": [1, 1],
+                            "replace_with_lines": ["x"],
                         }
-                    ],
-                }
-            }
+                    }
+                ],
+            },
         )
-        session.client = FakeChat([reply, REPLY_RESPOND])
+        session.client = FakeChat([reply, REPLY_FINAL])
         session.run_turn("probe")
     finally:
         unregister_container()
 
-    body = _first_results_body(session)
-    assert 'tool="edit_file" status="error" exit_code="1"' in body
-    assert "No such file or directory: /workspace/missing.py" in body
-    assert "Docker API Error" not in body
+    bodies = _tool_result_bodies(session)
+    assert 'status="error" exit_code="1"' in bodies[0]
+    assert "No such file or directory: /workspace/missing.py" in bodies[0]
+    assert "Docker API Error" not in bodies[0]
     print("PASS missing-file edit reports a clean error, not a Docker 404")
 
 
@@ -212,23 +245,18 @@ def test_read_file_other_docker_errors_propagate():
     register_container(BrokenPod())
     try:
         session = _make_session()
-        reply = json.dumps(
-            {
-                "read_file": {
-                    "file_path": "/workspace/notes.txt",
-                    "start": 1,
-                    "limit": 10,
-                }
-            }
+        reply = _tool_call_reply(
+            "read_file",
+            {"file_path": "/workspace/notes.txt", "start": 1, "limit": 10},
         )
-        session.client = FakeChat([reply, REPLY_RESPOND])
+        session.client = FakeChat([reply, REPLY_FINAL])
         session.run_turn("probe")
     finally:
         unregister_container()
 
-    body = _first_results_body(session)
-    assert "Docker API Error (500)" in body
-    assert 'status="error"' in body
+    bodies = _tool_result_bodies(session)
+    assert "Docker API Error (500)" in bodies[0]
+    assert 'status="error"' in bodies[0]
     print("PASS unrelated Docker errors propagate unchanged")
 
 
@@ -236,15 +264,15 @@ def test_share_file_missing_path_reports_error():
     register_container(MissingSharePathPod())
     try:
         session = _make_session()
-        reply = json.dumps({"share_file": {"file_path": "/workspace/gone.pdf"}})
-        session.client = FakeChat([reply, REPLY_RESPOND])
+        reply = _tool_call_reply("share_file", {"file_path": "/workspace/gone.pdf"})
+        session.client = FakeChat([reply, REPLY_FINAL])
         session.run_turn("probe")
     finally:
         unregister_container()
 
-    body = _first_results_body(session)
-    assert 'tool="share_file" status="error" exit_code="1"' in body
-    assert "Path not found inside the pod: /workspace/gone.pdf" in body
+    bodies = _tool_result_bodies(session)
+    assert 'status="error" exit_code="1"' in bodies[0]
+    assert "Path not found inside the pod: /workspace/gone.pdf" in bodies[0]
     print("PASS missing-path share_file is an error row, not a successful dict")
 
 

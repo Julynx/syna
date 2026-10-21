@@ -63,11 +63,11 @@ def think(thought: str):
     """
     Record reasoning in the conversation. It does not affect the pod, and the call returns nothing.
 
-    Your private reasoning may not carry over between turns, but `think` entries stay visible for the rest of the task. Use it for things you will need later: a plan for multi-step work, a conclusion from a surprising or failed result, a decision and its reason, or a check of your claims against the evidence before `respond`. Skip it for routine steps you act on immediately.
+    Your private reasoning may not carry over between turns, but `think` entries stay visible for the rest of the task. Use it for things you will need later: a plan for multi-step work, a conclusion from a surprising or failed result, a decision and its reason, or a check of your claims against the evidence before giving your final answer. Skip it for routine steps you act on immediately.
 
-    Prefer calling `think` in the same reply as the tool call or `respond` it informs. Nothing in the pod changes between a think-only reply and your next one, so a separate reply costs an extra request. Use a think-only reply only when the note matters and there is nothing to act on yet (e.g. re-orienting after a history summary). Several think-only replies in a row means nothing new has happened between them, so act on what you already concluded.
+    Call `think` alongside other tool calls when planning multi-step work.
 
-    This is not a message to the user; anything they need to know goes in `respond`.
+    This is not a message to the user; your final answer is delivered directly in your response.
 
     - `thought` (string, required): The note to record.
     """
@@ -82,7 +82,7 @@ def execute_command(command: str, arguments: list[str] | None = None):
 
     To create a file, use a quoted heredoc so the shell expands nothing: `cat > /workspace/report/build.py <<'EOF'` … `EOF`.
 
-    Example: `{"execute_command": {"command": "cd /workspace/app && python3 -m pytest -q 2>&1 | tail -n 30"}}`
+    Example: execute_command(command="cd /workspace/app && python3 -m pytest -q 2>&1 | tail -n 30")
     """
     container = get_container()
     output_path = get_call_output_path()
@@ -160,9 +160,9 @@ def _reader_script(output_path: str, exit_path: str) -> str:
 def web_search(query: str):
     """
     Search the web. Returns the top 10 results with title, description, and URL. Snippets can be outdated or out of context: open the page before relying on a claim.
-    - `query` (string, required)
+    - `query` (string, required): what to search for.
 
-    Example: `{"web_search": {"query": "debian 13 release notes"}}`
+    Example: web_search(query="debian 13 release notes")
     """
     return search(query)
 
@@ -171,20 +171,22 @@ def web_interact(command: str, args: dict[str, Any]):
     """
     Control a persistent browser that runs JavaScript; the current page, cookies, and logins persist between calls. Use it to read and interact with web pages, since many sites block plain HTTP clients. Use `execute_command` (`curl`, `wget`) to download files and call APIs.
 
-    Arguments: `command` (string, required) and `args` (object).
-    - `goto`: `url` (string, required). Opens a page and returns a compact view. Interactive elements appear like `[12] button "Buy"`; pass the number as `ref`.
-    - `snapshot`: `viewport_only` (boolean). Re-reads the current page.
-    - `click`: `ref` (integer, required). Returns what changed.
-    - `type`: `ref` (integer, required), `text` (string, required), `clear` (boolean, default true), `submit` (boolean; presses Enter after typing).
-    - `select`: `ref` (integer, required), `option` (string, required): visible label or value.
-    - `press`: `key` (string, required), e.g. `Enter`, `Escape`, `Tab`, `ArrowDown`.
-    - `scroll`: `direction` (`down`, `up`, `top`, or `bottom`), `amount` (fraction of viewport height, default 0.8). Returns the visible viewport.
-    - `back`: no arguments.
-    - `read`: `ref` (integer; omit for the whole page), `max_chars` (integer). Full plain text, for when a view truncated something you need.
+    - `command` (string, required): browser command to run; see the list below.
+    - `args` (object, required): parameters for that command; see the list below.
+
+    * `goto`: `url` (string, required). Opens a page and returns a compact view. Interactive elements appear like `[12] button "Buy"`; pass the number as `ref`.
+    * `snapshot`: `viewport_only` (boolean). Re-reads the current page.
+    * `click`: `ref` (integer, required). Returns what changed.
+    * `type`: `ref` (integer, required), `text` (string, required), `clear` (boolean, default true), `submit` (boolean; presses Enter after typing).
+    * `select`: `ref` (integer, required), `option` (string, required): visible label or value.
+    * `press`: `key` (string, required), e.g. `Enter`, `Escape`, `Tab`, `ArrowDown`.
+    * `scroll`: `direction` (`down`, `up`, `top`, or `bottom`), `amount` (fraction of viewport height, default 0.8). Returns the visible viewport.
+    * `back`: no arguments.
+    * `read`: `ref` (integer; omit for the whole page), `max_chars` (integer). Full plain text, for when a view truncated something you need.
 
     Refs belong to the page state they came from; after navigation or large page changes, use refs from the newest output. Submitting forms that send, post, or buy something needs approval (see Protecting the user).
 
-    Example: `{"web_interact": {"command": "type", "args": {"ref": 7, "text": "debian 13 release notes", "submit": true}}}`
+    Example: web_interact(command="type", args={"ref": 7, "text": "debian 13 release notes", "submit": True})
     """
     global BROWSER
 
@@ -237,7 +239,7 @@ def read_file(file_path: str, start: int = 1, limit: int = 200):
 
     The numbers shown are the file's real line numbers; use them with `edit_file`.
 
-    Example: `{"read_file": {"file_path": "/workspace/app/main.py", "start": 1, "limit": 80}}`
+    Example: read_file(file_path="/workspace/app/main.py", start=1, limit=80)
     """
     with tempfile.TemporaryDirectory(prefix="syna-") as temp_dir:
         temp_path = Path(temp_dir)
@@ -260,7 +262,7 @@ def edit_file(file_path: str, operations: list[dict]):
 
     Ranges are inclusive. Every line number in a call refers to the file as it was before that call, so several operations can be combined without recalculating. Afterwards, numbering has shifted: re-read the affected lines before the next edit, which also confirms the edit landed as intended. Write each line with its full indentation.
 
-    Example: `{"edit_file": {"file_path": "/workspace/app/config.py", "operations": [{"replace": {"line_num_or_range": [12, 13], "replace_with_lines": ["TIMEOUT_SECONDS = 30", "MAX_RETRIES = 3"]}}]}}`
+    Example: edit_file(file_path="/workspace/app/config.py", operations=[{"replace": {"line_num_or_range": [12, 13], "replace_with_lines": ["TIMEOUT_SECONDS = 30", "MAX_RETRIES = 3"]}}])
     """
     with tempfile.TemporaryDirectory(prefix="syna-") as temp_dir:
         temp_path = Path(temp_dir)
@@ -285,7 +287,7 @@ def describe_image(file_path: str, question: str):
 
 def share_file(file_path: str):
     """
-    Make a file or directory available to the user; directories are sent as one zip. Files you don't share are invisible to the user. Share each deliverable in a reply before your final `respond`, and check the result to confirm it worked. Don't share bulky or irrelevant content (virtualenvs, `node_modules`, caches); copy deliverables into a clean folder first if needed.
+    Make a file or directory available to the user; directories are sent as one zip. Files you don't share are invisible to the user. Share each deliverable before finishing your turn, and check the result to confirm it worked. Don't share bulky or irrelevant content (virtualenvs, `node_modules`, caches); copy deliverables into a clean folder first if needed.
     - `file_path` (string, required): absolute path to an existing file or directory.
     """
     container = get_container()
@@ -326,14 +328,6 @@ def _reset_browser():
     return "Browser session closed."
 
 
-def respond(text: str):
-    """
-    Send a message to the user and end your turn. Use it when the task is done and verified; when you need approval, a decision, or information only the user has; or when you're blocked after trying alternatives. Only a preceding `think` may share its reply. Markdown is supported.
-    - `text` (string, required)
-    """
-    return text
-
-
 TOOL_REGISTRY = {
     "think": think,
     "execute_command": execute_command,
@@ -343,5 +337,4 @@ TOOL_REGISTRY = {
     "web_interact": web_interact,
     "describe_image": describe_image,
     "share_file": share_file,
-    "respond": respond,
 }

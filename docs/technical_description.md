@@ -3,26 +3,22 @@
 ## Overview
 
 Syna is a terminal and web AI agent that answers user requests by driving an
-LLM (through OpenRouter) in a structured tool-call loop. Under the Syna v5
-protocol, the model communicates strictly through JSON: every response must
-be a non-empty array of tool call objects `{"tool_name": {...args}}` (a bare
-single object is tolerated, as is one surrounding code fence or a leading
-`<think>` block). The parser decodes only the FIRST JSON value and discards
-any surrounding text, reporting it back to the model as a warning, so a
-fabricated tail can never execute. The agent executes the requested tools
-sequentially — the first failing call stops the batch and the remaining calls
-are reported as `skipped` — until the model calls `respond`, whose text is
-delivered to the user as the final answer. `respond` may share a reply with a
-preceding `think` call only.
+LLM (through OpenRouter) in a native tool-calling loop. Tool schemas are
+generated dynamically from `tools.py` function signatures and docstrings.
+When the model invokes tools, the agent executes the requested calls
+sequentially — the first failing call stops the batch and remaining calls are
+reported as `skipped` so that every `tool_call_id` receives a corresponding
+result message. When the model emits no tool calls, its plain text response is
+delivered to the user as the final answer.
 
-Tool results reach the model as `<tool_results>` blocks containing one
-`<result call=... tool=... status=... exit_code=... saved_to=...>` element per
-call, with head-and-tail truncated output; the full output of every call is
-saved inside the pod at `/tool_outputs/` and its path is the `saved_to`
-attribute. Harness-originated messages (corrective warnings, format errors,
-step-budget warnings, history summaries) arrive wrapped in `<harness_notice>`
-tags. All system-originated content is additionally framed by sentinel
-channels (see `channel.py`) so the model cannot forge it.
+Tool results reach the model as individual `role: "tool"` messages containing
+`<result status=... exit_code=... saved_to=...>` elements with head-and-tail
+truncated output; the full output of every call is saved inside the pod at
+`/tool_outputs/` and its path is the `saved_to` attribute. Harness-originated
+messages (corrective warnings, format errors, step-budget warnings, history
+summaries) arrive wrapped in `<harness_notice>` tags. All system-originated
+content is additionally framed by sentinel channels (see `channel.py`) so the
+model cannot forge it.
 
 Most tools execute inside a per-session Docker/Podman container (image
 `python:3.14-trixie`, managed through the `bollard` client), giving the model
@@ -242,8 +238,8 @@ embedded in a result block, so web content cannot forge the framing.
 ### `src/syna/ask_utils.py`
 Shared helpers: `show_welcome()` banner and `ask_question(client, model,
 messages, delay, effort, dump_path, response_format, accept_reply,
-session_id)` — sends model requests with configurable delay, request dumps,
-and structured `response_format: {"type": "json_object"}`. Every request
+session_id, tools, tool_choice)` — sends model requests with configurable delay,
+request dumps, and native `tools` and `tool_choice` parameters. Every request
 carries `max_tokens` from the `max_output_tokens` config value (default
 16384), so reasoning models cannot starve the visible reply of the
 provider's default completion budget; `finish_reason` and the
@@ -251,9 +247,9 @@ prompt/completion/reasoning/cached token split are logged for every
 response. When a `session_id` is given it is sent with every request so
 OpenRouter pins provider sticky routing and the provider-side prompt cache
 stays warm for the whole conversation. Accepts an optional `accept_reply`
-validator that raises `ReplyRejected` on channel impersonation. Transient
-empty responses (no content) are retried up to `EMPTY_RESPONSE_MAX_ATTEMPTS`
-times.
+validator that raises `ReplyRejected` on channel impersonation in content or
+tool call arguments. Transient empty responses are retried up to
+`EMPTY_RESPONSE_MAX_ATTEMPTS` times.
 
 ### `src/syna/commands.py`
 User slash commands (`/send`, `/receive`, `/help`, `/bye`) executed locally on
@@ -286,8 +282,10 @@ protocol limits the prompt and tools consume: `load_output_limit_chars()`
 `load_tool_call_timeout_s()`.
 
 ### `src/syna/editor.py`
-Read/edit primitives used by the `read_file` and `edit_file` tools. Edit
-operations are validated before the file is touched: non-dict or multi-key
+Read/edit primitives used by the `read_file` and `edit_file` tools. Files are
+read and written as UTF-8 (undecodable bytes replaced), so pod files with
+non-ASCII content survive host-side processing. Edit operations are validated
+before the file is touched: non-dict or multi-key
 operations, non-object payloads, missing required keys, unknown operation
 types, out-of-bounds line numbers, invalid ranges and overlapping ranges all
 raise clean `ValueError`s instead of leaking internal TypeErrors.
@@ -306,50 +304,41 @@ inject live tool documentation into the system prompt and to validate tool
 call arguments in `parse.py`. Each argument carries its name, type
 annotation, whether it has a default, and the default's source text.
 
+### `src/syna/tool_schemas.py`
+Generates OpenRouter/OpenAI-compatible tool definitions from `tools.py` via
+`ast` function metadata. Converts Python type annotations to JSON Schema
+properties (`str` -> `string`, `int` -> `integer`, `list` -> `array`, `dict` -> `object`),
+excludes defaults from `required`, and parses `- `arg` (type, required): ...`
+docstring lines into property descriptions while stripping them from the tool
+description. `get_tool_definitions()` returns the schemas for all registered
+tools. Note: any `- `-prefixed docstring line is treated as an argument
+description, so non-argument bullet lists in tool docstrings must use `* `
+bullets (see `web_interact`) or they are pulled out of the tool description.
+
 ### `src/syna/parse.py`
-Tool-call parsing and execution under the v5 pure-JSON protocol.
+Tool-call parsing and execution under native OpenRouter tool calling.
 
 - `build_signature(tool_name, tool_arguments)` — one-line python-like
   rendering of a call.
 - `load_tool_call_timeout()` — configured `tool_call_timeout_s` (default 60).
-- `_decode_reply(text)` — strips an optional UTF-8 BOM and one leading
-  `<think>...</think>` block and one complete surrounding code fence, then
-  decodes only the FIRST JSON value with `JSONDecoder(strict=False)
-  .raw_decode` (literal newlines inside strings are accepted). Text before or
-  after the value is discarded and returned as warnings; a reply with no
-  decodable JSON raises `ReplyFormatError` and nothing is executed. When the
-  failed reply does not end with a JSON closing bracket, the error carries a
-  note that the provider may have cut the reply off mid-generation, so the
-  model resends instead of hunting for a syntax mistake.
-- `find_respond_text(text)` — decodes and validates a reply without executing
-  anything and returns the `respond` call's text when one is validly placed;
-  used by the session to collect a final status report when the step budget
-  is exhausted and no tool may run.
-- `_extract_tool_calls(data)` — validates JSON shape (single object with one
-  key or non-empty array of single-key objects; arguments must be a dict).
-  One leniency: a multi-key object that contains `think` is accepted and
-  split into the sequential calls it obviously means (think first), since
-  models frequently write `{"think": ..., "tool": ...}` against the one-key
-  rule; multi-key objects without `think` stay rejected.
-- `_enforce_respond_placement(calls)` — `respond` may appear once and only
-  beside `think` calls; anything else rejects the whole reply.
-- `ParseOutcome(structural_error, outputs, warnings)` — returns
-  `structural_error` if the reply fails formatting, shape, or respond
-  placement, in which case nothing dispatches. `outputs` carries one entry
-  per processed call, including skipped ones; entries for calls that never
-  reached dispatch carry `"error": True` and `"status": "error"`. Executed
-  entries carry `"call"` (position in the model's array), `"status"`
-  (`ok` / `error` / `timeout` / `skipped`), `"exit_code"` (from
-  `execute_command`), and `"saved_to"` (pod path with the full output).
-- Sequential execution with stop-on-first-failure: a bad signature, raised
-  exception, timeout, or non-zero command exit marks the rest of the batch
-  `skipped`. `think` runs as a no-op and produces no result entry, but its
-  signature is reported back via `ParseOutcome.think_signatures`.
+- `_unpack_tool_call(raw_call)` — extracts call ID, tool name, decodes JSON
+  arguments string or dict, and reports argument decoding errors.
+- `ParseOutcome(structural_error, outputs, warnings, think_signatures)` — returns
+  `outputs` carrying one entry per processed call in reply order, including
+  skipped calls; entries for calls that never reached dispatch carry `"error": True`
+  and `"status": "error"` (or `"skipped"`). Executed entries carry `"call"`
+  (position), `"tool_call_id"` (matching the provider ID), `"status"`
+  (`ok` / `error` / `timeout` / `skipped`), `"exit_code"`, and `"saved_to"`.
+- Sequential execution with stop-on-first-failure: an invalid argument,
+  unregistered tool, raised exception, timeout, or non-zero command exit
+  marks the rest of the batch `skipped`. Every call receives a result row so
+  every `tool_call_id` receives a matching result message. `think` produces
+  a `(noted)` tool result and reports its signature via `think_signatures`.
 - Browser command failures (`web_interact` views starting with "ERROR:")
   record exit code 1, so they surface as `error` rows and stop the batch;
-  `read_file`/`edit_file` translate the Docker 404 for an absent pod path
-  into a clean "No such file or directory" error with exit code 1, while
-  other Docker errors propagate unchanged.
+  `read_file`/`edit_file` translate Docker 404s into clean "No such file or
+  directory" errors with exit code 1, while other Docker errors propagate
+  unchanged.
 - `execute_tool_with_timeout(tool_name, tool_arguments, timeout_s,
   output_path)` — runs the tool in a daemon worker thread, propagating the
   calling thread's registered container and the call's output path into the
@@ -364,12 +353,12 @@ Tool-call parsing and execution under the v5 pure-JSON protocol.
   pod. When no container can be used (unit tests, persistence errors) the
   output is still delivered — only the `saved_to` attribute is dropped.
 - Output shown to the model is cleaned (ANSI stripped, progress lines
-  collapsed, empty → `(no output)`) and cut to head-and-tail at
+  collapsed, empty -> `(no output)`) and cut to head-and-tail at
   `max_command_output_chars`.
-- `parse_and_execute_tools(text, on_tool_event, echo_errors,
-  tool_timeout_s)` — validates payload, shape, and respond placement; emits
-  `started` / `finished` / `error` / `skipped` events with the exact `raw`
-  JSON and parsed `arguments` for front-end call details; `failed=True` is
+- `parse_and_execute_tools(tool_calls, on_tool_event, echo_errors,
+  tool_timeout_s)` — validates arguments against declared signatures; emits
+  `started` / `finished` / `error` / `skipped` events with `tool_call_id`,
+  `raw` JSON, and parsed `arguments` for front-end call details; `failed=True` is
   passed on finished events for failed runs so the UI can style them.
 
 ### `src/syna/server.py`
@@ -409,20 +398,30 @@ message.
 - Builds the system prompt from `assets/prompt.md`: injects the live tool
   documentation (docstrings from `tools.py`) at `{tools}` and fills
   `{{CURRENT_DATE}}`, `{{COMMAND_TIMEOUT}}` and `{{OUTPUT_LIMIT}}`.
-- `run_turn(query)` requests model responses and executes tools via
-  `parse_and_execute_tools`.
-- **Self-cleaning history**: malformed tool attempts and their corrective
-  `HARNESS_NOTICE` warnings remain in history during retries (streak counter
-  capped at `MAX_NO_TOOL_RETRIES = 3`). The moment a subsequent reply
-  successfully forms and executes a tool call (or `respond`), all preceding
-  consecutive failed attempts and notices are spliced out of `self.messages`,
-  preventing the model from replicating its mistakes.
-- **Sentinel channel separation**: tool results are appended as
-  `wrap_channel("TOOL_RESULTS", build_tool_results_body(...))` — a
-  `<tool_results>` block with one labeled `<result>` per call plus parser
-  warnings as `<harness_notice>` — corrective warnings, file uploads,
-  step-budget warnings and interruptions as `HARNESS_NOTICE`, and compaction
-  summaries as `COMPACTION`.
+- Loads dynamic tool schemas via `get_tool_definitions()` from `tool_schemas.py`.
+- `run_turn(query)` requests model responses via `ask_question` with native `tools`
+  and `tool_choice="auto"`. When the model returns a plain text response without
+  tool calls, the content is delivered to the user via `model_message` and the turn
+  completes.
+- **Group-atomic self-cleaning history**: malformed tool attempts, their
+  resulting tool messages, and corrective `HARNESS_NOTICE` warnings remain in
+  history during retries (streak counter capped at `MAX_NO_TOOL_RETRIES = 3`).
+  The moment a subsequent reply successfully executes a tool call (or finishes),
+  all preceding consecutive failed attempts and notices are spliced out of
+  `self.messages`, preventing the model from replicating its mistakes without
+  leaving dangling tool call IDs.
+- **Closed tool-call groups**: providers reject requests containing assistant
+  tool_calls without matching results, so `_close_tool_call_group` answers
+  any call left hanging by an abnormal exit — user interruption mid-batch,
+  an internal batch error, or a stray call beside the final status report —
+  with synthetic `skipped` results, and fills in missing call ids in place.
+  Tool-call ids absent from a provider reply are synthesized at the source
+  (`ask_utils.py`) and in the parser backstop, keeping every pair consistent.
+- **Sentinel channel separation**: tool results are appended as individual
+  `role: "tool"` messages wrapped with `format_tool_result_content` on the
+  `TOOL_RESULTS` channel — containing a `<result>` element with status, exit code,
+  and pod path — corrective warnings, file uploads, step-budget warnings and
+  interruptions as `HARNESS_NOTICE`, and compaction summaries as `COMPACTION`.
 - **Two-stage context management** (`context.py`): once the history reaches
   `elide_interval_messages`, and additionally whenever estimated tokens
   exceed `context_budget_tokens`, old tool outputs (those with `saved_to`)
@@ -434,33 +433,27 @@ message.
   eventually. Summarization runs only if the message count reaches
   `max_history_messages` or the budget is still exceeded after elision,
   keeping the system prompt, first real user message, the compaction
-  summary, and the newest message.
+  summary, and the tail atomic message slice.
 - **Step budget**: each turn allows `max_steps_per_turn` model requests; when
   `step_warning_remaining` steps are left, the model receives a wrap-up
-  notice. Past the cap the turn ends with one final model request whose only
-  useful action is `respond`, delivering a status report (what was done,
-  verified, and remains); a reply without a valid `respond` (checked via
-  `find_respond_text`, never executed) ends the turn with the plain
-  exhaustion error, and the un-executed reply is removed from history.
-- **Loop detection**: identical non-`think`/non-`respond` calls repeated
+  notice. Past the cap the turn ends with one final model request with
+  `tool_choice="none"`, delivering the status report as natural language; an
+  empty report ends the turn with the plain exhaustion error.
+- **Loop detection**: identical non-`think` calls repeated
   `REPEATED_CALL_LIMIT` (3) times within one turn trigger a one-time
   "change approach" harness notice; the same guard covers identical think
   notes (lone or batched).
 - **Lone-think acceptance**: a reply containing only `think` calls is
-  accepted rather than bounced — the reply persists in history (honoring the
-  think tool's promise that entries stay visible), pending corrective
-  notices from earlier malformed attempts are purged, the no-tool streak
-  resets, and the loop re-asks. Discarded text beside the think calls earns
-  a one-time corrective warning, cleaned up by the next success. The prompt
-  still steers the model toward pairing think with the action or respond it
-  informs (one request instead of two).
+  accepted rather than bounced — the reply persists in history, pending
+  corrective notices from earlier malformed attempts are purged, the no-tool
+  streak resets, and the loop re-asks.
 - Dispatched execution errors persist permanently in history (valuable
   debugging information).
 - Neutral abort wording: after 3 consecutive failures, the task is ended with
   neutral language (the word "terminated" is completely removed).
 - Compacts history when reaching `max_history_messages`, retaining the system
-  prompt, first real user message, the compaction summary, and the newest
-  message.
+  prompt, first real user message, the compaction summary, and the trailing
+  atomic tool group.
 - Emits JSON events (`status`, `tool_call`, `model_message`, `compaction`,
   `error`) with quiet corrective statuses and full `raw`/`arguments` details.
   When a tool's raw return value is a dict it also travels as
@@ -494,13 +487,14 @@ Global Docker client plus per-thread container registry and per-call context.
   lifecycle.
 
 ### `src/syna/tools.py`
-The tools exposed to the model: `think` (no-op reasoning record; produces no
-result), `execute_command` (shell or argv style inside the container),
+The tools exposed to the model: `think` (no-op reasoning record; produces a
+`(noted)` tool result), `execute_command` (shell or argv style inside the container),
 `read_file`, `edit_file` (both proxied into the pod through temp copies),
-`web_search`, `web_interact`, `describe_image`, `share_file` (registers a pod
+`web_search`, `web_interact`, `describe_image`, and `share_file` (registers a pod
 path for user download; a missing path is reported as a normal error row
 with exit code 1, and the delivery metadata reaches the client through the
-`structured_output` event field), and `respond` (final answer to the user).
+`structured_output` event field). The final answer to the user is delivered as
+natural language text when the model completes its work without tool calls.
 
 Every docstring is injected verbatim into the system prompt (`build_prompt`),
 so the docstrings are the model-facing tool documentation and must stay in
@@ -559,16 +553,13 @@ pages and converts the DOM to markdown.
 All suites are plain scripts runnable with the project venv
 (`.venv\Scripts\python.exe tests\<file>.py`) and require no Docker:
 
-- `tests/test_json_protocol.py` — exhaustive protocol tests: decoding
-  (BOM, think blocks, fences, first-JSON-value-wins with warnings), shape and
-  signature validation, respond/think placement, batch stop-on-failure with
-  skipped statuses, think-only replies, and channel sentinel/marker escaping.
-  Also covers the truncation hint on replies that die mid-JSON, the
-  `find_respond_text` contract (respond extracted without executing, all
-  invalid replies rejected), and the `structured_output` event contract: dict-
-  returning tools carry their raw return value on the finished event, string-
-  returning tools do not, and `session.shared_file_metadata()` matches only
-  well-formed finished `share_file` events.
+- `tests/test_json_protocol.py` — native protocol tests: tool schema generation
+  from `tools.py` via `tool_schemas.py`, argument decoding and signature validation,
+  batch stop-on-failure with skipped statuses, think tool results and signatures,
+  structured output events, and channel sentinel/marker escaping. Also covers the
+  `structured_output` event contract: dict-returning tools carry their raw return
+  value on the finished event, string-returning tools do not, and
+  `session.shared_file_metadata()` matches only well-formed finished `share_file` events.
 - `tests/test_editor.py` — line-editor validation: valid and combined edits
   apply; null/non-object payloads, multi-key operations, missing required keys
   and unknown operation types raise clean `ValueError`s and leave the file
