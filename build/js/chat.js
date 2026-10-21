@@ -881,6 +881,12 @@ function addInlineAsk(question) {
   append(inlineAskRow);
 }
 
+const WAITING_LABEL = "Waiting for your answer...";
+
+function showWaitingStatus() {
+  setStatus("working", WAITING_LABEL);
+}
+
 function dismissAskPanel() {
   if (!askPanel) return;
   const panel = askPanel;
@@ -894,6 +900,7 @@ function dockAsk(event) {
   const question = String(args.question_text || "");
   const choices = Array.isArray(args.choices) ? args.choices.map(String) : [];
   liveAsk = { id: event.id, question, choices };
+  showWaitingStatus();
   if (!choices.length) {
     pendingAnswer = true;
     addInlineAsk(question);
@@ -918,6 +925,9 @@ function undockAsk() {
     shrinkOut(row);
   }
   dismissAskPanel();
+  if (statusLabel.textContent === WAITING_LABEL) {
+    setStatus("working", "Thinking...");
+  }
   setSendState();
 }
 

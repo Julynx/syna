@@ -79,6 +79,7 @@ def _terminal_responder(session: AgentSession):
             for number, choice in enumerate(choices, start=1):
                 print(f"    {number}. {choice}")
             print("    Answer with a number, or type your own response.")
+        _print_status_line("Waiting for your answer...")
         try:
             while True:
                 answer = input("  > ").strip()
