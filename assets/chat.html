@@ -2711,18 +2711,9 @@ function expandToolRun(run) {
   if (wrap && !REDUCE) {
     cancelAnim(wrap);
     wrap.style.overflow = "hidden";
-    rows.forEach((row) => {
-      cancelAnim(row);
-      // Suppress the row opacity transition: changing opacity on visible
-      // rows would otherwise fade them out before the expand animation.
-      row.style.transition = "none";
-      row.style.opacity = "0";
-    });
+    rows.forEach((row) => cancelAnim(row));
     wrap.classList.remove("collapsed");
     const target = wrap.getBoundingClientRect().height;
-    rows.forEach((row) => {
-      row.style.transition = "";
-    });
     const anim = (wrap._anim = wrap.animate(
       [
         { height: "0px", marginTop: -CHAT_GAP + "px" },
@@ -2733,36 +2724,21 @@ function expandToolRun(run) {
     anim.onfinish = () => {
       wrap._anim = null;
       if (!run.expanded) return;
-      const fades = rows.map((row) => {
-        const fade = row.animate([{ opacity: 0 }, { opacity: 1 }], {
-          duration: 600,
-          easing: EASE_OUT,
-          fill: "forwards",
-        });
-        row._anim = fade;
-        fade.onfinish = () => {
-          row.style.opacity = "";
-          fade.cancel();
-        };
-        return fade;
-      });
-      Promise.all(fades.map((fade) => fade.finished.catch(() => {}))).then(
-        () => {
-          if (!run.expanded) return;
-          wrap.style.overflow = "";
-          rows.forEach((row) => {
-            cancelAnim(row);
-            row.style.opacity = "";
-          });
-        },
-      );
+      wrap.style.overflow = "";
     };
+    rows.forEach((row, i) => {
+      const fade = row.animate([{ opacity: 0 }, { opacity: 1 }], {
+        duration: 600,
+        delay: i * 80,
+        easing: EASE_OUT,
+        fill: "backwards",
+      });
+      row._anim = fade;
+      fade.onfinish = () => fade.cancel();
+    });
   } else if (wrap) {
     wrap.classList.remove("collapsed");
-    rows.forEach((row) => {
-      cancelAnim(row);
-      row.style.opacity = "";
-    });
+    rows.forEach((row) => cancelAnim(row));
   }
   updateToolRunThinking();
   if (stick) followBottom(900);
