@@ -876,8 +876,8 @@ function buildAskPanel(ask) {
 function addInlineAsk(question) {
   inlineAskRow = document.createElement("div");
   inlineAskRow.className = "ask-inline glass";
-  inlineAskRow.innerHTML = ICONS.help + "<span></span>";
-  inlineAskRow.querySelector("span").textContent = question;
+  inlineAskRow.innerHTML = ICONS.help + '<span class="ask-inline-text"></span>';
+  inlineAskRow.querySelector(".ask-inline-text").textContent = question;
   append(inlineAskRow);
 }
 
