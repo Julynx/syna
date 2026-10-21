@@ -360,7 +360,11 @@ async def transcribe_speech(file: UploadFile):
     audio_bytes = await file.read()
     try:
         text = await asyncio.to_thread(
-            speech.transcribe_audio, audio_bytes, audio_format, speech_settings
+            speech.transcribe_audio,
+            audio_bytes,
+            audio_format,
+            speech_settings,
+            speech_settings.language,
         )
     except speech.SpeechError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

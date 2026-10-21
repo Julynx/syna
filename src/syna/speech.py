@@ -15,6 +15,7 @@ import base64
 import io
 import wave
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
@@ -41,6 +42,27 @@ MEDIA_TYPES_BY_FORMAT = {
     "opus": "audio/ogg",
     "aac": "audio/aac",
     "flac": "audio/flac",
+}
+
+EXTENSION_BY_MEDIA_TYPE = {
+    "audio/mpeg": "mp3",
+    "audio/wav": "wav",
+    "audio/ogg": "ogg",
+    "audio/aac": "aac",
+    "audio/flac": "flac",
+}
+
+EXTENSION_TO_AUDIO_FORMAT = {
+    ".wav": "wav",
+    ".wave": "wav",
+    ".mp3": "mp3",
+    ".m4a": "m4a",
+    ".mp4": "m4a",
+    ".ogg": "ogg",
+    ".opus": "ogg",
+    ".flac": "flac",
+    ".aac": "aac",
+    ".webm": "webm",
 }
 
 AUDIO_FORMATS = {
@@ -106,6 +128,11 @@ def audio_format_for(content_type: str | None) -> str | None:
     return AUDIO_FORMATS.get(content_type.split(";")[0].strip().lower())
 
 
+def audio_format_for_path(file_name: str) -> str | None:
+    """Map an audio file's extension to an OpenRouter transcription format."""
+    return EXTENSION_TO_AUDIO_FORMAT.get(Path(file_name).suffix.lower())
+
+
 class SpeechError(RuntimeError):
     """A failed speech request; the message is safe to show to the user."""
 
@@ -140,22 +167,30 @@ def _post_to_openrouter(endpoint: str, payload: dict) -> httpx.Response:
 
 
 def transcribe_audio(
-    audio_bytes: bytes, audio_format: str, settings: SpeechSettings
+    audio_bytes: bytes,
+    audio_format: str,
+    settings: SpeechSettings,
+    language: str | None = None,
 ) -> str:
-    """Transcribe one recorded clip through the configured STT model."""
+    """Transcribe one recorded clip through the configured STT model.
+
+    'language' is the ISO-639-1 hint sent to the model; None omits the
+    field so the model auto-detects the language (not supported by every
+    model). Callers decide: voice mode passes the configured SPEECH_LANGUAGE,
+    the speech_to_text tool passes the model's per-call choice.
+    """
     if not settings.stt_available:
         raise SpeechError("STT_MODEL is not set in the .env file.")
-    response = _post_to_openrouter(
-        TRANSCRIPTIONS_ENDPOINT,
-        {
-            "model": settings.stt_model,
-            "input_audio": {
-                "data": base64.b64encode(audio_bytes).decode("ascii"),
-                "format": audio_format,
-            },
-            "language": settings.language,
+    payload = {
+        "model": settings.stt_model,
+        "input_audio": {
+            "data": base64.b64encode(audio_bytes).decode("ascii"),
+            "format": audio_format,
         },
-    )
+    }
+    if language:
+        payload["language"] = language
+    response = _post_to_openrouter(TRANSCRIPTIONS_ENDPOINT, payload)
     try:
         text = response.json()["text"]
     except (KeyError, TypeError, ValueError) as exc:

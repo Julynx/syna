@@ -31,13 +31,26 @@ from .config import (
 )
 from .editor import edit_file as e_edit_file
 from .editor import read_file as e_read_file
+from .image_generation import (
+    ImageGenerationError,
+    generate_image,
+    load_image_settings,
+)
+from .speech import (
+    EXTENSION_BY_MEDIA_TYPE,
+    SpeechError,
+    audio_format_for_path,
+    load_speech_settings,
+    synthesize_speech,
+    transcribe_audio,
+)
 from .state import get_call_output_path, get_container, set_last_exit_code
 from .vision import describe_image as v_describe_image
 from .web_search import search
 
 BROWSER = None
 
-_screenshot_counter = itertools.count(1)
+_artifact_counter = itertools.count(1)
 
 BROWSER_COMMANDS = {
     "goto": Browser.goto,
@@ -172,6 +185,17 @@ def web_search(query: str):
     return search(query)
 
 
+def _write_into_pod(data: bytes, pod_dir: str, file_name: str) -> str:
+    """Write bytes into the pod at pod_dir/file_name and return the pod path."""
+    container = get_container()
+    container.exec(["bash", "-c", f"mkdir -p {shlex.quote(pod_dir)}"])
+    with tempfile.TemporaryDirectory(prefix="syna-artifact-") as temp_dir:
+        host_file = Path(temp_dir, file_name)
+        host_file.write_bytes(data)
+        container.copy_to(str(host_file), pod_dir)
+    return f"{pod_dir}/{file_name}"
+
+
 def _capture_screenshot(screenshot_fn, browser, args: dict) -> str:
     """Capture a viewport screenshot and copy it into the pod.
 
@@ -188,16 +212,10 @@ def _capture_screenshot(screenshot_fn, browser, args: dict) -> str:
         return f"ERROR: {exc}"
     except TypeError as exc:
         return f"ERROR: bad arguments for screenshot: {exc}"
-    container = get_container()
     name = "screenshot-{}-{:04d}.png".format(
-        time.strftime("%Y%m%d-%H%M%S"), next(_screenshot_counter)
+        time.strftime("%Y%m%d-%H%M%S"), next(_artifact_counter)
     )
-    container.exec(["bash", "-c", "mkdir -p /workspace/screenshots"])
-    with tempfile.TemporaryDirectory(prefix="syna-shot-") as temp_dir:
-        host_file = Path(temp_dir, name)
-        host_file.write_bytes(data)
-        container.copy_to(str(host_file), "/workspace/screenshots")
-    pod_path = f"/workspace/screenshots/{name}"
+    pod_path = _write_into_pod(data, "/workspace/screenshots", name)
     return (
         f"Screenshot saved to {pod_path} ({max(1, len(data) // 1024)} KB)."
         " The screenshot is capped to the viewport: if something is not"
@@ -328,6 +346,131 @@ def describe_image(file_path: str, question: str):
     return v_describe_image(file_path, question)
 
 
+def speech_to_text(file_path: str, language: str | None = None):
+    """
+    Transcribe an audio file into written text. Call this tool to turn a recording, voice note, or audio clip in the pod into text you can work with.
+    - `file_path` (string, required): absolute path to an audio file in the pod; supported formats are wav, mp3, m4a, ogg, opus, flac, aac, and webm.
+    - `language` (string, optional): ISO-639-1 code of the audio's language, e.g. `en` or `de`. Some models detect the language automatically, but transcription might not provide correct results if the language is not set properly, and auto-detection is not always supported. Omit it to let the model detect the language.
+
+    The full transcript is saved as a text file in /workspace/transcripts and its text is returned. Transcription quality drops with heavy background noise; the transcript may mishear names and numbers.
+    """
+    settings = load_speech_settings()
+    if not settings.stt_available:
+        return {
+            "error": (
+                "Speech transcription is not configured by the user"
+                " (no STT_MODEL in the .env file). You did nothing wrong;"
+                " tell the user they can enable it by setting STT_MODEL"
+                " in the .env file."
+            )
+        }
+    with tempfile.TemporaryDirectory(prefix="syna-speech-") as temp_dir:
+        temp_path = Path(temp_dir)
+        container = get_container()
+        error = _copy_from_pod(container, file_path, temp_path)
+        if error:
+            return {"error": error}
+        source_path = temp_path / basename(file_path)
+        audio_format = audio_format_for_path(source_path.name)
+        if audio_format is None:
+            return {
+                "error": (
+                    f"Unsupported audio file '{file_path}'. Supported formats:"
+                    " wav, mp3, m4a, ogg, opus, flac, aac, webm."
+                )
+            }
+        try:
+            transcript = transcribe_audio(
+                source_path.read_bytes(), audio_format, settings, language
+            )
+        except SpeechError as exc:
+            return {"error": str(exc)}
+    name = "transcript-{}-{:04d}.txt".format(
+        time.strftime("%Y%m%d-%H%M%S"), next(_artifact_counter)
+    )
+    pod_path = _write_into_pod(
+        transcript.encode("utf-8"), "/workspace/transcripts", name
+    )
+    limit = load_output_limit_chars()
+    if len(transcript) <= limit:
+        return f"{transcript}\n\n[Transcript saved to {pod_path}]"
+    return (
+        f"{transcript[:limit]}"
+        f"... [transcript truncated; the full text is saved to {pod_path}]"
+    )
+
+
+def text_to_speech(file_path: str):
+    """
+    Synthesize spoken audio from a text file. Call this tool when the user wants to hear a text read out loud or asks for an audio version of a document.
+    - `file_path` (string, required): absolute path to a text file in the pod.
+
+    The audio is saved into /workspace/audio; deliver it to the user with `share_file`. Very long texts take longer to synthesize and may be rejected by the speech model.
+    """
+    settings = load_speech_settings()
+    if not settings.tts_available:
+        return {
+            "error": (
+                "Speech synthesis is not configured by the user"
+                " (no TTS_MODEL in the .env file). You did nothing wrong;"
+                " tell the user they can enable it by setting TTS_MODEL"
+                " in the .env file."
+            )
+        }
+    with tempfile.TemporaryDirectory(prefix="syna-speech-") as temp_dir:
+        temp_path = Path(temp_dir)
+        container = get_container()
+        error = _copy_from_pod(container, file_path, temp_path)
+        if error:
+            return {"error": error}
+        text = (temp_path / basename(file_path)).read_text(
+            encoding="utf-8", errors="replace"
+        )
+    try:
+        audio = synthesize_speech(text, settings)
+    except SpeechError as exc:
+        return {"error": str(exc)}
+    extension = EXTENSION_BY_MEDIA_TYPE.get(audio.media_type, "wav")
+    name = "speech-{}-{:04d}.{}".format(
+        time.strftime("%Y%m%d-%H%M%S"), next(_artifact_counter), extension
+    )
+    pod_path = _write_into_pod(audio.content, "/workspace/audio", name)
+    return (
+        f"Speech audio saved to {pod_path}"
+        f" ({max(1, len(audio.content) // 1024)} KB)."
+        " Deliver it to the user with the share_file tool."
+    )
+
+
+def text_to_image(prompt: str):
+    """
+    Generate an image from a text description and save it into the pod. Call this tool when the user asks you to generate, draw, or create an image. The result can differ from the prompt in details; inspect it with `describe_image` if the exact content matters, and share it with `share_file` when it is a deliverable.
+    - `prompt` (string, required): description of the image to generate; mention style, composition, colors, and any text that should appear in the image.
+    """
+    settings = load_image_settings()
+    if not settings.model:
+        return {
+            "error": (
+                "Image generation is not configured by the user"
+                " (no IMAGE_MODEL in the .env file). You did nothing wrong;"
+                " tell the user they can enable it by setting IMAGE_MODEL"
+                " in the .env file."
+            )
+        }
+    try:
+        image = generate_image(prompt, settings)
+    except ImageGenerationError as exc:
+        return {"error": str(exc)}
+    name = "generated-{}-{:04d}.{}".format(
+        time.strftime("%Y%m%d-%H%M%S"), next(_artifact_counter), image.extension
+    )
+    pod_path = _write_into_pod(image.content, "/workspace/images", name)
+    result = f"Image saved to {pod_path} ({max(1, len(image.content) // 1024)} KB)."
+    if image.media_type != "image/svg+xml":
+        result += " You may inspect it with the describe_image tool if you need to."
+    return result + " Share it with the share_file tool."
+
+
 def share_file(file_path: str):
     """
     Make a file or directory available to the user; directories are sent as one zip. Files you don't share are invisible to the user. Share each deliverable before finishing your turn, and check the result to confirm it worked. Don't share bulky or irrelevant content (virtualenvs, `node_modules`, caches); copy deliverables into a clean folder first if needed.
@@ -379,5 +522,8 @@ TOOL_REGISTRY = {
     "web_search": web_search,
     "web_interact": web_interact,
     "describe_image": describe_image,
+    "speech_to_text": speech_to_text,
+    "text_to_speech": text_to_speech,
+    "text_to_image": text_to_image,
     "share_file": share_file,
 }

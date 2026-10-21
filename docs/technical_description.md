@@ -60,6 +60,7 @@ create files with full root access.
 | `TTS_MODEL` | Speech synthesis model (reply read-aloud off when unset). |
 | `TTS_VOICE` | Synthesis voice (default `Kore`). |
 | `TTS_RESPONSE_FORMAT` | Speech endpoint response format (default `pcm`; raw samples are wrapped in a WAV container server-side). Some models, e.g. OpenAI TTS, also accept `mp3`. |
+| `IMAGE_MODEL` | Image generation model for the `text_to_image` tool (tool reports itself as not configured when unset), e.g. `google/gemini-3.1-flash-image`. |
 | `SPEECH_LANGUAGE` | Spoken language hint for STT (default `en`). |
 
 `assets/config.json` holds all runtime settings:
@@ -297,6 +298,17 @@ operations, non-object payloads, missing required keys, unknown operation
 types, out-of-bounds line numbers, invalid ranges and overlapping ranges all
 raise clean `ValueError`s instead of leaking internal TypeErrors.
 
+### `src/syna/image_generation.py`
+Text-to-image generation through OpenRouter's dedicated Image API
+(`POST /api/v1/images`). `ImageSettings` (frozen dataclass) carries the
+model from `.env` (`IMAGE_MODEL`); when unset the caller reports the feature
+as not configured by the user. `generate_image(prompt, settings)` posts the
+prompt, decodes `data[0].b64_json`, and returns a `GeneratedImage` (bytes
+plus media type; `image/png` when the provider omits it, `extension` maps
+the media type to a file extension). The API bills all-or-nothing, so
+failures (non-200, malformed response) raise `ImageGenerationError` with a
+user-safe message carrying the provider detail.
+
 ### `src/syna/output.py`
 Cleaning and bounded rendering of tool output shown to the model:
 `strip_ansi_escapes`, `collapse_progress_lines` (carriage-return progress
@@ -395,9 +407,12 @@ base64 clip to `/api/v1/audio/transcriptions` and returns text;
 type); `wrap_pcm_in_wav` containers headerless 16-bit mono PCM samples
 (24 kHz) into RIFF/WAVE so browsers can play them, passing through responses
 that already carry a RIFF header; `audio_format_for` maps an upload MIME type
-to an audio format; `client_configuration` collects the settings the web
-client needs for voice mode. Failures raise `SpeechError` with a user-safe
-message.
+to an audio format and `audio_format_for_path` maps a file extension to the
+same format for the `speech_to_text` tool; `transcribe_audio` takes an
+explicit `language` hint (None omits the field so the model auto-detects);
+`client_configuration` collects
+the settings the web client needs for voice mode. Failures raise
+`SpeechError` with a user-safe message.
 
 ### `src/syna/session.py`
 `AgentSession` — the shared conversation loop for CLI and web.
@@ -497,7 +512,13 @@ Global Docker client plus per-thread container registry and per-call context.
 The tools exposed to the model: `think` (no-op reasoning record; produces a
 `(noted)` tool result), `execute_command` (shell or argv style inside the container),
 `read_file`, `edit_file` (both proxied into the pod through temp copies),
-`web_search`, `web_interact`, `describe_image`, and `share_file` (registers a pod
+`web_search`, `web_interact`, `describe_image`, `speech_to_text` (pod audio →
+transcript, saved to /workspace/transcripts with a preview in the result;
+optional ISO-639-1 `language` hint, auto-detect when omitted),
+`text_to_speech` (pod text → speech audio in /workspace/audio),
+`text_to_image` (prompt → generated image in /workspace/images via
+`image_generation.py`; both speech tools reuse `speech.py`), and
+`share_file` (registers a pod
 path for user download; a missing path is reported as a normal error row
 with exit code 1, and the delivery metadata reaches the client through the
 `structured_output` event field). The final answer to the user is delivered as

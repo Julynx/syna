@@ -37,6 +37,12 @@ _Syna, the AI agent with a pod._
    SPEECH_LANGUAGE=en                          # Optional: ISO-639-1 code, English by default
    ```
 
+   Image generation (the model's `text_to_image` tool) is enabled the same way:
+
+   ```sh
+   IMAGE_MODEL=google/gemini-3.1-flash-image   # Generates images on request
+   ```
+
 3. Install `uv` and run:
 
    ```bash
