@@ -204,6 +204,12 @@ Persistent stealth browser session (Camoufox) exposed as LLM-callable actions.
 Renders pages through an accessibility-style walker that emits a compact
 line-based view (URL, title, scroll position and numbered interactables), and
 dispatches commands (`goto`, `click`, `type`, ...) by numeric element ref.
+`screenshot_bytes()` captures the current viewport as PNG
+(`Browser.screenshot` is its sync wrapper); `tools.py` copies the bytes into
+`/workspace/screenshots/` in the pod (unique per-call filenames) so
+`describe_image` and `share_file` can use them. Browser-side screenshot
+failures follow the same 'ERROR:' result convention as the other commands;
+pod-side copy failures propagate.
 
 Hardening: hosts whose ad/identity scripts fail under uBlock (which makes
 Fandom wipe the page with an error-report modal) are fulfilled with empty
@@ -216,8 +222,9 @@ failed requests are logged to the dev log.
 
 ### `tests/test_browser_health.py`
 Live browser health checks (run manually): Phase 1 reproduces the
-goto-read-soak workflow against a heavy Fandom page and reports crashes,
-popup hijacks, navigations away, or blank reads over 90 seconds; Phase 2
+goto-read-screenshot-soak workflow against a heavy Fandom page and reports
+crashes, popup hijacks, navigations away, blank reads, or non-JPEG captures
+over 90 seconds; Phase 2
 (`--stealth`) visits bot.sannysoft.com and CreepJS and dumps their verdicts
 for human review of the "functional and undetectable" standard.
 

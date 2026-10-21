@@ -11,16 +11,18 @@ Every tool docstring is injected verbatim into the system prompt
 documentation and must stay in sync with actual behavior.
 """
 
+import itertools
 import re
 import shlex
 import tempfile
+import time
 from pathlib import Path
 from posixpath import basename, dirname
 from typing import Any
 
 from bollard import DockerException
 
-from .browser import Browser
+from .browser import Browser, PWError, ToolError
 from .config import (
     get_logger,
     load_command_timeout_s,
@@ -35,6 +37,8 @@ from .web_search import search
 
 BROWSER = None
 
+_screenshot_counter = itertools.count(1)
+
 BROWSER_COMMANDS = {
     "goto": Browser.goto,
     "snapshot": Browser.snapshot,
@@ -45,6 +49,7 @@ BROWSER_COMMANDS = {
     "scroll": Browser.scroll,
     "back": Browser.back,
     "read": Browser.read,
+    "screenshot": Browser.screenshot,
 }
 
 NONINTERACTIVE_ENV_EXPORTS = (
@@ -167,6 +172,40 @@ def web_search(query: str):
     return search(query)
 
 
+def _capture_screenshot(screenshot_fn, browser, args: dict) -> str:
+    """Capture a viewport screenshot and copy it into the pod.
+
+    The image lands in /workspace/screenshots so describe_image can read it
+    and share_file can deliver it to the user. Browser-side failures follow
+    the same 'ERROR:' convention as the other browser commands, so the batch
+    keeps running; infrastructural failures (pod copy) still propagate.
+    """
+    try:
+        data = screenshot_fn(browser, **args)
+    except PWError as exc:
+        return "ERROR: " + str(exc).strip().splitlines()[0][:300]
+    except ToolError as exc:
+        return f"ERROR: {exc}"
+    except TypeError as exc:
+        return f"ERROR: bad arguments for screenshot: {exc}"
+    container = get_container()
+    name = "screenshot-{}-{:04d}.png".format(
+        time.strftime("%Y%m%d-%H%M%S"), next(_screenshot_counter)
+    )
+    container.exec(["bash", "-c", "mkdir -p /workspace/screenshots"])
+    with tempfile.TemporaryDirectory(prefix="syna-shot-") as temp_dir:
+        host_file = Path(temp_dir, name)
+        host_file.write_bytes(data)
+        container.copy_to(str(host_file), "/workspace/screenshots")
+    pod_path = f"/workspace/screenshots/{name}"
+    return (
+        f"Screenshot saved to {pod_path} ({max(1, len(data) // 1024)} KB)."
+        " The screenshot is capped to the viewport: if something is not"
+        " visible, it may be out of view, scroll and take another screenshot"
+        " to see it. You may inspect the screenshot with the describe_image tool if you need to."
+    )
+
+
 def web_interact(command: str, args: dict[str, Any]):
     """
     Control a persistent browser that runs JavaScript; the current page, cookies, and logins persist between calls. Use it to read and interact with web pages, since many sites block plain HTTP clients. Use `execute_command` (`curl`, `wget`) to download files and call APIs.
@@ -183,6 +222,7 @@ def web_interact(command: str, args: dict[str, Any]):
     * `scroll`: `direction` (`down`, `up`, `top`, or `bottom`), `amount` (fraction of viewport height, default 0.8). Returns the visible viewport.
     * `back`: no arguments.
     * `read`: `ref` (integer; omit for the whole page), `max_chars` (integer). Full plain text, for when a view truncated something you need.
+    * `screenshot`: no arguments. Takes a screenshot of the current viewport, saves it into the pod, and returns its path. You may inspect it with `describe_image` if you need to, and share it with `share_file` if the user wants to see it. The screenshot is capped to the viewport, scroll and take another one to see further. Use this tool when the user requests a screenshot, or when you are having trouble performing a browser task and a visual description could help.
 
     Refs belong to the page state they came from; after navigation or large page changes, use refs from the newest output. Submitting forms that send, post, or buy something needs approval (see Protecting the user).
 
@@ -203,7 +243,10 @@ def web_interact(command: str, args: dict[str, Any]):
             f"ERROR: unknown browser command '{command}'. Available commands:"
             f" {', '.join(sorted(BROWSER_COMMANDS))}"
         )
-    view = function(BROWSER, **args)
+    if command == "screenshot":
+        view = _capture_screenshot(function, BROWSER, args)
+    else:
+        view = function(BROWSER, **args)
     if isinstance(view, str) and view.startswith("ERROR:"):
         set_last_exit_code(1)
     return view

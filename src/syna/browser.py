@@ -341,6 +341,10 @@ class Browser:
     def read(self, ref: int | None = None, max_chars: int = 6000):
         return self._tool("read", ref=ref, max_chars=max_chars)
 
+    def screenshot(self) -> bytes:
+        """Capture the current viewport as PNG bytes; tools.py copies it into the pod."""
+        return self.run(self._s.screenshot_bytes())
+
     def close(self) -> None:
         self.run(self._s.close())
         self._loop.call_soon_threadsafe(self._loop.stop)
@@ -751,6 +755,10 @@ class BrowserSession:
                 text = await el.inner_text()
         text = "\n".join(l.strip() for l in text.splitlines() if l.strip())
         return text[:max_chars] + ("\n... [truncated]" if len(text) > max_chars else "")
+
+    async def screenshot_bytes(self) -> bytes:
+        """PNG bytes of the current viewport for describe_image inspection."""
+        return await self._live_page().screenshot(type="png")
 
 
 if __name__ == "__main__":

@@ -49,6 +49,13 @@ async def phase_read_workflow() -> list[str]:
                 f"[read] ok, {len(text)} chars, first line: {text.splitlines()[0][:90]}"
             )
 
+        print("[screenshot] capture")
+        data = await session.screenshot_bytes()
+        if not data.startswith(b"\x89PNG"):
+            problems.append("screenshot_bytes did not return PNG data")
+        else:
+            print(f"[screenshot] ok, {len(data) // 1024} KB PNG")
+
         started = time.monotonic()
         cycle = 0
         while time.monotonic() - started < SOAK_SECONDS:
