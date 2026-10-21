@@ -398,7 +398,7 @@ function expandToolRun(run) {
       if (!run.expanded) return;
       const fades = rows.map((row) => {
         const fade = row.animate([{ opacity: 0 }, { opacity: 1 }], {
-          duration: 300,
+          duration: 600,
           easing: EASE_OUT,
           fill: "forwards",
         });
@@ -586,6 +586,36 @@ function growIn(el, delay) {
   };
 }
 
+/* Mirror of growIn: collapse the element's box to zero height and margin,
+   then remove it. onSettled runs whether the animation finishes or is
+   cancelled, so callers can clear their tracking state. */
+function shrinkOut(el, onSettled) {
+  const settle = () => {
+    if (onSettled) onSettled();
+    el.remove();
+  };
+  if (
+    REDUCE ||
+    replaying ||
+    !el.isConnected ||
+    !el.getBoundingClientRect().height
+  ) {
+    settle();
+    return;
+  }
+  const cs = getComputedStyle(el);
+  const box = boxOf(el, cs);
+  el.style.overflow = "hidden";
+  const a = el.animate(
+    [
+      { ...box, marginTop: cs.marginTop },
+      { ...BOX_ZERO, marginTop: -CHAT_ROW_GAP + "px" },
+    ],
+    { duration: 420, easing: EASE_IN, fill: "forwards" },
+  );
+  a.onfinish = a.oncancel = settle;
+}
+
 function detailSectionsFor(event) {
   const call = event.raw
     ? String(event.raw)
@@ -623,6 +653,12 @@ function detailSection(section) {
 function destroyDetail(row) {
   row._detailOpen = false;
   row.classList.remove("detail-open");
+  if (row._closingDetail) {
+    const closing = row._closingDetail;
+    row._closingDetail = null;
+    cancelAnim(closing);
+    closing.remove();
+  }
   if (row._detailEl) {
     cancelAnim(row._detailEl);
     row._detailEl.remove();
@@ -630,11 +666,40 @@ function destroyDetail(row) {
   }
 }
 
+function closeDetail(row) {
+  row._detailOpen = false;
+  row.classList.remove("detail-open");
+  const detail = row._detailEl;
+  row._detailEl = null;
+  if (!detail) return;
+  const settle = () => {
+    if (row._closingDetail === detail) row._closingDetail = null;
+  };
+  if (
+    REDUCE ||
+    replaying ||
+    !detail.isConnected ||
+    !detail.getBoundingClientRect().height
+  ) {
+    detail.remove();
+    settle();
+    return;
+  }
+  row._closingDetail = detail;
+  shrinkOut(detail, settle);
+}
+
 function toggleDetail(row) {
   Sfx.play(row._detailOpen ? "close" : "open");
   if (row._detailOpen) {
-    destroyDetail(row);
+    closeDetail(row);
     return;
+  }
+  if (row._closingDetail) {
+    const closing = row._closingDetail;
+    row._closingDetail = null;
+    cancelAnim(closing);
+    closing.remove();
   }
   const detail = document.createElement("div");
   detail.className = "tool-detail";

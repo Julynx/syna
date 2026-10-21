@@ -1,6 +1,7 @@
 """Web search and URL-to-markdown fetching for the agent tools."""
 
 import re
+import threading
 import time
 
 from ddgs import DDGS
@@ -8,6 +9,8 @@ from ddgs import DDGS
 from .web_to_markdown import Config, fetch_markdown
 
 _URL_PATTERN = re.compile(r"^https?://\S+$", re.IGNORECASE)
+
+_search_lock = threading.Lock()
 
 
 def search(query, delay_s=2):
@@ -18,9 +21,16 @@ def search(query, delay_s=2):
     DuckDuckGo text search.
 
     Sleeps for 'delay_s' before every search to avoid getting rate-limited.
+    The sleep and the request share a process-wide lock, so searches from
+    concurrent sessions or detached calls run one after another and stay
+    'delay_s' apart instead of sleeping in parallel and firing together.
     """
-    time.sleep(delay_s)
+    with _search_lock:
+        time.sleep(delay_s)
+        return _search(query)
 
+
+def _search(query):
     query = query.strip()
     if _URL_PATTERN.match(query):
         return fetch_markdown(query, Config(headless=True))

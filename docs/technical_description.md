@@ -528,8 +528,11 @@ for this model is maximum, which burns the completion budget on hidden
 reasoning and can return no content at all.
 
 ### `src/syna/web_search.py`
-`search(query)` — DuckDuckGo text search for queries; URLs are fetched and
-converted to markdown via `web_to_markdown`.
+`search(query, delay_s=2)` — DuckDuckGo text search for queries; URLs are
+fetched and converted to markdown via `web_to_markdown`. Sleeps `delay_s`
+before every request, holding a process-wide lock across the sleep and the
+request so searches from concurrent sessions or detached calls serialize
+and stay `delay_s` apart instead of firing together.
 
 ### `src/syna/web_to_markdown.py`
 Headless-browser page fetcher (Playwright/DrissionPage) that renders JavaScript
