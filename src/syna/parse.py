@@ -24,6 +24,7 @@ from .config import (
     load_output_limit_chars,
     load_tool_call_timeout_s,
 )
+from .interaction import get_responder, register_responder, unregister_responder
 from .output import bounded_output
 from .state import (
     get_container,
@@ -208,23 +209,28 @@ def build_detached_call_notice(
 def execute_tool_with_timeout(
     tool_name: str,
     tool_arguments: dict,
-    timeout_s: float,
+    timeout_s: float | None,
     output_path: str | None = None,
 ) -> tuple[object, bool, int | None]:
     """Run a tool in a worker thread and return (output, detached, exit_code).
 
-    The worker inherits the calling thread's container and the call's output
-    path (both are thread-locals), and reports back the exit code recorded by
-    the tool, if any.
+    The worker inherits the calling thread's container and question
+    responder, and the call's output path (all thread-locals), and reports
+    back the exit code recorded by the tool, if any. A None timeout waits
+    indefinitely — used by ask_user, which must outlive the configured
+    per-call budget and block until the user answers.
     """
     tool_fn = TOOL_REGISTRY[tool_name]
     container = get_registered_container()
+    responder = get_responder()
     finished = threading.Event()
     outcome: dict = {}
 
     def worker():
         if container is not None:
             register_container(container)
+        if responder is not None:
+            register_responder(responder)
         set_call_output_path(output_path)
         try:
             outcome["output"] = tool_fn(**tool_arguments)
@@ -233,6 +239,7 @@ def execute_tool_with_timeout(
         finally:
             outcome["exit_code"] = pop_last_exit_code()
             set_call_output_path(None)
+            unregister_responder()
             if container is not None:
                 unregister_container()
             finished.set()
@@ -582,9 +589,10 @@ def parse_and_execute_tools(
         )
 
         call_output_path = f"/tool_outputs/{next_call_index():04d}_{tool_name}.txt"
+        call_timeout = None if tool_name == "ask_user" else tool_timeout_s
         try:
             output, detached, exit_code = execute_tool_with_timeout(
-                tool_name, tool_arguments, tool_timeout_s, call_output_path
+                tool_name, tool_arguments, call_timeout, call_output_path
             )
         except Exception as exc:
             if echo_errors:

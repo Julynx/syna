@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from playwright.async_api import Error as PWError
 
+from _runner import run_suite
 from syna import tools
 from syna.state import pop_last_exit_code
 
@@ -26,6 +27,14 @@ class FakeContainer:
 
     def copy_to(self, source, destination):
         self.copied.append((source, destination))
+        Path(destination).mkdir(parents=True, exist_ok=True)
+        Path(destination, Path(source).name).write_bytes(Path(source).read_bytes())
+
+
+def _copied_bytes(container) -> bytes:
+    """Return the bytes of the first file the fake pod received."""
+    source, destination = container.copied[0]
+    return Path(destination, Path(source).name).read_bytes()
 
 
 def test_screenshot_saves_image_into_pod(monkeypatch):
@@ -46,7 +55,7 @@ def test_screenshot_saves_image_into_pod(monkeypatch):
     assert len(container.copied) == 1
     source, destination = container.copied[0]
     assert destination == "/workspace/screenshots"
-    assert Path(source).read_bytes() == FAKE_PNG
+    assert _copied_bytes(container) == FAKE_PNG
     assert Path(source).suffix == ".png"
 
 
@@ -109,3 +118,20 @@ def test_screenshot_without_container_raises(monkeypatch):
         pass  # None.exec raises; parse.py reports it as a failed call
     else:
         raise AssertionError("expected an exception without a container")
+
+
+def main():
+    """Run every screenshot-subtool test and report a summary."""
+    run_suite(
+        [
+            test_screenshot_saves_image_into_pod,
+            test_screenshot_filenames_are_unique,
+            test_browser_errors_follow_the_error_convention,
+            test_bad_arguments_follow_the_error_convention,
+            test_screenshot_without_container_raises,
+        ]
+    )
+
+
+if __name__ == "__main__":
+    main()

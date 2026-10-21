@@ -188,6 +188,22 @@ Client behavior notes:
   on commands containing single quotes (Python repr switches to double
   quotes and the first single-quoted span won — e.g. heredoc commands
   showing "EOF"). The signature parser remains only as a replay fallback.
+- Images in Syna's replies (`![](/workspace/....png)`) render inline:
+  `applyImagePolicy` rewrites pod-absolute sources to
+  `GET /api/image/{client_id}?path=...` (lazy-loaded, with an
+  "unavailable" fallback chip), while remote `http(s)` sources are
+  converted to plain links and never fetched — a page could otherwise
+  make Syna embed an image whose URL exfiltrates data.
+- When Syna calls `ask_user`, the composer slides down and a question
+  panel slides up in its place (choices capped in height and scrollable,
+  an always-appended "Other — type your own response" choice, and a stop
+  button). Picking a choice answers the pending tool call; "Other"
+  restores the composer in send mode so the next typed message resolves
+  the question (the server intercepts it — no new turn starts). An empty
+  choices array renders the question inline and keeps the composer in
+  send mode. During history replay the question renders statically and
+  is re-docked after `history_done` if still unanswered; stop, new chat,
+  and disconnects all clear the panel.
 
 ## File structure and module responsibilities
 
@@ -198,7 +214,14 @@ global Docker client on exit.
 ### `src/syna/ask.py`
 CLI loop. Renders session events (`_print_event`), dispatches slash commands
 via `commands.parse_and_execute_command`, and feeds plain queries to
-`AgentSession.run_turn`.
+`AgentSession.run_turn`. The renderer shows tool calls as they start (in the
+progress line), marks failed and skipped rows, and prints a `/get-from` hint
+when a `share_file` result carries delivery metadata. Ctrl+C during a turn
+cancels the turn instead of exiting (a second Ctrl+C quits); `/newchat`
+closes the session and destroys the shared pod. The terminal responder for
+`ask_user` prints the question with numbered choices and accepts a number or
+free text; Ctrl+C or a closed stdin cancels the pending question and stops
+the task.
 
 ### `src/syna/browser.py`
 Persistent stealth browser session (Camoufox) exposed as LLM-callable actions.
@@ -317,6 +340,14 @@ and end of long output with an explicit omission marker pointing at the
 `saved_to` file), and `bounded_output` (cleaning plus cut plus an explicit
 `(no output)` placeholder for empty results).
 
+### `src/syna/imaging.py`
+Image processing shared by the vision pipeline and the web server's inline
+image endpoint. `fit_image_to_box` writes a PNG copy of a source image
+downscaled into a 1024x1024 box (CMYK converted to RGB first);
+`image_exceeds_box` tests an open Pillow image against the box;
+`MAX_SERVE_BYTES` (50 MB) and `RECOMPRESS_BYTES` (5 MB) bound what the
+image endpoint will serve.
+
 ### `src/syna/inspect_module.py`
 Extracts function names, docstrings and argument metadata via `ast`; used to
 inject live tool documentation into the system prompt and to validate tool
@@ -333,6 +364,18 @@ description. `get_tool_definitions()` returns the schemas for all registered
 tools. Note: any `- `-prefixed docstring line is treated as an argument
 description, so non-argument bullet lists in tool docstrings must use `* `
 bullets (see `web_interact`) or they are pulled out of the tool description.
+
+### `src/syna/interaction.py`
+User-interaction bridge between the `ask_user` tool and the host interfaces.
+Tools never touch sessions or terminals directly: before running a turn, the
+interface registers a responder thread-locally (propagated into tool worker
+threads by `parse.py` like the container binding). `ask()` blocks until the
+responder returns the user's answer, raising `InteractionError` when no
+responder exists (non-interactive runs) and `InteractionCancelled` when the
+task was stopped. `PendingQuestion` is the thread-safe state for one pending
+web question: the session worker opens it and blocks on the answer queue
+while WebSocket-handler threads resolve or release it (a released question
+unblocks with a `None` sentinel).
 
 ### `src/syna/parse.py`
 Tool-call parsing and execution under native OpenRouter tool calling.
@@ -360,10 +403,12 @@ Tool-call parsing and execution under native OpenRouter tool calling.
   unchanged.
 - `execute_tool_with_timeout(tool_name, tool_arguments, timeout_s,
   output_path)` — runs the tool in a daemon worker thread, propagating the
-  calling thread's registered container and the call's output path into the
-  worker (both are thread-locals), and reports back the tool-recorded exit
-  code. On timeout the worker is detached and a notice is returned as the
-  tool output with status `timeout`.
+  calling thread's registered container, question responder, and the call's
+  output path into the worker (all thread-locals), and reports back the
+  tool-recorded exit code. On timeout the worker is detached and a notice is
+  returned as the tool output with status `timeout`. `ask_user` is dispatched
+  with a `None` timeout so a pending question is never detached; it blocks
+  until the user answers.
 - `_persist_tool_output(output_text, saved_to, persist_outputs)` — saves
   host-side tool output (web tools, file tools, ...) into the pod at
   `/tool_outputs/` via `copy_to`; `execute_command` writes its own file
@@ -383,15 +428,28 @@ Tool-call parsing and execution under native OpenRouter tool calling.
 ### `src/syna/server.py`
 FastAPI app. One `SessionRecord` per client id owns an `AgentSession`, a
 dedicated container (registered thread-locally in the record's worker thread),
-event queues, an event log for WebSocket replay, and shared-file downloads
-(when a finished `share_file` event carries `structured_output` metadata —
-matched via `session.shared_file_metadata()` — the record copies the pod path
-to the host and pushes a `file` event the client renders as a download;
-worker teardown releases the container and model client; `share_file`
-recreates the session temp dir if it was removed externally). A janitor
-coroutine reaps idle, disconnected sessions. `index()` serves `chat.html` and
-injects `window.SYNA_CONFIG` (UI limits plus voice availability, tuning and
-the configured initial voice-mode state).
+event queues, an event log for WebSocket replay, an `ask_user` pending
+question, and shared-file downloads (when a finished `share_file` event
+carries `structured_output` metadata — matched via
+`session.shared_file_metadata()` — the record copies the pod path to the host
+and pushes a `file` event the client renders as a download; worker teardown
+releases the container and model client; `share_file` recreates the session
+temp dir if it was removed externally). During a turn the record registers an
+`ask_user` responder that pushes nothing extra (the client renders the
+question from the tool call's `started` arguments) and blocks on the pending
+answer queue; the WebSocket handler resolves the question on an `answer`
+message or treats a plain `message` as the typed answer instead of queueing a
+turn, and `stop`, `new-chat`, and teardown release the pending question so
+the blocked tool unwinds as a failed call. `GET /api/image/{client_id}`
+serves pod images for inline rendering: only image files under `/workspace`
+(png/jpg/jpeg/webp/gif) are eligible, sources over 50 MB are rejected, images
+that fit the 1024x1024 box and stay under 5 MB are served untouched
+(animations survive), everything else is downscaled into the box and
+converted to PNG; each request gets a fresh copy (LRU-capped at 32) with
+`Cache-Control: no-store`, so regenerated images are never served stale.
+A janitor coroutine reaps idle, disconnected sessions. `index()` serves
+`chat.html` and injects `window.SYNA_CONFIG` (UI limits plus voice
+availability, tuning and the configured initial voice-mode state).
 Speech endpoints: `POST /api/speech/transcribe` (multipart clip to text) and
 `POST /api/speech/synthesize` (JSON text to audio in the configured format;
 'pcm' replies are wrapped in a WAV container server-side). `main()` runs
@@ -506,7 +564,8 @@ Global Docker client plus per-thread container registry and per-call context.
 - `next_call_index()` — monotonically increasing counter used for the
   zero-padded `/tool_outputs/NNNN_tool.txt` file names.
 - `init_docker_client` / `close_docker_client` manage the global client
-  lifecycle.
+  lifecycle; `reset_shared_container` destroys the shared pod so the next
+  `get_container()` lazily starts a fresh one (CLI `/newchat`).
 
 ### `src/syna/tools.py`
 The tools exposed to the model: `think` (no-op reasoning record; produces a
@@ -517,12 +576,18 @@ transcript, saved to /workspace/transcripts with a preview in the result;
 optional ISO-639-1 `language` hint, auto-detect when omitted),
 `text_to_speech` (pod text → speech audio in /workspace/audio),
 `text_to_image` (prompt → generated image in /workspace/images via
-`image_generation.py`; both speech tools reuse `speech.py`), and
+`image_generation.py`; both speech tools reuse `speech.py`),
 `share_file` (registers a pod
 path for user download; a missing path is reported as a normal error row
 with exit code 1, and the delivery metadata reaches the client through the
-`structured_output` event field). The final answer to the user is delivered as
-natural language text when the model completes its work without tool calls.
+`structured_output` event field), and `ask_user` (asks the user a question
+with optional choices and blocks until they answer; validates its arguments,
+returns a clean error dict in non-interactive contexts, and propagates
+`InteractionCancelled` when the task is stopped mid-question — the client
+adds the "Other — type your own response" option itself, and an empty
+choices array means an open text answer). The final answer to the user is
+delivered as natural language text when the model completes its work without
+tool calls.
 
 Every docstring is injected verbatim into the system prompt (`build_prompt`),
 so the docstrings are the model-facing tool documentation and must stay in
@@ -545,15 +610,16 @@ use), it falls back to a plain `container.exec`.
 
 ### `src/syna/vision.py`
 `describe_image(file_path, question)` — image understanding through a
-dedicated single-turn vision request. Copies the image from the pod, converts
-it to PNG, downscales it to fit a 1024x1024 box with Pillow, logs the payload
-size (pixels and PNG bytes, so a failing vision request leaves data instead
-of a mystery), base64-encodes it into a fresh single-message conversation
-(plain-text response, no JSON mode), and replaces the bytes with a text
-placeholder carrying the description so images never linger in history. The
-request runs at `medium` reasoning effort: without it the provider default
-for this model is maximum, which burns the completion budget on hidden
-reasoning and can return no content at all.
+dedicated single-turn vision request. Copies the image from the pod,
+converts it to PNG downscaled into a 1024x1024 box (via `imaging.py`),
+logs the payload size (pixels and PNG bytes, so a failing vision request
+leaves data instead of a mystery), base64-encodes it into a fresh
+single-message conversation (plain-text response, no JSON mode), and
+replaces the bytes with a text placeholder carrying the description so
+images never linger in history. The request runs at `medium` reasoning
+effort: without it the provider default for this model is maximum, which
+burns the completion budget on hidden reasoning and can return no content
+at all.
 
 ### `src/syna/web_search.py`
 `search(query, delay_s=2)` — DuckDuckGo text search for queries; URLs are
@@ -570,14 +636,17 @@ pages and converts the DOM to markdown.
 
 - CLI: one thread; tools run in short-lived daemon threads created by
   `parse.py` so a hung call can be detached at the timeout. The worker thread
-  inherits the container binding and the call's output path, and reports the
-  tool-recorded exit code back to the parser.
+  inherits the container binding, the question responder, and the call's
+  output path, and reports the tool-recorded exit code back to the parser.
 - Web: each session has one worker thread that owns its container and runs
   turns sequentially; tools inside a turn run in per-call daemon threads that
-  inherit the session's container binding. Detached (timed-out) tool threads
-  keep running until the call completes; since container commands run as real
-  processes inside the pod, the model can terminate them with a follow-up
-  `execute_command`.
+  inherit the session's container binding and responder. Detached (timed-out)
+  tool threads keep running until the call completes; since container
+  commands run as real processes inside the pod, the model can terminate
+  them with a follow-up `execute_command`. A pending `ask_user` question
+  blocks both the tool worker and the turn thread indefinitely — by design —
+  until the user answers or stop/new-chat/teardown releases the pending
+  question with a cancellation sentinel.
 
 ## Tests
 
@@ -624,6 +693,22 @@ All suites are plain scripts runnable with the project venv
 - `tests/test_simulated_task.py` — an end-to-end scripted task: batched
   calls with a failure and a skip, think+retry, persistence, elision under
   the token budget, and a clean respond.
+- `tests/test_ask_user.py` — the interaction bridge and tool: schema
+  registration, responder round-trip and thread propagation into tool
+  workers, no-responder and malformed-argument errors, cancellation
+  (batch stops, remainder skipped), the `None`-timeout exemption (a slow
+  question is not detached), `PendingQuestion` resolve/release semantics,
+  and the terminal responder's number-or-text answer handling.
+- `tests/test_image_endpoint.py` — the inline image endpoint against a
+  fake pod: path validation (outside `/workspace`, traversal, non-image
+  extensions), pass-through for small in-box images (animated GIF bytes
+  untouched), downscaling of oversized dimensions into the 1024x1024 PNG
+  box, the 50 MB rejection, the recompression threshold, malformed-image
+  rejection, and the LRU cache eviction.
+- `tests/_runner.py` — shared harness for the plain-script suites: a
+  monkeypatch (attribute/mapping overrides with automatic undo) and
+  `run_suite`, which executes every test, prints per-test results, and
+  exits non-zero on failure.
 - `evals/` — the live honesty eval suite (see `evals/README.md`): impossible
   and artifact tasks run against a real pod, scored mechanically, with the
   false-success rate tracked in `evals/results/history.jsonl`. Tasks include

@@ -9,9 +9,8 @@ from PIL import Image
 
 from .ask_utils import ask_question
 from .config import get_env, get_logger
+from .imaging import fit_image_to_box
 from .state import get_container
-
-MAX_IMAGE_BOX = (1024, 1024)
 
 
 def _load_model():
@@ -52,13 +51,9 @@ def describe_image(file_path: str, question: str):
         png_path = temp_path / f"{source_path.stem or 'image'}.png"
 
         try:
-            with Image.open(source_path) as img:
-                img_new = img
-                if img.mode == "CMYK":
-                    img_new = img.convert("RGB")
-                img_new.thumbnail(MAX_IMAGE_BOX)
-                pixel_count = img_new.width * img_new.height
-                img_new.save(png_path, format="PNG")
+            fit_image_to_box(source_path, png_path)
+            with Image.open(png_path) as png:
+                pixel_count = png.width * png.height
         except Exception as exc:
             return {"error": f"Could not read '{file_path}' as an image: {exc}"}
 

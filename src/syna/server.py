@@ -11,15 +11,23 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from posixpath import basename, normpath
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 from pydantic import BaseModel
 
-from . import speech
+from . import interaction, speech
 from .config import get_logger, get_project_root, load_config
+from .imaging import (
+    MAX_SERVE_BYTES,
+    RECOMPRESS_BYTES,
+    fit_image_to_box,
+    image_exceeds_box,
+)
 from .session import AgentSession, shared_file_metadata
 from .state import (
     create_container,
@@ -33,6 +41,15 @@ CONTAINER_START_TIMEOUT_S = 120
 EVENT_LOG_MAX_ITEMS = 500
 JANITOR_INTERVAL_S = 15
 NEW_CHAT_STOP_TIMEOUT_S = 20
+IMAGE_CACHE_LIMIT = 32
+
+SERVED_IMAGE_EXTENSIONS = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
 
 config = load_config()
 logger = get_logger()
@@ -52,6 +69,8 @@ class SessionRecord:
         self.event_log: list[dict] = []
         self.event_log_lock = threading.Lock()
         self.shared: dict[str, dict] = {}
+        self.pending_question = interaction.PendingQuestion()
+        self.image_cache: dict[str, Path] = {}
         self.tmp_dir = Path(tempfile.mkdtemp(prefix=f"syna-{client_id[:8]}-"))
         self.container = None
         self.container_ready = threading.Event()
@@ -134,8 +153,43 @@ class SessionRecord:
             }
         )
 
+    def answer_pending_question(self, answer: str) -> bool:
+        """Deliver a client's answer to the pending ask_user question.
+
+        Returns False when no question is pending, so a stale or
+        duplicated answer is ignored instead of resolved twice.
+        """
+        return self.pending_question.resolve(answer)
+
+    def release_pending_question(self) -> None:
+        """Unblock a pending ask_user question with a cancellation sentinel.
+
+        Called when the user stops the task, starts a new chat, or the
+        session is torn down: the blocked tool unwinds as a failed call
+        and the turn ends cleanly.
+        """
+        self.pending_question.resolve(None)
+
+    def _answer_question(self, question_text: str, choices: list) -> str:
+        """Push one ask_user question to the client and wait for the answer.
+
+        Runs on the tool worker thread; returns the user's answer, or
+        raises InteractionCancelled when the question is released.
+        """
+        answers = self.pending_question.open()
+        try:
+            answer = answers.get()
+        finally:
+            self.pending_question.resolve(None)
+        if answer is None:
+            raise interaction.InteractionCancelled(
+                "The user stopped the task before answering."
+            )
+        return answer
+
     def teardown(self):
         """Signal the worker to stop; it releases the container and temp files."""
+        self.release_pending_question()
         self.shutdown.set()
 
     def _on_session_event(self, event: dict):
@@ -190,6 +244,7 @@ class SessionRecord:
     def _run_turn(self, user_text: str):
         self.busy.set()
         self.push({"type": "busy"}, persistent=False)
+        interaction.register_responder(self._answer_question)
         try:
             self.session.run_turn(user_text)
         except Exception:
@@ -198,6 +253,8 @@ class SessionRecord:
                 {"type": "error", "text": "The task failed unexpectedly. Please retry."}
             )
         finally:
+            self.release_pending_question()
+            interaction.unregister_responder()
             self.busy.clear()
             self.push({"type": "ready"}, persistent=False)
 
@@ -320,6 +377,7 @@ async def new_chat(client_id: str):
     logger.info("New chat requested for session %s", client_id)
     if record.busy.is_set():
         record.session.cancel()
+        record.release_pending_question()
         deadline = time.time() + NEW_CHAT_STOP_TIMEOUT_S
         while record.busy.is_set() and time.time() < deadline:
             await asyncio.sleep(0.1)
@@ -341,6 +399,120 @@ def download_file(client_id: str, token: str):
     if info is None:
         raise HTTPException(status_code=404, detail="Unknown file.")
     return FileResponse(info["path"], filename=info["name"])
+
+
+@app.get("/api/image/{client_id}")
+def serve_pod_image(client_id: str, path: str):
+    """Stream an image from the session pod for inline rendering.
+
+    The client rewrites markdown image paths (e.g. from Syna's replies)
+    to this endpoint. Only image files under /workspace are eligible;
+    everything is copied out of the pod, so host files are unreachable.
+    """
+    record = _sessions.get(client_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Unknown session.")
+    cleaned = normpath(path or "")
+    extension = Path(cleaned).suffix.lower()
+    if (
+        not cleaned.startswith("/workspace/")
+        or extension not in SERVED_IMAGE_EXTENSIONS
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Only image files under /workspace can be displayed.",
+        )
+    return _prepare_pod_image(record, cleaned)
+
+
+def _prepare_pod_image(record, pod_path: str) -> FileResponse:
+    """Copy, normalize, and cache one pod image for serving.
+
+    Sources larger than MAX_SERVE_BYTES are rejected outright. Sources
+    that fit the 1024x1024 box and stay under RECOMPRESS_BYTES are served
+    untouched (animated GIFs survive); everything else is downscaled into
+    the box and converted to PNG. Each request gets its own copy, so a
+    regenerated image at the same pod path is never served stale.
+    """
+    serve_dir = record.tmp_dir / "images"
+    serve_dir.mkdir(exist_ok=True)
+    token_dir = serve_dir / uuid.uuid4().hex
+    token_dir.mkdir()
+    try:
+        record.container.copy_from(pod_path, str(token_dir))
+        source = token_dir / basename(pod_path)
+        if not source.is_file():
+            raise FileNotFoundError(pod_path)
+    except HTTPException:
+        shutil.rmtree(token_dir, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(token_dir, ignore_errors=True)
+        message = str(exc).lower()
+        if "404" in message or "no such file" in message:
+            raise HTTPException(
+                status_code=404, detail="Image not found in the pod."
+            ) from exc
+        logger.exception("Image copy failed for session %s", record.client_id)
+        raise HTTPException(
+            status_code=502, detail=f"Could not copy the image from the pod: {exc}"
+        ) from exc
+
+    try:
+        size = source.stat().st_size
+        if size > MAX_SERVE_BYTES:
+            raise HTTPException(
+                status_code=413, detail="The image is too large to display."
+            )
+        if size <= RECOMPRESS_BYTES:
+            with Image.open(source) as img:
+                if not image_exceeds_box(img):
+                    return _serve_image_copy(
+                        record, token_dir, source, _media_type_for(pod_path)
+                    )
+    except HTTPException:
+        shutil.rmtree(token_dir, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(token_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=415, detail="Could not read the file as an image."
+        ) from exc
+
+    target = token_dir / "served.png"
+    try:
+        fit_image_to_box(source, target)
+    except Exception as exc:
+        shutil.rmtree(token_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=415, detail="Could not read the file as an image."
+        ) from exc
+    return _serve_image_copy(record, token_dir, target, "image/png")
+
+
+def _media_type_for(pod_path: str) -> str:
+    """Map a validated pod image path to its response media type."""
+    return SERVED_IMAGE_EXTENSIONS[Path(pod_path).suffix.lower()]
+
+
+def _serve_image_copy(
+    record, token_dir: Path, file_path: Path, media_type: str
+) -> FileResponse:
+    """Track a prepared copy for eviction and build its file response.
+
+    The LRU cap bounds the temp footprint across history replays; the
+    session tmp dir wipe on teardown removes whatever remains.
+    """
+    record.image_cache[uuid.uuid4().hex] = token_dir
+    while len(record.image_cache) > IMAGE_CACHE_LIMIT:
+        oldest_key = next(iter(record.image_cache))
+        oldest_dir = record.image_cache.pop(oldest_key)
+        shutil.rmtree(oldest_dir, ignore_errors=True)
+    return FileResponse(
+        file_path,
+        media_type=media_type,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 class SynthesisRequest(BaseModel):
@@ -436,6 +608,12 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 content = str(data.get("content", "")).strip()
                 if not content:
                     continue
+                if record.pending_question.active:
+                    # A pending ask_user question is waiting: this message
+                    # is the typed answer, not the start of a new turn.
+                    if record.answer_pending_question(content):
+                        record.push({"type": "user_message", "content": content})
+                        continue
                 record.push(
                     {
                         "type": "user_message",
@@ -444,8 +622,15 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     }
                 )
                 record.inbox.put({"kind": "message", "content": content})
+            elif message_type == "answer":
+                choice = str(data.get("choice", "")).strip()
+                if not choice:
+                    continue
+                if record.answer_pending_question(choice):
+                    record.push({"type": "user_message", "content": choice})
             elif message_type == "stop":
                 record.session.cancel()
+                record.release_pending_question()
     except WebSocketDisconnect:
         pass
     finally:

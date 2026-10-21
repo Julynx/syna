@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from _runner import run_suite
 from syna import web_search
 
 WORK_S = 0.05
@@ -69,3 +70,17 @@ def test_search_spacing_across_batches():
     intervals.extend(_run_concurrent_searches(1))
     (_, end_first), (start_second, _) = intervals
     assert start_second >= end_first + DELAY_S - 0.01
+
+
+def main():
+    """Run every pacing test and report a summary."""
+    run_suite(
+        [
+            test_concurrent_searches_do_not_overlap,
+            test_search_spacing_across_batches,
+        ]
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -126,6 +126,19 @@ def destroy_container(container: Container) -> None:
     container.remove(force=True)
 
 
+def reset_shared_container() -> None:
+    """Destroy the shared host-side container so a fresh one is created.
+
+    Used by the CLI's new-chat reset: the next get_container() call
+    lazily starts a replacement pod. Thread-bound containers are the
+    caller's responsibility and are left untouched.
+    """
+    global _global_container
+    if _global_container is not None:
+        destroy_container(_global_container)
+        _global_container = None
+
+
 def init_docker_client(*args, **kwargs):
     """Initialize the global Docker client context.
 

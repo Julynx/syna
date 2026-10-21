@@ -572,6 +572,38 @@
     var(--frost), linear-gradient(135deg, var(--danger-tint), var(--surface));
 }
 
+.bubble.markdown img {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-line);
+  margin: 6px 0;
+}
+.image-fallback {
+  display: inline-block;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 1px dashed var(--glass-line);
+}
+
+.ask-inline {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.ask-inline .material-symbols-outlined {
+  font-size: 17px;
+  color: var(--accent);
+  flex: none;
+}
+
 #chat > .see-more {
   display: flex;
   flex-direction: row;

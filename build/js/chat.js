@@ -101,6 +101,7 @@ const ICONS = {
   mic: GLYPH("mic"),
   think: GLYPH("psychology"),
   image: GLYPH("image"),
+  help: GLYPH("help"),
   speakerOn: GLYPH("record_voice_over", "s-on"),
   speakerOff: GLYPH("voice_over_off", "s-off"),
 };
@@ -137,6 +138,7 @@ const TOOL_META = {
     key: "prompt",
   },
   share_file: { verb: "Share file", icon: ICONS.share, key: "path" },
+  ask_user: { verb: "Asked you", icon: ICONS.help, key: "question_text" },
 };
 
 const DETAIL_CAP_CHARS = 6000;
@@ -212,6 +214,7 @@ function addBubble(content, side, queued) {
     bubble.classList.add("markdown");
     bubble.innerHTML = rendered;
     applyLinkPolicy(bubble);
+    applyImagePolicy(bubble);
     renderMath(bubble);
   } else {
     bubble.textContent = content;
@@ -224,6 +227,47 @@ function addBubble(content, side, queued) {
     tag.textContent = "queued";
     append(tag);
   }
+}
+
+/* Images from the pod render inline through the session's image endpoint;
+   remote URLs are never fetched automatically — a page could otherwise
+   make Syna embed an image whose URL exfiltrates data. They become links. */
+function applyImagePolicy(bubble) {
+  bubble.querySelectorAll("img").forEach((img) => {
+    const src = img.getAttribute("src") || "";
+    if (src.startsWith("/")) {
+      let podPath = src;
+      try {
+        podPath = decodeURIComponent(src);
+      } catch (err) {
+        podPath = src;
+      }
+      img.src =
+        API_BASE +
+        "/api/image/" +
+        clientId +
+        "?path=" +
+        encodeURIComponent(podPath);
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.alt = img.alt || "Image from the pod";
+      img.addEventListener("error", () => {
+        const chip = document.createElement("span");
+        chip.className = "image-fallback";
+        chip.textContent = podPath;
+        img.replaceWith(chip);
+      });
+      return;
+    }
+    if (!src.startsWith("data:")) {
+      const link = document.createElement("a");
+      link.href = src;
+      link.textContent = src;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      img.replaceWith(link);
+    }
+  });
 }
 
 const COPY_FEEDBACK_MS = 1400;
@@ -719,6 +763,181 @@ function fitInput() {
   input.style.height = target + "px";
 }
 
+/* Pending ask_user question state. liveAsk tracks the question awaiting
+   an answer (id matches its tool_call events); pendingAnswer marks the
+   mode where the composer is restored and the user's next message
+   resolves the question. */
+let liveAsk = null;
+let pendingAnswer = false;
+let askPanel = null;
+let inlineAskRow = null;
+let replayAskId = null;
+let replayAskArgs = null;
+
+function setComposerVisible(visible) {
+  const composerEl = document.querySelector(".composer");
+  if (composerEl._visible === visible) return;
+  if (visible && composerEl._visible === undefined) {
+    composerEl._visible = true;
+    return;
+  }
+  composerEl._visible = visible;
+  cancelAnim(composerEl);
+  if (REDUCE) {
+    composerEl.style.display = visible ? "" : "none";
+    return;
+  }
+  if (!visible) {
+    const cs = getComputedStyle(composerEl);
+    const box = boxOf(composerEl, cs);
+    composerEl.style.overflow = "hidden";
+    const anim = composerEl.animate([{ ...box }, { ...BOX_ZERO }], {
+      duration: 320,
+      easing: EASE_IN,
+      fill: "forwards",
+    });
+    composerEl._anim = anim;
+    anim.onfinish = () => {
+      if (composerEl._visible === false) composerEl.style.display = "none";
+      composerEl._anim = null;
+      anim.cancel();
+      composerEl.style.overflow = "";
+    };
+  } else {
+    composerEl.style.display = "";
+    const cs = getComputedStyle(composerEl);
+    const box = boxOf(composerEl, cs);
+    const anim = composerEl.animate([{ ...BOX_ZERO }, { ...box }], {
+      duration: 320,
+      easing: EASE_OUT,
+    });
+    composerEl._anim = anim;
+    anim.onfinish = () => {
+      composerEl._anim = null;
+      anim.cancel();
+    };
+  }
+}
+
+function buildAskPanel(ask) {
+  const panel = document.createElement("div");
+  panel.className = "ask-panel glass";
+  const header = document.createElement("div");
+  header.className = "ask-header";
+  const question = document.createElement("div");
+  question.className = "ask-question";
+  question.textContent = ask.question;
+  const stop = document.createElement("button");
+  stop.type = "button";
+  stop.className = "icon-btn ask-stop";
+  stop.title = "Stop";
+  stop.setAttribute("aria-label", "Stop");
+  stop.innerHTML = ICONS.stop;
+  stop.addEventListener("click", () => {
+    if (ws && ws.readyState === WebSocket.OPEN)
+      ws.send(JSON.stringify({ type: "stop" }));
+    setStatus("working", "Stopping...");
+    dismissAskPanel();
+  });
+  header.appendChild(question);
+  header.appendChild(stop);
+  panel.appendChild(header);
+  const list = document.createElement("div");
+  list.className = "ask-choices";
+  ask.choices.forEach((choiceText) => {
+    const choice = document.createElement("button");
+    choice.type = "button";
+    choice.className = "ask-choice";
+    choice.textContent = choiceText;
+    choice.addEventListener("click", () => {
+      Sfx.play("send");
+      if (ws && ws.readyState === WebSocket.OPEN)
+        ws.send(JSON.stringify({ type: "answer", choice: choiceText }));
+      dismissAskPanel();
+    });
+    list.appendChild(choice);
+  });
+  const other = document.createElement("button");
+  other.type = "button";
+  other.className = "ask-choice other";
+  other.textContent = "Other — type your own response";
+  other.addEventListener("click", () => {
+    Sfx.play("click");
+    dismissAskPanel();
+    pendingAnswer = true;
+    setSendState();
+    input.focus();
+  });
+  list.appendChild(other);
+  panel.appendChild(list);
+  return panel;
+}
+
+function addInlineAsk(question) {
+  inlineAskRow = document.createElement("div");
+  inlineAskRow.className = "ask-inline glass";
+  inlineAskRow.innerHTML = ICONS.help + "<span></span>";
+  inlineAskRow.querySelector("span").textContent = question;
+  append(inlineAskRow);
+}
+
+function dismissAskPanel() {
+  if (!askPanel) return;
+  const panel = askPanel;
+  askPanel = null;
+  shrinkOut(panel);
+  setComposerVisible(true);
+}
+
+function dockAsk(event) {
+  const args = event.arguments || {};
+  const question = String(args.question_text || "");
+  const choices = Array.isArray(args.choices) ? args.choices.map(String) : [];
+  liveAsk = { id: event.id, question, choices };
+  if (!choices.length) {
+    pendingAnswer = true;
+    addInlineAsk(question);
+    setSendState();
+    return;
+  }
+  setComposerVisible(false);
+  askPanel = buildAskPanel(liveAsk);
+  const footerEl = document.querySelector("footer");
+  footerEl.insertBefore(askPanel, footerEl.querySelector(".composer"));
+  growIn(askPanel, 140);
+  setSendState();
+}
+
+function undockAsk() {
+  if (!liveAsk) return;
+  liveAsk = null;
+  pendingAnswer = false;
+  if (inlineAskRow) {
+    const row = inlineAskRow;
+    inlineAskRow = null;
+    shrinkOut(row);
+  }
+  dismissAskPanel();
+  setSendState();
+}
+
+function resetAskState() {
+  liveAsk = null;
+  pendingAnswer = false;
+  replayAskId = null;
+  replayAskArgs = null;
+  if (askPanel) {
+    askPanel.remove();
+    askPanel = null;
+  }
+  if (inlineAskRow) {
+    inlineAskRow.remove();
+    inlineAskRow = null;
+  }
+  setComposerVisible(true);
+  setSendState();
+}
+
 function finishToolRow(event) {
   let row = document.getElementById("tool-" + event.id);
   if (!row) {
@@ -894,8 +1113,32 @@ function render(event) {
       break;
     case "history_done":
       replaying = false;
+      if (replayAskId !== null) {
+        dockAsk({ id: replayAskId, arguments: replayAskArgs || {} });
+      }
+      replayAskId = null;
+      replayAskArgs = null;
       break;
     case "tool_call":
+      if (event.name === "ask_user") {
+        if (event.status === "started") {
+          addToolRow(event);
+          if (replaying) {
+            replayAskId = event.id;
+            replayAskArgs = event.arguments || null;
+          } else {
+            dockAsk(event);
+          }
+        } else {
+          finishToolRow(event);
+          if (replaying && event.id === replayAskId) {
+            replayAskId = null;
+            replayAskArgs = null;
+          }
+          undockAsk();
+        }
+        break;
+      }
       if (event.status === "started") addToolRow(event);
       else finishToolRow(event);
       break;
@@ -945,6 +1188,7 @@ function connect() {
     runningToolRow = null;
     openFileGroup = null;
     thinkingRow = null;
+    resetAskState();
     if (window.Voice) Voice.reset();
     setStatus("ready", "Ready");
     updateAmbient();
@@ -966,6 +1210,7 @@ function connect() {
 
   ws.onclose = () => {
     busy = false;
+    resetAskState();
     setSendState();
     setStatus("", "Connecting...");
     updateAmbient();
@@ -978,17 +1223,17 @@ function connect() {
 }
 
 function setSendState() {
-  const mode = busy ? "stop" : "send";
+  const mode = busy && !pendingAnswer ? "stop" : "send";
   if (sendBtn.dataset.mode !== mode) {
     sendBtn.dataset.mode = mode;
     sendBtn.classList.remove("pop");
     void sendBtn.offsetWidth;
     sendBtn.classList.add("pop");
-    sendBtn.innerHTML = busy ? ICONS.stop : ICONS.send;
-    sendBtn.title = busy ? "Stop" : "Send";
+    sendBtn.innerHTML = busy && !pendingAnswer ? ICONS.stop : ICONS.send;
+    sendBtn.title = busy && !pendingAnswer ? "Stop" : "Send";
   }
   document.querySelector(".composer").classList.toggle("busy", busy);
-  sendBtn.disabled = busy ? false : !input.value.trim();
+  sendBtn.disabled = busy && !pendingAnswer ? false : !input.value.trim();
 }
 
 function sendMessage() {
@@ -1036,6 +1281,7 @@ async function newChat() {
     runningToolRow = null;
     openFileGroup = null;
     thinkingRow = null;
+    resetAskState();
     busy = false;
     setSendState();
     addEventRow("Starting a fresh session...");

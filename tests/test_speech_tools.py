@@ -3,11 +3,13 @@
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from bollard import DockerException
 
+from _runner import run_suite
 from syna import tools
 from syna.image_generation import GeneratedImage, ImageSettings
 from syna.speech import SynthesizedAudio
@@ -37,6 +39,14 @@ class FakeContainer:
 
     def copy_to(self, source, destination):
         self.copied.append((source, destination))
+        Path(destination).mkdir(parents=True, exist_ok=True)
+        Path(destination, Path(source).name).write_bytes(Path(source).read_bytes())
+
+
+def _copied_bytes(container) -> bytes:
+    """Return the bytes of the first file the fake pod received."""
+    source, destination = container.copied[0]
+    return Path(destination, Path(source).name).read_bytes()
 
 
 def _pod_path(result: str) -> str:
@@ -44,19 +54,27 @@ def _pod_path(result: str) -> str:
     return re.search(r"/workspace/[\w./-]+", result).group(0)
 
 
+FAKE_SETTINGS = SimpleNamespace(
+    stt_available=True,
+    tts_available=True,
+    tts_voice="Kore",
+    tts_response_format="wav",
+)
+
+
 def _configure(container, monkeypatch, **overrides):
     """Point the tools at a fake pod and fake API functions."""
     monkeypatch.setattr(tools, "get_container", lambda: container)
 
     if "transcript" in overrides:
-        monkeypatch.setattr(tools, "load_speech_settings", lambda: "stt")
+        monkeypatch.setattr(tools, "load_speech_settings", lambda: FAKE_SETTINGS)
         monkeypatch.setattr(
             tools,
             "transcribe_audio",
-            lambda audio, fmt, settings: overrides["transcript"],
+            lambda audio, fmt, settings, language=None: overrides["transcript"],
         )
     if "audio" in overrides:
-        monkeypatch.setattr(tools, "load_speech_settings", lambda: "tts")
+        monkeypatch.setattr(tools, "load_speech_settings", lambda: FAKE_SETTINGS)
         monkeypatch.setattr(
             tools, "synthesize_speech", lambda text, settings: overrides["audio"]
         )
@@ -72,6 +90,7 @@ def _configure(container, monkeypatch, **overrides):
 
 def test_speech_to_text_saves_transcript(monkeypatch):
     container = _configure(FakeContainer(), monkeypatch, transcript="hello world")
+    container.pod_files["recording.wav"] = FAKE_WAV
 
     result = tools.speech_to_text("/workspace/recording.wav")
 
@@ -81,7 +100,7 @@ def test_speech_to_text_saves_transcript(monkeypatch):
     assert pod_path.endswith(".txt")
     written = [source for source, _ in container.copied]
     assert len(written) == 1
-    assert Path(written[0]).read_bytes() == b"hello world"
+    assert _copied_bytes(container) == b"hello world"
 
 
 def test_speech_to_text_rejects_unknown_extension(monkeypatch):
@@ -99,7 +118,7 @@ def test_speech_to_text_reports_api_errors(monkeypatch):
     container = _configure(FakeContainer(), monkeypatch, transcript="ignored")
     container.pod_files["clip.mp3"] = FAKE_WAV
 
-    def fail(audio_bytes, audio_format, settings):
+    def fail(audio_bytes, audio_format, settings, language=None):
         raise tools.SpeechError(
             "OpenRouter rejected the speech request (400): bad format"
         )
@@ -123,7 +142,7 @@ def test_text_to_speech_saves_audio(monkeypatch):
     assert pod_path.endswith(".wav")
     assert "share_file" in result
     written = [source for source, _ in container.copied]
-    assert Path(written[0]).read_bytes() == FAKE_WAV
+    assert _copied_bytes(container) == FAKE_WAV
 
 
 def test_text_to_speech_uses_media_type_extension(monkeypatch):
@@ -147,7 +166,7 @@ def test_text_to_image_saves_image(monkeypatch):
     assert pod_path.endswith(".png")
     assert "describe_image" in result
     written = [source for source, _ in container.copied]
-    assert Path(written[0]).read_bytes() == b"\x89PNG-bytes"
+    assert _copied_bytes(container) == b"\x89PNG-bytes"
 
 
 def test_text_to_image_without_config_reports_user_configuration(monkeypatch):
@@ -207,7 +226,7 @@ def test_speech_to_text_passes_language_through(monkeypatch):
     container = FakeContainer()
     container.pod_files["clip.wav"] = FAKE_WAV
     monkeypatch.setattr(tools, "get_container", lambda: container)
-    monkeypatch.setattr(tools, "load_speech_settings", lambda: "stt")
+    monkeypatch.setattr(tools, "load_speech_settings", lambda: FAKE_SETTINGS)
     monkeypatch.setattr(tools, "transcribe_audio", record)
 
     tools.speech_to_text("/workspace/clip.wav")
@@ -281,3 +300,29 @@ def test_svg_result_omits_describe_image_hint(monkeypatch):
 
     assert "describe_image" not in result
     assert "share_file" in result
+
+
+def main():
+    """Run every speech and image tool test and report a summary."""
+    run_suite(
+        [
+            test_speech_to_text_saves_transcript,
+            test_speech_to_text_rejects_unknown_extension,
+            test_speech_to_text_reports_api_errors,
+            test_text_to_speech_saves_audio,
+            test_text_to_speech_uses_media_type_extension,
+            test_text_to_image_saves_image,
+            test_text_to_image_without_config_reports_user_configuration,
+            test_text_to_image_reports_api_errors,
+            test_missing_pod_file_is_a_clean_error,
+            test_artifact_names_are_unique,
+            test_speech_to_text_passes_language_through,
+            test_transcribe_audio_omits_language_when_auto,
+            test_text_to_image_malformed_response_is_a_clean_error,
+            test_svg_result_omits_describe_image_hint,
+        ]
+    )
+
+
+if __name__ == "__main__":
+    main()

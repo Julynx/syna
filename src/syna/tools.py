@@ -36,6 +36,8 @@ from .image_generation import (
     generate_image,
     load_image_settings,
 )
+from .interaction import InteractionCancelled, InteractionError
+from .interaction import ask as ask_interactive
 from .speech import (
     EXTENSION_BY_MEDIA_TYPE,
     SpeechError,
@@ -497,6 +499,31 @@ def share_file(file_path: str):
     }
 
 
+def ask_user(question_text: str, choices: list):
+    """
+    Ask the user a question and wait for their answer. Call this tool when you need information from the user to complete a task, and you cannot reasonably assume or deduce the answer yourself (e.g., a key fact is missing and/or there are competing options and none is generally better than the others). The conversation pauses until the user answers. Tool calls that share a response with this one might not execute until later. You don't need to include an "Other: Type your own response" option, it will be added automatically. For open-ended questions, send an empty array in `choices`, a text field will be shown to the user instead.
+    - `question_text` (string, required): the question itself, phrased clearly and self-contained.
+    - `choices` (array of strings, required): short answer options to show, each a self-contained phrase; send an empty array for open-ended questions.
+    """
+    if not isinstance(question_text, str) or not question_text.strip():
+        set_last_exit_code(1)
+        return {"error": "question_text must be a non-empty string."}
+    if not isinstance(choices, list) or not all(
+        isinstance(choice, str) and choice.strip() for choice in choices
+    ):
+        set_last_exit_code(1)
+        return {"error": "choices must be an array of non-empty strings."}
+    try:
+        answer = ask_interactive(question_text, choices)
+    except InteractionCancelled:
+        set_last_exit_code(1)
+        raise
+    except InteractionError as exc:
+        set_last_exit_code(1)
+        return {"error": f"{exc} The question was not delivered to the user."}
+    return f"User's answer: {answer}"
+
+
 def _reset_browser():
     """Close the shared browser so the next web_interact starts a clean one.
 
@@ -526,4 +553,5 @@ TOOL_REGISTRY = {
     "text_to_speech": text_to_speech,
     "text_to_image": text_to_image,
     "share_file": share_file,
+    "ask_user": ask_user,
 }

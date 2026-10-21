@@ -194,8 +194,73 @@ footer {
   }
 }
 
+.ask-panel {
+  max-width: 880px;
+  margin: 0 auto 10px;
+  border-radius: 18px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ask-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ask-question {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.45;
+  padding-top: 7px;
+}
+.ask-stop {
+  width: 32px;
+  height: 32px;
+  flex: none;
+}
+.ask-stop .material-symbols-outlined {
+  font-size: 17px;
+}
+.ask-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.ask-choice {
+  text-align: left;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  padding: 9px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-line);
+  background: var(--surface-soft);
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.15s var(--ease);
+}
+.ask-choice:hover {
+  border-color: var(--accent-line);
+  background: var(--surface);
+}
+.ask-choice:active {
+  transform: scale(0.99);
+}
+.ask-choice.other {
+  color: var(--muted);
+  border-style: dashed;
+}
+
 @media (min-width: 1024px) {
   .composer {
+    max-width: 1060px;
+  }
+  .ask-panel {
     max-width: 1060px;
   }
 }
