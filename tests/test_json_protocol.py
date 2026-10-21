@@ -13,10 +13,8 @@ from syna.channel import (
     format_tool_result_content,
     is_channel_message,
     unwrap_channel,
-    wrap_channel,
 )
 from syna.parse import ParseOutcome, parse_and_execute_tools
-from syna.session import shared_file_metadata
 from syna.tool_schemas import get_tool_definitions
 from syna.tools import TOOL_REGISTRY
 

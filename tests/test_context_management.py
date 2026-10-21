@@ -11,7 +11,6 @@ from syna.channel import (
     format_tool_result_content,
     is_channel_message,
     unwrap_channel,
-    wrap_channel,
 )
 from syna.context import (
     elide_tool_outputs,

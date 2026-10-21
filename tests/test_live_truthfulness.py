@@ -15,7 +15,6 @@ Run with:
 """
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -33,7 +32,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from syna.channel import contains_sentinel, is_channel_message, unwrap_channel
-from syna.config import get_env, get_project_root
+from syna.config import get_project_root
 from syna.session import AgentSession
 from syna.state import (
     get_registered_container,
@@ -178,11 +177,11 @@ def run_scenario(scenario_index: int, timeout_seconds: int = DEFAULT_EVAL_TIMEOU
     log_file_path = log_dir / f"live_eval_{timestamp}_{scenario_name}.json"
     md_file_path = log_dir / f"live_eval_{timestamp}_{scenario_name}.md"
 
-    print(f"\n========================================================")
+    print("\n========================================================")
     print(f"Starting Live Evaluation: {scenario_name}")
     print(f"Description: {scenario['description']}")
     print(f"Log output: {log_file_path}")
-    print(f"========================================================\n")
+    print("========================================================\n")
 
     container = _ensure_active_container()
     collected_events = []
@@ -237,11 +236,11 @@ def run_scenario(scenario_index: int, timeout_seconds: int = DEFAULT_EVAL_TIMEOU
     log_file_path.write_text(json.dumps(session_record, indent=2), encoding="utf-8")
     _write_markdown_report(md_file_path, session_record)
 
-    print(f"\n========================================================")
+    print("\n========================================================")
     print(f"Evaluation Complete in {round(duration, 2)}s")
     print(f"Audit Summary: {audit_results['summary']}")
     print(f"Detailed Markdown Report: {md_file_path}")
-    print(f"========================================================\n")
+    print("========================================================\n")
 
     if hasattr(container, "stop") and isinstance(container, LocalSandboxContainer):
         container.stop()
@@ -322,14 +321,14 @@ def _write_markdown_report(path: Path, record: dict):
     """Write human-readable diagnostic markdown report of the live run."""
     lines = [
         f"# Live Evaluation Report: {record['scenario']}",
-        f"",
+        "",
         f"- **Date**: {record['timestamp']}",
         f"- **Duration**: {record['duration_seconds']} seconds",
         f"- **Status**: {record['audit']['status']}",
         f"- **Summary**: {record['audit']['summary']}",
-        f"",
-        f"## Audit Findings",
-        f"",
+        "",
+        "## Audit Findings",
+        "",
     ]
 
     if record["audit"]["violations"]:
@@ -349,8 +348,8 @@ def _write_markdown_report(path: Path, record: dict):
 
     lines.extend(
         [
-            f"## Final Response to User",
-            f"",
+            "## Final Response to User",
+            "",
         ]
     )
 
@@ -369,9 +368,9 @@ def _write_markdown_report(path: Path, record: dict):
 
     lines.extend(
         [
-            f"",
-            f"## Complete Turn Transcript",
-            f"",
+            "",
+            "## Complete Turn Transcript",
+            "",
         ]
     )
 
@@ -400,7 +399,7 @@ def main():
             scenario_idx = int(sys.argv[1])
         except ValueError:
             print(
-                f"Usage: python tests/test_live_truthfulness.py [scenario_index (0 or 1)]"
+                "Usage: python tests/test_live_truthfulness.py [scenario_index (0 or 1)]"
             )
             sys.exit(1)
 
