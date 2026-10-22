@@ -5,9 +5,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from _runner import run_suite
 from playwright.async_api import Error as PWError
 
-from _runner import run_suite
 from syna import tools
 from syna.state import pop_last_exit_code
 

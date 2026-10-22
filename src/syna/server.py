@@ -43,8 +43,8 @@ from pydantic import BaseModel
 from . import interaction, setup, speech
 from .config import (
     asset_path,
-    get_logger,
     get_data_home,
+    get_logger,
     load_config,
     read_asset_text,
 )

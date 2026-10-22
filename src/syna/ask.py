@@ -4,8 +4,7 @@ import sys
 
 from .ask_utils import show_welcome
 from .commands import parse_and_execute_command
-from .interaction import InteractionCancelled, register_responder
-from .interaction import unregister_responder
+from .interaction import InteractionCancelled, register_responder, unregister_responder
 from .session import AgentSession
 from .state import reset_shared_container
 

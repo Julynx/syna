@@ -415,7 +415,8 @@ const STEPS = [
       // STT Model
       const sttField = document.createElement("div");
       sttField.className = "setup-field";
-      sttField.innerHTML = '<div class="setup-field-header"><label>Voice Dictation Model (STT)</label></div>';
+      sttField.innerHTML =
+        '<div class="setup-field-header"><label>Voice Dictation Model (STT)</label></div>';
       const sttInput = document.createElement("input");
       sttInput.className = "setup-input";
       sttInput.id = "stt-model-input";
@@ -430,7 +431,8 @@ const STEPS = [
       // TTS Model
       const ttsField = document.createElement("div");
       ttsField.className = "setup-field";
-      ttsField.innerHTML = '<div class="setup-field-header"><label>Voice Synthesis Model (TTS)</label></div>';
+      ttsField.innerHTML =
+        '<div class="setup-field-header"><label>Voice Synthesis Model (TTS)</label></div>';
       const ttsInput = document.createElement("input");
       ttsInput.className = "setup-input";
       ttsInput.id = "tts-model-input";
@@ -445,11 +447,13 @@ const STEPS = [
       // Image Model
       const imgField = document.createElement("div");
       imgField.className = "setup-field";
-      imgField.innerHTML = '<div class="setup-field-header"><label>Image Generation Model</label></div>';
+      imgField.innerHTML =
+        '<div class="setup-field-header"><label>Image Generation Model</label></div>';
       const imgInput = document.createElement("input");
       imgInput.className = "setup-input";
       imgInput.id = "image-model-input";
-      imgInput.value = state.imageModel || PROVIDERS[select.value].imageModel || "";
+      imgInput.value =
+        state.imageModel || PROVIDERS[select.value].imageModel || "";
       imgInput.placeholder = "e.g. google/gemini-3.1-flash-image";
       imgInput.addEventListener("input", () => {
         state.imageModel = imgInput.value.trim();
@@ -470,10 +474,15 @@ const STEPS = [
         keyField.style.display =
           preset.needsKey || curProvider === "custom" ? "" : "none";
         capSection.style.display =
-          curProvider === "openrouter" || curProvider === "custom" ? "" : "none";
+          curProvider === "openrouter" || curProvider === "custom"
+            ? ""
+            : "none";
 
         // Update default model if user hasn't overridden it
-        if (!state.model || Object.values(PROVIDERS).some((p) => p.model === state.model)) {
+        if (
+          !state.model ||
+          Object.values(PROVIDERS).some((p) => p.model === state.model)
+        ) {
           state.model = preset.model || "";
           modelInput.value = state.model;
         }
@@ -689,7 +698,7 @@ function renderDependencies(result) {
       installBtn.textContent = "Install";
       installBtn.style.marginLeft = "8px";
       installBtn.addEventListener("click", () =>
-        installDependency(selectedEngine, rows)
+        installDependency(selectedEngine, rows),
       );
       engineRow.appendChild(installBtn);
     }
@@ -774,7 +783,9 @@ async function runSanity(button) {
         .join("\n");
       showModal(
         "Sanity Check Failed",
-        "Could not verify " + esc(results.endpoint.detail || "your provider settings") + ".",
+        "Could not verify " +
+          esc(results.endpoint.detail || "your provider settings") +
+          ".",
         details,
       );
       return;

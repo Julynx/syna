@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from _runner import run_suite
 from bollard import DockerException
 
-from _runner import run_suite
 from syna import tools
 from syna.image_generation import GeneratedImage, ImageSettings
 from syna.speech import SynthesizedAudio

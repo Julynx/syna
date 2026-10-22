@@ -5,9 +5,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from _runner import run_suite
 from fastapi.testclient import TestClient
 
-from _runner import run_suite
 from syna import server
 
 LOCAL_HOST = {"Host": "127.0.0.1:8000"}

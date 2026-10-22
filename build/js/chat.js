@@ -1373,7 +1373,8 @@ async function openSettingsModal() {
     const res = await fetch(withToken(API_BASE + "/api/settings"), {
       headers: authHeaders(),
     });
-    if (!res.ok) throw new Error("Could not load settings (" + res.status + ")");
+    if (!res.ok)
+      throw new Error("Could not load settings (" + res.status + ")");
     data = await res.json();
   } catch (err) {
     alert("Could not load settings: " + err.message);
@@ -1504,7 +1505,8 @@ async function openSettingsModal() {
   // --- Category 1: Provider and API Key ---
   const cat1 = document.createElement("div");
   cat1.className = "settings-group";
-  cat1.innerHTML = '<h4 class="settings-category-title">Provider and API Key</h4>';
+  cat1.innerHTML =
+    '<h4 class="settings-category-title">Provider and API Key</h4>';
 
   const providerOpts = [
     { value: "openrouter", label: "OpenRouter (Recommended · Most tested)" },
@@ -1796,7 +1798,8 @@ async function openSettingsModal() {
     defaultValue: defaults.context_budget_tokens,
     type: "number",
     onChange: (val) => {
-      config.context_budget_tokens = Number(val) || defaults.context_budget_tokens;
+      config.context_budget_tokens =
+        Number(val) || defaults.context_budget_tokens;
     },
   });
   cat5Body.appendChild(ctxBudgetRow);
@@ -1808,7 +1811,8 @@ async function openSettingsModal() {
     defaultValue: defaults.max_command_output_chars,
     type: "number",
     onChange: (val) => {
-      config.max_command_output_chars = Number(val) || defaults.max_command_output_chars;
+      config.max_command_output_chars =
+        Number(val) || defaults.max_command_output_chars;
     },
   });
   cat5Body.appendChild(outLimitRow);

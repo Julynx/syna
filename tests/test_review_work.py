@@ -12,10 +12,10 @@ from _runner import run_suite
 
 from syna import session as session_module
 from syna import verification
+from syna.config import read_asset_text
 from syna.parse import parse_and_execute_tools
 from syna.tool_schemas import get_tool_definitions
 from syna.tools import TOOL_REGISTRY
-from syna.config import read_asset_text
 
 VERIFIER_PROMPT_TEXT = read_asset_text("verifier_prompt.md")
 

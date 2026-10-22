@@ -16,8 +16,8 @@ from .ask_utils import ask_question
 from .config import (
     get_env,
     get_logger,
-    read_asset_text,
     load_verify_log_tail_chars,
+    read_asset_text,
 )
 
 REVIEW_TOOL_NAME = "review_work"

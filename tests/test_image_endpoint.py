@@ -9,10 +9,10 @@ from posixpath import basename
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from _runner import run_suite
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from _runner import run_suite
 from syna import server
 
 TEMP_DIRS = []

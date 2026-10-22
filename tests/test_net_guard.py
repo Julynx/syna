@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from _runner import run_suite
+
 from syna import net_guard
 from syna.browser import BrowserSession, ToolError
 

@@ -6,9 +6,10 @@ import threading
 from datetime import date
 from pathlib import Path
 
-import syna.tools as tools
 from openrouter import OpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
+
+import syna.tools as tools
 
 from .ask_utils import ReplyRejected, ask_question
 from .channel import (

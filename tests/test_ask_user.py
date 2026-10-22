@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _runner import run_suite
+
 from syna import interaction, parse, tools
 from syna.tool_schemas import get_tool_definitions
 
