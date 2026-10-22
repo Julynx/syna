@@ -126,7 +126,10 @@ const Voice = (() => {
     try {
       const response = await fetch(API_BASE + "/api/speech/synthesize", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Syna-Token": window.SYNA_CONFIG?.auth_token || "",
+        },
         body: JSON.stringify({ text: text }),
       });
       const payload = response.ok
@@ -276,6 +279,9 @@ const Voice = (() => {
       const response = await fetch(API_BASE + "/api/speech/transcribe", {
         method: "POST",
         body: form,
+        headers: {
+          "X-Syna-Token": window.SYNA_CONFIG?.auth_token || "",
+        },
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok)

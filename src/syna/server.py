@@ -1,9 +1,11 @@
 """FastAPI web server exposing Syna agent sessions over HTTP and WebSocket."""
 
 import asyncio
+import ipaddress
 import json
 import queue
 import re
+import secrets
 import shutil
 import tempfile
 import threading
@@ -14,8 +16,15 @@ from pathlib import Path
 from posixpath import basename, normpath
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
@@ -266,6 +275,7 @@ def _sanitize_client_id(client_id: str) -> str:
 
 def get_or_create_session(client_id: str) -> SessionRecord:
     """Return the session for a client id, creating it on first use."""
+    client_id = _sanitize_client_id(client_id)
     with _registry_lock:
         record = _sessions.get(client_id)
         if record is None:
@@ -322,6 +332,85 @@ app.mount(
     name="vendor",
 )
 
+# Per-process token required on /api endpoints and the WebSocket. Set by
+# main() for real server runs; left unset in embedded use and tests, which
+# disables the checks below entirely.
+AUTH_TOKEN: str | None = None
+AUTH_HEADER = "X-Syna-Token"
+AUTH_QUERY = "token"
+
+
+def request_token(request: Request) -> str:
+    """The client's token from the header or, for direct links, the query."""
+    return request.headers.get(AUTH_HEADER) or request.query_params.get(AUTH_QUERY, "")
+
+
+def _loopback_binding() -> bool:
+    """Whether the server listens on a loopback interface.
+
+    Host-header validation only makes sense then: bound to 0.0.0.0, the
+    Host header legitimately varies with the LAN address used to connect.
+    """
+    host = str(config.get("server_host", "127.0.0.1"))
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _host_header_allowed(host_header: str) -> bool:
+    """Whether a request's Host header names this server's own address.
+
+    A DNS-rebound page's requests carry the attacker's domain as Host,
+    so anything but the configured loopback binding is refused.
+    """
+    if not host_header or not _loopback_binding():
+        return bool(host_header)
+    port = int(config.get("server_port", 8000))
+    return host_header.lower() in {
+        f"127.0.0.1:{port}",
+        f"localhost:{port}",
+        f"[::1]:{port}",
+    }
+
+
+def _local_origins() -> set[str]:
+    """The Origin values the served UI produces for this server."""
+    port = int(config.get("server_port", 8000))
+    return {
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+        f"http://[::1]:{port}",
+    }
+
+
+@app.middleware("http")
+async def enforce_local_origin(request: Request, call_next):
+    """Reject requests that did not come from the trusted local UI.
+
+    With a token in force: the Host header must name the server's own
+    loopback address, and /api endpoints must present the token (header
+    or query — query because <img> and download links cannot set
+    headers). Static assets and the HTML shell stay open so the page can
+    bootstrap and learn the token.
+    """
+    if AUTH_TOKEN:
+        if not _host_header_allowed(request.headers.get("host", "")):
+            return JSONResponse(
+                status_code=403, content={"detail": "Untrusted Host header."}
+            )
+        if (
+            request.url.path.startswith("/api/")
+            and request_token(request) != AUTH_TOKEN
+        ):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing or invalid session token."},
+            )
+    return await call_next(request)
+
 
 @app.get("/")
 def index():
@@ -331,8 +420,12 @@ def index():
     gui_config = {
         "max_visible_tool_calls": config.get("max_visible_tool_calls", 3),
         "voice": speech.client_configuration(speech_settings, config),
+        "auth_token": AUTH_TOKEN,
     }
-    script = f"<script>window.SYNA_CONFIG = {json.dumps(gui_config)};</script>"
+    # "</" escaped so no value can close the script tag early; AUTH_TOKEN
+    # is url-safe anyway, but the config shape is user-editable.
+    payload = json.dumps(gui_config).replace("</", "<\\/")
+    script = f"<script>window.SYNA_CONFIG = {payload};</script>"
     return HTMLResponse(html.replace("</head>", script + "</head>"))
 
 
@@ -574,6 +667,18 @@ async def _pump_events(record: SessionRecord, websocket: WebSocket):
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """Two-way realtime channel between one client and its session."""
+    if AUTH_TOKEN:
+        # A page's WebSocket is not same-origin restricted by browsers;
+        # the server enforces it instead. A missing Origin comes from the
+        # file:// fallback client and still needs the token; closing
+        # before accepting denies the handshake with an HTTP 403.
+        origin = websocket.headers.get("origin", "")
+        if origin and origin not in _local_origins():
+            await websocket.close(code=1008)
+            return
+        if websocket.query_params.get(AUTH_QUERY, "") != AUTH_TOKEN:
+            await websocket.close(code=1008)
+            return
     await websocket.accept()
     client_id = _sanitize_client_id(client_id)
     try:
@@ -641,6 +746,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 
 def main():
     """Start the Syna web server."""
+    global AUTH_TOKEN
+    AUTH_TOKEN = secrets.token_urlsafe(32)
     try:
         uvicorn.run(
             app,

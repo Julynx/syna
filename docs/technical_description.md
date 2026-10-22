@@ -183,6 +183,13 @@ Client behavior notes:
   rows held invisible), then fades all rows in simultaneously; collapsing
   fades all rows out simultaneously (button in place), then glides the
   height closed. Interrupting a phase cancels it and reverses cleanly.
+- All state-changing API calls carry the per-process server token
+  (`withToken`/`authHeaders`): the WebSocket URL, fetches, inline pod
+  images (`<img>` cannot set headers — query param), and file-download
+  chips. The token arrives via `SYNA_CONFIG` from the served page.
+- The composer area ends with a small centered cursive disclaimer:
+  "Syna is an AI agent; it can make mistakes. Review its outputs and
+  files before acting on them."
 - Tool-row headers read the parsed `arguments` of the event (per-tool
   primary key) instead of regex-parsing the repr signature, which broke
   on commands containing single quotes (Python repr switches to double
@@ -243,6 +250,39 @@ closed; renderer crashes are logged and the page transparently reloaded
 (`_recover_from_crash`); `read` retries once and returns a diagnostic instead
 of an empty string when the document is blank; page errors, JS errors and
 failed requests are logged to the dev log.
+
+Network guard: the browser runs on the host, so all its traffic is
+host-originated. A single `context.route("**/*")` handler (`_guard_route`)
+is the choke point for every request — ad/identity neutralization and the
+`net_guard` policy (public internet only) in one place, independent of
+Playwright's route-matching order. WebSocket handshakes cannot be blocked
+by routing, so `_on_websocket` kills sockets to non-public destinations the
+moment they appear (the Syna server's Origin check is the second layer).
+`tool_goto` additionally validates the destination before navigating with a
+model-readable error. WebRTC is disabled via `firefox_user_prefs` (it
+bypasses HTTP-layer interception and is a standard IP-leak/fingerprint
+surface). Note: interception in this Camoufox build pins the browser to
+HTTP/2 — HTTP/3 is unavailable in both route and proxy modes (verified
+against cloudflare-quic.com); absence of H3 is a common real-world pattern.
+
+### `src/syna/net_guard.py`
+The browser's network policy: public internet targets only. Blocked ranges
+(loopback, RFC1918, link-local incl. the cloud metadata service, CGNAT,
+ULA, multicast, reserved, documentation) are an explicit list, independent
+of `ipaddress.is_global` version drift. `check_destination` parses IP
+literals with the WHATWG URL IPv4 semantics browsers actually apply
+(decimal, hex, octal, mixed, trailing dot, shortened dotted forms where
+the last label carries the remaining bits — e.g. "127.65535" is
+127.0.255.255), and resolves hostnames at decision time
+with a short-lived cache, blocking names that resolve to any private
+address — which closes casual DNS rebinding; a fast-flip rebinding
+adversary can still race the browser's own second resolution, which is
+why the Syna server independently validates the Host header, Origin, and
+token. Resolution failures pass (the
+connection fails anyway). `check_url` guards http/https/ws/wss and lets
+scheme-less payloads (data:, about:) through. Config:
+`browser_allow_private_networks` (default false) and
+`browser_allowed_hosts` (exact hostnames, e.g. a local dev server).
 
 ### `tests/test_browser_health.py`
 Live browser health checks (run manually): Phase 1 reproduces the
@@ -448,12 +488,34 @@ that fit the 1024x1024 box and stay under 5 MB are served untouched
 converted to PNG; each request gets a fresh copy (LRU-capped at 32) with
 `Cache-Control: no-store`, so regenerated images are never served stale.
 A janitor coroutine reaps idle, disconnected sessions. `index()` serves
-`chat.html` and injects `window.SYNA_CONFIG` (UI limits plus voice
-availability, tuning and the configured initial voice-mode state).
-Speech endpoints: `POST /api/speech/transcribe` (multipart clip to text) and
+`chat.html` and injects `window.SYNA_CONFIG` (UI limits, voice availability,
+the configured initial voice-mode state, and the per-process `auth_token`;
+`</` is escaped so no value can close the script tag early). Speech
+endpoints: `POST /api/speech/transcribe` (multipart clip to text) and
 `POST /api/speech/synthesize` (JSON text to audio in the configured format;
 'pcm' replies are wrapped in a WAV container server-side). `main()` runs
 uvicorn.
+
+Server auth (hardened boundaries): `main()` generates a per-process token
+(`AUTH_TOKEN`, `secrets.token_urlsafe`); the HTTP middleware then requires
+it on `/api/*` (header `X-Syna-Token` or `token` query — the query form
+exists for `<img>` and download links, which cannot set headers) and
+rejects requests whose `Host` header is not the configured loopback
+binding (a DNS-rebound page's requests carry the attacker's domain). The
+WebSocket endpoint rejects foreign `Origin` handshakes and requires the
+token in the query (a missing Origin comes from the file:// fallback and
+still needs the token; uvicorn's access log records the query string, so
+the log file contains the token — local, process-private). `/` and
+`/vendor/*` stay open so the page can bootstrap and learn the token. With
+`AUTH_TOKEN` unset (embedded use, tests) every check is disabled; the
+client sends `withToken()`/`authHeaders()` everywhere regardless. The
+client id is sanitized in `get_or_create_session` (uploads included), not
+just on the WebSocket path. Accepted residual risks (documented, not
+fixed): the single shared browser means pages visited in one session
+share profile/cookie state with others; from inside the pod, `curl` can
+reach the podman bridge gateway interface of the host (the Syna server
+binds loopback and is unreachable that way) — pod egress policy is a
+separate topic.
 
 ### `src/syna/speech.py`
 Voice transcription and synthesis through OpenRouter's OpenAI-compatible
@@ -705,6 +767,21 @@ All suites are plain scripts runnable with the project venv
   untouched), downscaling of oversized dimensions into the 1024x1024 PNG
   box, the 50 MB rejection, the recompression threshold, malformed-image
   rejection, and the LRU cache eviction.
+- `tests/test_net_guard.py` — the browser's network policy: blocked-range
+  matrix (loopback v4/v6/mapped, RFC1918, metadata, CGNAT, multicast),
+  URL-spec obfuscations (decimal, hex, octal, mixed, trailing dot, and
+  shortened dotted forms with large last labels — asserted against the
+  correct ranges, not 0/8 luck), public short forms not blocked, hostname resolution blocked/allowed
+  with stubbed `getaddrinfo`, resolution-failure pass-through, cache
+  behavior, config overrides, scheme handling (ws/wss guarded, data:
+  passed), `tool_goto` blocking before any page exists, and the route
+  handler's neutralize/continue/abort outcomes plus the WebSocket
+  observer.
+- `tests/test_server_auth.py` — the local-origin and token enforcement:
+  open API without a token, 401 without / 404 with the token (header and
+  query), 403 on foreign Host headers, localhost accepted, shell and
+  vendor staying open with the token injected, and WebSocket handshake
+  rejection for foreign Origins and missing tokens.
 - `tests/_runner.py` — shared harness for the plain-script suites: a
   monkeypatch (attribute/mapping overrides with automatic undo) and
   `run_suite`, which executes every test, prints per-test results, and

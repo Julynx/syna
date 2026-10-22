@@ -27,6 +27,8 @@
   "session_dump_file": "message-session-log.json",
   "server_host": "127.0.0.1",
   "server_port": 8000,
+  "browser_allow_private_networks": false,
+  "browser_allowed_hosts": [],
   "session_idle_timeout_min": 15,
   "upload_dest": "/home/user/uploads",
   "voice": {

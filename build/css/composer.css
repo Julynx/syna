@@ -256,11 +256,26 @@ footer {
   border-style: dashed;
 }
 
+.disclaimer {
+  max-width: 880px;
+  margin: 6px auto 0;
+  text-align: center;
+  font-family: "Segoe Script", "Bradley Hand", cursive;
+  font-style: italic;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.8;
+  user-select: none;
+}
+
 @media (min-width: 1024px) {
   .composer {
     max-width: 1060px;
   }
   .ask-panel {
+    max-width: 1060px;
+  }
+  .disclaimer {
     max-width: 1060px;
   }
 }

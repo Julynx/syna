@@ -46,6 +46,7 @@ from urllib.parse import urlparse
 from camoufox.async_api import AsyncCamoufox
 from playwright.async_api import Error as PWError
 
+from . import net_guard
 from .config import get_logger
 
 ALLOWED_SCHEMES = {"http", "https"}
@@ -54,13 +55,15 @@ ALLOWED_SCHEMES = {"http", "https"}
 # handler wipe the whole document and show its report.error-report.com modal
 # ("Failed to load website due to adblock"). Fulfilling those requests with
 # empty JavaScript keeps pages intact: the bootstrapper sees success and the
-# site renders normally.
-NEUTRALIZED_SCRIPT_PATTERNS = (
-    "**://fundingchoicesmessages.google.com/**",
-    "**://*.id5-sync.com/**",
-    "**://*.criteo.net/**",
-    "**://*.aforearound.com/**",
-    "**://script.wikia.nocookie.net/fandom-ae-assets/identity-service/**",
+# site renders normally. Matched on the parsed hostname (wildcards are
+# subdomain suffixes) and, when given, a path prefix — never on the raw URL,
+# so a lookalike string inside a query cannot neutralize an innocent page.
+NEUTRALIZED_SCRIPT_HOSTS = (
+    ("fundingchoicesmessages.google.com", ""),
+    ("*.id5-sync.com", ""),
+    ("*.criteo.net", ""),
+    ("*.aforearound.com", ""),
+    ("script.wikia.nocookie.net", "/fandom-ae-assets/identity-service/"),
 )
 
 # A popup is only adopted as the current page within this window after a
@@ -379,10 +382,15 @@ class BrowserSession:
     to the real host (random OS = inconsistent fingerprint); override with
     os="macos"/..., or os=None to let Camoufox pick randomly.
 
-    Request routing: uBlock's blocking of certain ad/identity script hosts
-    makes sites like Fandom replace the page with an error-report modal, so
-    those hosts are fulfilled with empty JavaScript instead (see
-    NEUTRALIZED_SCRIPT_PATTERNS).
+    Request routing: every request the browser makes — agent navigation,
+    page fetches, subresources, WebSockets — passes through one route
+    handler (`_guard_route`): ad/identity script hosts are neutralized,
+    and every other destination must pass the net_guard policy (public
+    internet only). WebSocket handshakes cannot be blocked
+    by routing, so they are observed and killed, and the Syna server
+    rejects foreign Origins as the second layer. WebRTC is disabled:
+    it bypasses HTTP-layer routing entirely and is a standard
+    fingerprinting/IP-leak surface.
     """
 
     def __init__(
@@ -398,6 +406,8 @@ class BrowserSession:
     ):
         self.max_chars = max_chars
         camoufox_kwargs.setdefault("os", detect_host_os())
+        prefs = camoufox_kwargs.setdefault("firefox_user_prefs", {})
+        prefs.setdefault("media.peerconnection.enabled", False)
         self._kw = dict(
             headless=headless, humanize=humanize, geoip=geoip, **camoufox_kwargs
         )
@@ -424,8 +434,7 @@ class BrowserSession:
             self.context = obj
         else:
             self.context = await obj.new_context(accept_downloads=False)
-        for pattern in NEUTRALIZED_SCRIPT_PATTERNS:
-            await self.context.route(pattern, self._fulfill_empty_script)
+        await self.context.route("**/*", self._guard_route)
         self.page = (
             self.context.pages[0]
             if self.context.pages
@@ -447,6 +456,83 @@ class BrowserSession:
         except Exception:
             pass
 
+    async def _guard_route(self, route) -> None:
+        """Single choke point for every request the browser makes.
+
+        One handler for all URLs: ad/identity script hosts get empty
+        JavaScript, and every other destination must pass the net_guard
+        policy (public internet only) or the request is aborted before
+        it leaves the machine. Unexpected errors fail closed — the
+        request is aborted and the failure logged, never silently passed.
+        """
+        url = route.request.url
+        try:
+            if self._is_neutralized_url(url):
+                await self._fulfill_empty_script(route)
+                return
+            decision = net_guard.check_url(url)
+            if decision.allowed:
+                await route.continue_()
+                return
+            get_logger().info(
+                "Browser blocked request to %.200s: %s", url, decision.reason
+            )
+            await route.abort("blocked")
+        except Exception:
+            get_logger().exception(
+                "Guard route handling failed for %.200s; failing closed", url
+            )
+            try:
+                await route.abort("blocked")
+            except Exception:
+                pass
+
+    @staticmethod
+    def _is_neutralized_url(url: str) -> bool:
+        """Whether a URL targets one of the neutralized ad/identity hosts.
+
+        Matched on the parsed hostname and optional path prefix — never
+        on the raw URL text, so a query-string lookalike cannot make an
+        innocent page match.
+        """
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return False
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return False
+        for host_pattern, path_prefix in NEUTRALIZED_SCRIPT_HOSTS:
+            if host_pattern.startswith("*."):
+                if not host.endswith(host_pattern[1:]):
+                    continue
+            elif host != host_pattern:
+                continue
+            if parsed.path.startswith(path_prefix):
+                return True
+        return False
+
+    def _on_websocket(self, ws) -> None:
+        """Kill WebSocket connections that bypass the request policy.
+
+        Routing observes but cannot block a WS handshake: the socket is
+        closed as soon as it appears. The Syna server's Origin check is
+        the second layer, and pages cannot read loopback responses
+        without same-origin regardless.
+        """
+        decision = net_guard.check_url(ws.url)
+        if not decision.allowed:
+            get_logger().info(
+                "Browser blocked WebSocket to %.200s: %s", ws.url, decision.reason
+            )
+            asyncio.ensure_future(self._close_websocket(ws))
+
+    async def _close_websocket(self, ws) -> None:
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
     async def _on_download(self, download) -> None:
         """Belt-and-braces guard: kill any download attempt in flight.
 
@@ -463,6 +549,7 @@ class BrowserSession:
         p.on("crash", self._on_crash)
         p.on("pageerror", self._on_page_error)
         p.on("requestfailed", self._on_request_failed)
+        p.on("websocket", self._on_websocket)
 
     def _on_crash(self, page) -> None:
         """A renderer crash must never end the session: reload transparently."""
@@ -631,6 +718,13 @@ class BrowserSession:
             raise ToolError(
                 f"blocked protocol '{parsed.scheme or 'none'}:' — only http and"
                 " https URLs can be opened"
+            )
+        decision = net_guard.check_url(url, schemes=net_guard.HTTP_SCHEMES)
+        if not decision.allowed:
+            raise ToolError(
+                f"blocked navigation to {url}: {decision.reason}. Syna's browser"
+                " can only open public internet addresses; to work with a local"
+                " or private service, use execute_command inside the pod instead."
             )
         page = self._live_page()
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)

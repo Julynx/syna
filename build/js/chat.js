@@ -31,6 +31,26 @@ const API_BASE = isServed ? location.origin : "http://127.0.0.1:8000";
 const WS_BASE = isServed
   ? (location.protocol === "https:" ? "wss://" : "ws://") + location.host
   : "ws://127.0.0.1:8000";
+const AUTH_TOKEN = (window.SYNA_CONFIG && window.SYNA_CONFIG.auth_token) || "";
+
+/* The per-process server token rides along on every authenticated call:
+   headers for fetches, the query string for direct links (<img>, file
+   downloads) and the WebSocket, which cannot set headers. */
+function withToken(url) {
+  if (!AUTH_TOKEN) return url;
+  return (
+    url +
+    (url.includes("?") ? "&" : "?") +
+    "token=" +
+    encodeURIComponent(AUTH_TOKEN)
+  );
+}
+
+function authHeaders(extra) {
+  return AUTH_TOKEN
+    ? { ...(extra || {}), "X-Syna-Token": AUTH_TOKEN }
+    : extra || {};
+}
 
 let ws = null;
 let reconnectDelay = 1000;
@@ -242,12 +262,13 @@ function applyImagePolicy(bubble) {
       } catch (err) {
         podPath = src;
       }
-      img.src =
+      img.src = withToken(
         API_BASE +
-        "/api/image/" +
-        clientId +
-        "?path=" +
-        encodeURIComponent(podPath);
+          "/api/image/" +
+          clientId +
+          "?path=" +
+          encodeURIComponent(podPath),
+      );
       img.loading = "lazy";
       img.decoding = "async";
       img.alt = img.alt || "Image from the pod";
@@ -985,7 +1006,7 @@ function addFileChip(event) {
   const chip = document.createElement("a");
   chip.className =
     "file-chip glass" + (event.type === "file_sent" ? " outgoing" : "");
-  chip.href = event.url ? API_BASE + event.url : "#";
+  chip.href = event.url ? withToken(API_BASE + event.url) : "#";
   if (event.url) chip.setAttribute("download", event.name);
   chip.innerHTML = ICONS.file + "<span></span><span class='file-meta'></span>";
   chip.children[1].textContent = event.name;
@@ -1185,7 +1206,7 @@ function render(event) {
 }
 
 function connect() {
-  ws = new WebSocket(WS_BASE + "/ws/" + clientId);
+  ws = new WebSocket(withToken(WS_BASE + "/ws/" + clientId));
 
   ws.onopen = () => {
     reconnectDelay = 1000;
@@ -1278,6 +1299,7 @@ async function newChat() {
     }
     const response = await fetch(API_BASE + "/api/new-chat/" + clientId, {
       method: "POST",
+      headers: authHeaders(),
     });
     if (!response.ok) throw new Error("HTTP " + response.status);
     if (ws) {
@@ -1310,7 +1332,11 @@ function uploadFiles(files) {
   for (const file of files) {
     const form = new FormData();
     form.append("file", file);
-    fetch(API_BASE + "/api/upload/" + clientId, { method: "POST", body: form })
+    fetch(API_BASE + "/api/upload/" + clientId, {
+      method: "POST",
+      body: form,
+      headers: authHeaders(),
+    })
       .then((response) => {
         if (!response.ok)
           throw new Error("Upload failed (" + response.status + ")");
