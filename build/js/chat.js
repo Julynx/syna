@@ -106,7 +106,7 @@ const GLYPH = (name, cls) =>
 const ICONS = {
   settings: GLYPH("settings"),
   close: GLYPH("close"),
-  restore: GLYPH("restart_alt"),
+  reset: GLYPH("restart_alt"),
   send: GLYPH("send"),
   stop: GLYPH("stop"),
   clip: GLYPH("attach_file"),
@@ -1436,31 +1436,24 @@ async function openSettingsModal() {
     rowHeader.appendChild(labelEl);
 
     let control;
-    let helpEl = null;
+    const hasDefault = defaultValue !== undefined && defaultValue !== "";
 
-    const updateHelp = () => {
-      if (!helpEl) return;
-      const cur = String(control.value || "").trim();
-      if (!cur && defaultValue !== undefined && defaultValue !== "") {
-        helpEl.textContent = `${defaultValue} (Default)`;
-      } else if (defaultValue !== undefined && defaultValue !== "") {
-        helpEl.textContent = `Default: ${defaultValue}`;
-      } else {
-        helpEl.textContent = "";
-      }
-    };
-
-    if (allowRestore && defaultValue !== undefined) {
-      const restoreBtn = document.createElement("button");
-      restoreBtn.className = "settings-restore-btn";
-      restoreBtn.title = "Restore recommended default";
-      restoreBtn.innerHTML = `${ICONS.restore}<span>Restore</span>`;
-      restoreBtn.addEventListener("click", () => {
-        control.value = defaultValue;
-        control.dispatchEvent(new Event("change"));
-        control.dispatchEvent(new Event("input"));
+    if (allowRestore && (isSelect || hasDefault)) {
+      const resetBtn = document.createElement("button");
+      resetBtn.className = "settings-reset-btn";
+      resetBtn.title = isSelect ? "Select the default option" : "Clear input";
+      resetBtn.setAttribute("aria-label", "Reset to default");
+      resetBtn.innerHTML = ICONS.reset;
+      resetBtn.addEventListener("click", () => {
+        if (isSelect) {
+          control.selectedIndex = 0;
+        } else {
+          control.value = "";
+        }
+        control.dispatchEvent(new Event(isSelect ? "change" : "input"));
+        control.focus();
       });
-      rowHeader.appendChild(restoreBtn);
+      rowHeader.appendChild(resetBtn);
     }
     row.appendChild(rowHeader);
 
@@ -1485,18 +1478,13 @@ async function openSettingsModal() {
       control.className = "settings-input";
       control.type = type;
       control.value = value ?? "";
+      if (hasDefault) control.placeholder = `${defaultValue} (Default)`;
       if (desc) control.title = desc;
       control.addEventListener("input", (e) => {
         onChange(e.target.value);
-        updateHelp();
         dirtyCheck();
       });
       row.appendChild(control);
-
-      helpEl = document.createElement("p");
-      helpEl.className = "settings-help";
-      row.appendChild(helpEl);
-      updateHelp();
     }
 
     return { row, control };
