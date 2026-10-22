@@ -1,6 +1,7 @@
 """Reusable agent session shared by the CLI and the web server."""
 
 import json
+import secrets
 import threading
 from datetime import date
 
@@ -28,11 +29,24 @@ from .config import (
     get_session_dump_path,
     load_command_timeout_s,
     load_config,
+    load_elide_user_message_head_chars,
     load_output_limit_chars,
+    load_user_message_archive_min_chars,
 )
-from .context import elide_tool_outputs, estimate_history_tokens
+from .context import (
+    elide_archived_user_messages,
+    elide_tool_outputs,
+    estimate_history_tokens,
+)
 from .parse import parse_and_execute_tools
+from .state import get_container
 from .tool_schemas import get_tool_definitions
+from .user_messages import USER_MESSAGE_MARKER_TEMPLATE, archive_user_message
+from .verification import (
+    REVIEW_TOOL_NAME,
+    pop_conversation_log_provider,
+    set_conversation_log_provider,
+)
 
 OUTPUT_PREVIEW_CHARS = 512
 DETAIL_CAP_CHARS = 6000
@@ -218,10 +232,13 @@ class AgentSession:
         self.elide_every_requests = load_config().get(
             "elide_every_requests", DEFAULT_ELIDE_EVERY_REQUESTS
         )
+        self.elide_user_message_head_chars = load_elide_user_message_head_chars()
         self.compaction_prompt = load_compaction_prompt()
         self.session_id = session_id
         self.messages: list[dict] = []
         self._pending_failed_messages: list[dict] = []
+        self._user_message_seq = 0
+        self._archive_nonce = secrets.token_hex(8)
         self.dump_path = get_session_dump_path(session_id)
         self._cancel_event = threading.Event()
         self._tool_call_seq = 0
@@ -261,6 +278,72 @@ class AgentSession:
         }
         self.messages.append(msg)
         logger.info(str(msg))
+
+    def _prepare_user_message(self, user_text: str) -> str:
+        """Archive a large user message verbatim and annotate it with the path.
+
+        The archive lives in the pod so the model can pipe the exact data
+        into scripts; the marker tells the model the path immediately and
+        drives the elision of the message later on. Archiving never blocks
+        the turn: on any failure the message travels unannotated, exactly
+        as it would without this feature.
+        """
+        if (
+            not self.persist_outputs
+            or len(user_text) < load_user_message_archive_min_chars()
+        ):
+            return user_text
+        self._user_message_seq += 1
+        pod_path = archive_user_message(
+            user_text, get_container(), self._user_message_seq
+        )
+        if pod_path is None:
+            self._user_message_seq -= 1
+            return user_text
+        return (
+            user_text
+            + "\n\n"
+            + USER_MESSAGE_MARKER_TEMPLATE.format(
+                path=pod_path, nonce=self._archive_nonce
+            )
+        )
+
+    def _reviewer_log(self) -> list[dict]:
+        """The conversation snapshot the work reviewer receives.
+
+        The pending review_work call is filtered out of the trailing
+        assistant message — the reviewer should judge the task's results
+        and methodology, not the review request itself — while its
+        sibling calls in the same batch (think notes, other tools) stay
+        in the snapshot. The message disappears entirely only when the
+        review call was its sole content.
+        """
+        messages = list(self.messages)
+        last = messages[-1] if messages else None
+        if last is None or last.get("role") != "assistant":
+            return messages
+        calls = last.get("tool_calls") or []
+        kept = [
+            call
+            for call in calls
+            if not (
+                isinstance(call, dict)
+                and (call.get("function") or {}).get("name") == REVIEW_TOOL_NAME
+            )
+        ]
+        if len(kept) == len(calls):
+            return messages
+        trimmed = dict(last)
+        if kept:
+            trimmed["tool_calls"] = kept
+            messages[-1] = trimmed
+            return messages
+        trimmed.pop("tool_calls", None)
+        if not (trimmed.get("content") or "").strip():
+            messages.pop()
+        else:
+            messages[-1] = trimmed
+        return messages
 
     def _sanitize_reply(self, response: str) -> str | None:
         """Sanitize gate checking whether response attempts channel impersonation."""
@@ -343,7 +426,7 @@ class AgentSession:
     def run_turn(self, user_text: str):
         """Run one full think/act cycle for a user message."""
         logger = get_logger()
-        msg = {"role": "user", "content": user_text}
+        msg = {"role": "user", "content": self._prepare_user_message(user_text)}
         self.messages.append(msg)
         logger.info(str(msg))
 
@@ -418,6 +501,7 @@ class AgentSession:
                 self._emit({"type": "model_message", "content": content})
                 return
 
+            set_conversation_log_provider(self._reviewer_log)
             try:
                 outcome = parse_and_execute_tools(
                     tool_calls,
@@ -439,6 +523,8 @@ class AgentSession:
                     }
                 )
                 return
+            finally:
+                pop_conversation_log_provider()
 
             tool_messages: list[dict] = []
             for entry in outcome.outputs:
@@ -535,7 +621,7 @@ class AgentSession:
         logger.info(str(msg))
 
     def _elide_old_outputs(self, history, total_tokens, logger) -> int:
-        """Elide saved tool outputs once history passes its interval.
+        """Elide saved tool outputs and archived user messages once history passes its interval.
 
         Elision runs when the message count reaches `elide_interval_messages`
         — keeping prompts small throughout a long run without waiting for the
@@ -544,7 +630,8 @@ class AgentSession:
         batched: outside the budget-exceeded path it only runs every
         `elide_every_requests` requests. Every output still becomes a pointer
         eventually; it simply stays full-text a few requests longer. Lossless:
-        elided output stays readable in the pod at its saved_to path.
+        elided output stays readable in the pod at its saved_to path, and an
+        archived user message at its archive path.
         """
         interval = self.elide_interval_messages
         interval_reached = bool(interval) and len(history) >= interval
@@ -555,6 +642,12 @@ class AgentSession:
         if not (budget_exceeded or batch_due):
             return 0
         elided = elide_tool_outputs(self.messages, self.elide_keep_recent_messages)
+        elided += elide_archived_user_messages(
+            self.messages,
+            self.elide_keep_recent_messages,
+            self.elide_user_message_head_chars,
+            self._archive_nonce,
+        )
         self._requests_since_elide = 0
         if elided:
             logger.info("Elided %d old tool outputs from history", elided)

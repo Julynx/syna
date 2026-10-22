@@ -122,6 +122,7 @@ const ICONS = {
   think: GLYPH("psychology"),
   image: GLYPH("image"),
   help: GLYPH("help"),
+  factCheck: GLYPH("fact_check"),
   speakerOn: GLYPH("record_voice_over", "s-on"),
   speakerOff: GLYPH("voice_over_off", "s-off"),
 };
@@ -159,6 +160,11 @@ const TOOL_META = {
   },
   share_file: { verb: "Share file", icon: ICONS.share, key: "path" },
   ask_user: { verb: "Asked you", icon: ICONS.help, key: "question_text" },
+  review_work: {
+    verb: "Verifying work",
+    icon: ICONS.factCheck,
+    key: "summary",
+  },
 };
 
 const DETAIL_CAP_CHARS = 6000;

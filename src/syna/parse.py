@@ -12,6 +12,7 @@ the pod path (/tool_outputs/) holding the full output.
 """
 
 import json
+import shlex
 import tempfile
 import threading
 from collections.abc import Callable
@@ -36,6 +37,12 @@ from .state import (
     unregister_container,
 )
 from .tools import TOOL_REGISTRY
+from .verification import (
+    REVIEW_TOOL_NAME,
+    current_conversation_log_provider,
+    pop_conversation_log_provider,
+    set_conversation_log_provider,
+)
 
 TIMEOUT_EXIT_CODES = {124, 137}
 TOOLS_PERSISTED_IN_POD = {"execute_command"}
@@ -214,15 +221,18 @@ def execute_tool_with_timeout(
 ) -> tuple[object, bool, int | None]:
     """Run a tool in a worker thread and return (output, detached, exit_code).
 
-    The worker inherits the calling thread's container and question
-    responder, and the call's output path (all thread-locals), and reports
-    back the exit code recorded by the tool, if any. A None timeout waits
-    indefinitely — used by ask_user, which must outlive the configured
-    per-call budget and block until the user answers.
+    The worker inherits the calling thread's container, question
+    responder, and conversation-log provider, and the call's output path
+    (all thread-locals), and reports back the exit code recorded by the
+    tool, if any. A None timeout waits indefinitely — used by ask_user,
+    which must outlive the configured per-call budget and block until the
+    user answers, and by review_work, whose reviewer request is bounded
+    by the model client's own timeout and retry policy.
     """
     tool_fn = TOOL_REGISTRY[tool_name]
     container = get_registered_container()
     responder = get_responder()
+    log_provider = current_conversation_log_provider()
     finished = threading.Event()
     outcome: dict = {}
 
@@ -231,6 +241,8 @@ def execute_tool_with_timeout(
             register_container(container)
         if responder is not None:
             register_responder(responder)
+        if log_provider is not None:
+            set_conversation_log_provider(log_provider)
         set_call_output_path(output_path)
         try:
             outcome["output"] = tool_fn(**tool_arguments)
@@ -239,6 +251,7 @@ def execute_tool_with_timeout(
         finally:
             outcome["exit_code"] = pop_last_exit_code()
             set_call_output_path(None)
+            pop_conversation_log_provider()
             unregister_responder()
             if container is not None:
                 unregister_container()
@@ -275,8 +288,14 @@ def _persist_tool_output(
         file_name = PurePosixPath(saved_to).name
         with tempfile.TemporaryDirectory(prefix="syna-persist-") as temp_dir:
             host_file = Path(temp_dir, file_name)
-            host_file.write_text(output_text, encoding="utf-8", errors="replace")
+            # Bytes, not write_text: text mode translates \n to \r\n on
+            # Windows, which would corrupt the saved output.
+            host_file.write_bytes(output_text.encode("utf-8", errors="replace"))
             container.copy_to(str(host_file), "/tool_outputs")
+        try:
+            container.exec(["bash", "-c", f"chmod 444 {shlex.quote(saved_to)}"])
+        except Exception:
+            get_logger().warning("Could not make %s read-only", saved_to, exc_info=True)
         return saved_to
     except Exception:
         get_logger().exception("Failed to persist tool output to %s", saved_to)
@@ -589,7 +608,9 @@ def parse_and_execute_tools(
         )
 
         call_output_path = f"/tool_outputs/{next_call_index():04d}_{tool_name}.txt"
-        call_timeout = None if tool_name == "ask_user" else tool_timeout_s
+        call_timeout = (
+            None if tool_name in ("ask_user", REVIEW_TOOL_NAME) else tool_timeout_s
+        )
         try:
             output, detached, exit_code = execute_tool_with_timeout(
                 tool_name, tool_arguments, call_timeout, call_output_path

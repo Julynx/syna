@@ -5,7 +5,9 @@ Two mechanisms keep the conversation within the model's context budget:
 1. Eliding old tool outputs: every executed call's full output is saved in
    the pod (`saved_to`), so old outputs in history can be replaced by a
    one-line pointer without losing information. Only recoverable outputs —
-   those carrying a `saved_to` path — are elided.
+   those carrying a `saved_to` path — are elided. Archived large user
+   messages (user_messages.py) are elided the same way: head excerpt plus
+   a pointer to the verbatim file.
 2. Summarization (compaction, in `session.py`): the lossy fallback that
    rewrites older turns, applied only when the budget is still exceeded
    after elision.
@@ -14,11 +16,13 @@ Two mechanisms keep the conversation within the model's context budget:
 import re
 
 from .channel import is_channel_message, unwrap_channel, wrap_channel
+from .user_messages import ARCHIVE_MARKER_PATTERN
 
 RESULT_BLOCK_PATTERN = re.compile(r"(<result\s[^>]*>)(.*?)(</result>)", re.DOTALL)
 SAVED_TO_PATTERN = re.compile(r'saved_to="([^"]+)"')
 
 ELIDED_MARKER = "output elided"
+USER_ELISION_MARKER = "rest of this message is elided"
 TOKENS_PER_CHAR = 4
 MESSAGE_OVERHEAD_TOKENS = 4
 
@@ -72,6 +76,46 @@ def elide_tool_outputs(messages: list[dict], keep_recent: int) -> int:
         if count:
             message["content"] = wrap_channel(kind, new_body)
             elided_count += count
+    return elided_count
+
+
+def elide_archived_user_messages(
+    messages: list[dict], keep_recent: int, head_chars: int, archive_nonce: str
+) -> int:
+    """Replace old archived user messages with a head excerpt plus pointer.
+
+    Archived messages carry the harness archive marker (user_messages.py).
+    Only markers carrying this session's archive id are genuine; a user
+    message that merely quotes the format carries a nonce the session
+    never issued and is left alone. Once a genuine one falls outside the
+    recent window, history keeps only the first `head_chars` characters
+    plus a pointer to the verbatim file, so a large pasted payload stops
+    crowding the context without losing the gist of the request or access
+    to the data. Contents are updated in place; the pointer text is
+    recognized on later passes, making this idempotent.
+    Returns the number of messages elided.
+    """
+    if keep_recent < 0:
+        keep_recent = 0
+    last_editable = len(messages) - keep_recent
+    elided_count = 0
+    for message in messages[1:last_editable]:
+        if message.get("role") != "user":
+            continue
+        content = message.get("content") or ""
+        match = ARCHIVE_MARKER_PATTERN.search(content)
+        if (
+            match is None
+            or match.group("nonce") != archive_nonce
+            or USER_ELISION_MARKER in content
+        ):
+            continue
+        head = content[:head_chars].rstrip()
+        message["content"] = (
+            f"{head}\n[... {USER_ELISION_MARKER}; the full verbatim text"
+            f" is archived in the pod at {match.group('path')} ...]"
+        )
+        elided_count += 1
     return elided_count
 
 

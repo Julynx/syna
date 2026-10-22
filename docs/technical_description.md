@@ -61,6 +61,8 @@ create files with full root access.
 | `TTS_VOICE` | Synthesis voice (default `Kore`). |
 | `TTS_RESPONSE_FORMAT` | Speech endpoint response format (default `pcm`; raw samples are wrapped in a WAV container server-side). Some models, e.g. OpenAI TTS, also accept `mp3`. |
 | `IMAGE_MODEL` | Image generation model for the `text_to_image` tool (tool reports itself as not configured when unset), e.g. `google/gemini-3.1-flash-image`. |
+| `VERIFIER_MODEL` | Reviewer model for the `review_work` tool (defaults to `MODEL` when unset). |
+| `VERIFIER_MODEL_EFFORT` | Reasoning effort for the reviewer request (default `high`). |
 | `SPEECH_LANGUAGE` | Spoken language hint for STT (default `en`). |
 
 `assets/config.json` holds all runtime settings:
@@ -80,6 +82,10 @@ create files with full root access.
 | `elide_keep_recent_messages` | History messages kept untouched by output elision (default 12). |
 | `elide_interval_messages` | History size at which lossless output elision runs on its own, instead of waiting for the token budget (default 30). Keeps prompts small through long runs; elided outputs remain readable in the pod at their `saved_to` paths. |
 | `elide_every_requests` | Requests between batched elision passes once the message interval is reached (default 10). Batching keeps the conversation prefix stable between passes so the provider prompt cache stays warm; the token-budget path always elides immediately. |
+| `elide_user_message_head_chars` | How much of an archived large user message stays in history after elision (default 300); the rest is replaced by a pointer to the verbatim archive file. |
+| `user_message_archive_min_chars` | User message length at which the message is archived verbatim into the pod and annotated with its path (default 2000). |
+| `user_messages_dest` | Pod directory holding the archived user messages (default `/user_messages`). |
+| `verify_log_tail_chars` | How many characters of the serialized conversation log the `review_work` reviewer receives (default 128000). |
 | `max_history_messages` | History length that triggers compaction. |
 | `enable_compaction` | Master switch for history compaction. |
 | `max_visible_tool_calls` | UI limit on rendered tool rows. |
@@ -96,7 +102,8 @@ create files with full root access.
 Static assets live in `assets/`: `prompt.md` (system prompt template with a
 `{tools}` placeholder where live tool documentation is injected, plus the
 `{{CURRENT_DATE}}`, `{{COMMAND_TIMEOUT}}` and `{{OUTPUT_LIMIT}}` placeholders
-filled at build time), `compaction_prompt.md`, `chat.html` (web UI) and
+filled at build time), `verifier_prompt.md` (system prompt for the isolated
+`review_work` reviewer), `compaction_prompt.md`, `chat.html` (web UI) and
 `vendor/` (markdown-it, KaTeX, fonts, icons, logo).
 
 ## Web UI build system
@@ -338,12 +345,16 @@ wrapped with the `COMPACTION` sentinel channel and `<harness_notice>` tags
 compactions merge rather than duplicate.
 
 ### `src/syna/context.py`
-Token estimation and tool-output elision for context management:
+Token estimation and elision for context management:
 `estimate_tokens` / `estimate_history_tokens` (characters/4 heuristic, no
-tokenizer dependency), and `elide_tool_outputs` — replaces old result
+tokenizer dependency), `elide_tool_outputs` — replaces old result
 outputs that carry a `saved_to` path with a one-line pointer to the pod
 file, leaving the system message, the most recent messages, and anything
-unrecoverable untouched. Idempotent.
+unrecoverable untouched — and `elide_archived_user_messages`, which
+replaces old archived user messages (marked by `user_messages.py`, and
+only when the marker carries the session's archive id) with
+a head excerpt of `elide_user_message_head_chars` characters plus a
+pointer to the verbatim archive file. Both passes are idempotent.
 
 ### `src/syna/config.py`
 Configuration and logging: `load_config()` (reads `assets/config.json`),
@@ -443,15 +454,19 @@ Tool-call parsing and execution under native OpenRouter tool calling.
   unchanged.
 - `execute_tool_with_timeout(tool_name, tool_arguments, timeout_s,
   output_path)` — runs the tool in a daemon worker thread, propagating the
-  calling thread's registered container, question responder, and the call's
+  calling thread's registered container, question responder, conversation-log
+  provider (`review_work`'s reviewer snapshot), and the call's
   output path into the worker (all thread-locals), and reports back the
   tool-recorded exit code. On timeout the worker is detached and a notice is
-  returned as the tool output with status `timeout`. `ask_user` is dispatched
-  with a `None` timeout so a pending question is never detached; it blocks
-  until the user answers.
+  returned as the tool output with status `timeout`. `ask_user` and
+  `review_work` are dispatched
+  with a `None` timeout so a pending question is never detached, and the
+  reviewer request is bounded by the model client's own timeout/retry
+  policy instead.
 - `_persist_tool_output(output_text, saved_to, persist_outputs)` — saves
   host-side tool output (web tools, file tools, ...) into the pod at
-  `/tool_outputs/` via `copy_to`; `execute_command` writes its own file
+  `/tool_outputs/` via `copy_to` and chmods the file read-only;
+  `execute_command` writes its own file
   pod-side instead. Web sessions persist through the thread's bound
   container; CLI sessions opt in via `persist_outputs` and use the shared
   pod. When no container can be used (unit tests, persistence errors) the
@@ -568,7 +583,9 @@ the settings the web client needs for voice mode. Failures raise
   `elide_interval_messages`, and additionally whenever estimated tokens
   exceed `context_budget_tokens`, old tool outputs (those with `saved_to`)
   outside the recent window are elided to pointers — lossless, since the
-  model can re-read them in the pod. To keep the provider prompt cache warm,
+  model can re-read them in the pod. Archived large user messages are
+  elided the same way (head excerpt plus pointer to the verbatim file).
+  To keep the provider prompt cache warm,
   the rewrite is batched: outside the budget-exceeded path it only runs every
   `elide_every_requests` requests, so history stays append-only (and the
   cache prefix intact) between passes. Every output still becomes a pointer
@@ -604,6 +621,17 @@ the settings the web client needs for voice mode. Failures raise
   stringified `output` display field cannot carry.
   A `skipped` parser event renders like a finished tool row.
 - User interruption raises `TurnCancelled` inside the `started` event hook.
+- **User message archives**: before appending the user message, `run_turn`
+  hands it to `_prepare_user_message` — messages at least
+  `user_message_archive_min_chars` long are archived verbatim into the pod
+  by `user_messages.py` and annotated with the archive path (a failed
+  archive logs and leaves the message unannotated). `_reviewer_log`
+  provides the `review_work` reviewer its conversation snapshot: the
+  pending review call is filtered out of the trailing assistant message
+  (its sibling calls in the same batch stay; the message disappears only
+  when the review call was its sole content), and the provider is
+  installed as a thread-local around
+  `parse_and_execute_tools` and popped on every exit path.
 
 ### `src/syna/state.py`
 Global Docker client plus per-thread container registry and per-call context.
@@ -642,14 +670,26 @@ optional ISO-639-1 `language` hint, auto-detect when omitted),
 `share_file` (registers a pod
 path for user download; a missing path is reported as a normal error row
 with exit code 1, and the delivery metadata reaches the client through the
-`structured_output` event field), and `ask_user` (asks the user a question
+`structured_output` event field), `ask_user` (asks the user a question
 with optional choices and blocks until they answer; validates its arguments,
 returns a clean error dict in non-interactive contexts, and propagates
 `InteractionCancelled` when the task is stopped mid-question — the client
 adds the "Other — type your own response" option itself, and an empty
-choices array means an open text answer). The final answer to the user is
+choices array means an open text answer), and `review_work` (isolated
+adversarial verification through `verification.py`; the reviewer's report
+is the tool result). The final answer to the user is
 delivered as natural language text when the model completes its work without
 tool calls.
+
+Pod artifacts are written read-only as an integrity barrier (the model has
+root and can undo it; the point is that a result already reported cannot be
+silently overwritten — regeneration produces new, timestamped names):
+`_write_into_pod` chmods 444 every artifact it copies in (screenshots,
+transcripts, audio, generated images), `execute_command`'s pod-side runner
+chmods its `/tool_outputs/` capture file, and `_persist_tool_output` in
+`parse.py` chmods the host-persisted outputs. Host-side logs and session
+dumps are deliberately not read-only: their writers rewrite them in place
+(os.replace over a read-only target fails on Windows).
 
 Every docstring is injected verbatim into the system prompt (`build_prompt`),
 so the docstrings are the model-facing tool documentation and must stay in
@@ -669,6 +709,39 @@ exec reads a bounded view of the output file (head-and-tail at
 exit codes 124/137 (timeout killed) map to status `timeout`, other non-zero
 codes to status `error`. When no call output path is set (direct host-side
 use), it falls back to a plain `container.exec`.
+
+### `src/syna/user_messages.py`
+Verbatim read-only archives of large user messages inside the pod. When a
+message is at least `user_message_archive_min_chars` long,
+`archive_user_message(text, container, seq)` writes it to
+`<user_messages_dest>/NNNNNN.txt` (host temp file → `copy_to`, written
+as bytes so text-mode newline translation cannot corrupt the verbatim
+copy, then `chmod 444` — the model has root, this is an integrity
+barrier, not a security boundary) and the history copy is annotated with
+the archive path via `USER_MESSAGE_MARKER_TEMPLATE`; the marker carries
+a per-session random archive id (generated in `session.py`), and
+`ARCHIVE_MARKER_PATTERN` is what `context.py` elides against — a marker
+with a foreign id is a quotation, not an archive, and is left alone. Any
+failure is logged and returns None so a broken archive never blocks the
+turn.
+
+### `src/syna/verification.py`
+The `review_work` reviewer session. `run_verification(summary)` runs an
+isolated single-turn request — fresh client (`create_model_client`),
+`assets/verifier_prompt.md` as the system prompt, **no tools** — whose
+user message carries the last `verify_log_tail_chars` characters of the
+agent's serialized message history (`json.dumps`, minus the assistant
+message holding the pending `review_work` call itself) inside a
+```` ```text ```` block labelled "Last N chars of agent execution log",
+followed by the summary the agent intends to report. The reviewer model
+is `VERIFIER_MODEL` (falling back to `MODEL`) at `VERIFIER_MODEL_EFFORT`
+(default `high`); the reviewer's text is the tool result and nothing
+else — no session id, no diagnostic dump, no UI/history artifacts beyond
+the tool call and its result. The conversation snapshot arrives through
+a thread-local provider (`set_conversation_log_provider` /
+`current_conversation_log_provider`), propagated into tool worker
+threads by `parse.py` like the container binding; failures follow the
+`describe_image` convention: an `{'error': ...}` dict, never a raise.
 
 ### `src/syna/vision.py`
 `describe_image(file_path, question)` — image understanding through a
@@ -698,7 +771,8 @@ pages and converts the DOM to markdown.
 
 - CLI: one thread; tools run in short-lived daemon threads created by
   `parse.py` so a hung call can be detached at the timeout. The worker thread
-  inherits the container binding, the question responder, and the call's
+  inherits the container binding, the question responder, the
+  `review_work` conversation-log provider, and the call's
   output path, and reports the tool-recorded exit code back to the parser.
 - Web: each session has one worker thread that owns its container and runs
   turns sequentially; tools inside a turn run in per-call daemon threads that
@@ -761,6 +835,25 @@ All suites are plain scripts runnable with the project venv
   (batch stops, remainder skipped), the `None`-timeout exemption (a slow
   question is not detached), `PendingQuestion` resolve/release semantics,
   and the terminal responder's number-or-text answer handling.
+- `tests/test_user_message_archives.py` — the archive tool and session
+  hook: read-only pod write (exact bytes including LF newline
+  preservation, mkdir + chmod 444 commands),
+  failure returning None, large messages archived and annotated in
+  `run_turn` (small and channel messages untouched, failed archives leave
+  the turn unannotated but working, per-session archive ids differ), and
+  the elision pass (head excerpt
+  plus pointer, recency window, idempotence, plain/assistant messages
+  ignored, markers with foreign archive ids rejected).
+- `tests/test_review_work.py` — the verification tool: reviewer request
+  shape (verifier prompt asset verbatim, labeled code-block log tail with
+  truncation at `verify_log_tail_chars`, summary included, no tool
+  schemas, no session id), model/effort selection with fallback and
+  validation, no-provider/failed-reviewer/missing-model error dicts,
+  schema registration, the `None`-timeout exemption in `parse.py`, the
+  reviewer log filtering only the pending `review_work` call (siblings
+  survive; a completed earlier review call stays), and a `run_turn`
+  end-to-end run where history gains only the call, its result, and the
+  final answer, with the provider popped afterward.
 - `tests/test_image_endpoint.py` — the inline image endpoint against a
   fake pod: path validation (outside `/workspace`, traversal, non-image
   extensions), pass-through for small in-box images (animated GIF bytes

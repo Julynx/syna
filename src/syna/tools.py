@@ -47,6 +47,7 @@ from .speech import (
     transcribe_audio,
 )
 from .state import get_call_output_path, get_container, set_last_exit_code
+from .verification import run_verification as v_run_verification
 from .vision import describe_image as v_describe_image
 from .web_search import search
 
@@ -132,6 +133,7 @@ def execute_command(command: str, arguments: list[str] | None = None):
             f"export {NONINTERACTIVE_ENV_EXPORTS}",
             timed_command,
             f'printf %s "$?" > {shlex.quote(exit_path)}',
+            f"chmod 444 {shlex.quote(output_path)} 2>/dev/null || true",
         ]
     )
     container.exec(["bash", "-c", runner_script])
@@ -188,14 +190,25 @@ def web_search(query: str):
 
 
 def _write_into_pod(data: bytes, pod_dir: str, file_name: str) -> str:
-    """Write bytes into the pod at pod_dir/file_name and return the pod path."""
+    """Write bytes into the pod at pod_dir/file_name and return the path.
+
+    Artifacts (screenshots, transcripts, audio, generated images) are
+    evidence and deliverables, not scratch space: each file is made
+    read-only after the copy so the model cannot silently overwrite a
+    result already reported. Regeneration produces new, timestamped names.
+    """
     container = get_container()
     container.exec(["bash", "-c", f"mkdir -p {shlex.quote(pod_dir)}"])
     with tempfile.TemporaryDirectory(prefix="syna-artifact-") as temp_dir:
         host_file = Path(temp_dir, file_name)
         host_file.write_bytes(data)
         container.copy_to(str(host_file), pod_dir)
-    return f"{pod_dir}/{file_name}"
+    pod_path = f"{pod_dir}/{file_name}"
+    try:
+        container.exec(["bash", "-c", f"chmod 444 {shlex.quote(pod_path)}"])
+    except Exception:
+        get_logger().warning("Could not make %s read-only", pod_path, exc_info=True)
+    return pod_path
 
 
 def _capture_screenshot(screenshot_fn, browser, args: dict) -> str:
@@ -524,6 +537,21 @@ def ask_user(question_text: str, choices: list):
     return f"User's answer: {answer}"
 
 
+def review_work(summary: str):
+    """
+    Call this tool to verify the results of a task before reporting them to the user, but only if the task was especially complicated and/or prone to error. The tool takes a summary of the results of the task as a string, no files or artifacts. No need to explain the methodology you followed: the verifier gets that information by inspecting this conversation, including your tool calls. Call it on its own, after the work is done; an adversarial reviewer model inspects the conversation and its report comes back as this call's result.
+    - `summary` (string, required): what you intend to tell the user as the result of the task, excluding deliverables to save bandwidth.
+    """
+    if not isinstance(summary, str) or not summary.strip():
+        set_last_exit_code(1)
+        return {"error": "summary must be a non-empty string."}
+    result = v_run_verification(summary)
+    if isinstance(result, dict) and "error" in result:
+        # A review that did not happen must not render as a green row.
+        set_last_exit_code(1)
+    return result
+
+
 def _reset_browser():
     """Close the shared browser so the next web_interact starts a clean one.
 
@@ -554,4 +582,5 @@ TOOL_REGISTRY = {
     "text_to_image": text_to_image,
     "share_file": share_file,
     "ask_user": ask_user,
+    "review_work": review_work,
 }

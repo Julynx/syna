@@ -105,7 +105,10 @@ def test_persistence_saves_host_tool_output_to_pod():
     assert saved_to.startswith("/tool_outputs/")
     assert saved_to.endswith("_smoke_tool.txt")
 
-    assert pod.exec_calls == [["bash", "-c", "mkdir -p /tool_outputs"]]
+    assert pod.exec_calls == [
+        ["bash", "-c", "mkdir -p /tool_outputs"],
+        ["bash", "-c", f"chmod 444 {saved_to}"],
+    ]
     assert len(pod.copied) == 1
     host_path, pod_dir, content = pod.copied[0]
     assert pod_dir == "/tool_outputs"

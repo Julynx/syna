@@ -87,3 +87,33 @@ def load_command_timeout_s() -> int:
 def load_tool_call_timeout_s() -> float:
     """Return the per-tool-call timeout in seconds from the configuration."""
     return load_config().get("tool_call_timeout_s", DEFAULT_TOOL_CALL_TIMEOUT_S)
+
+
+DEFAULT_USER_MESSAGE_ARCHIVE_MIN_CHARS = 2000
+DEFAULT_USER_MESSAGES_DEST = "/user_messages"
+DEFAULT_ELIDE_USER_MESSAGE_HEAD_CHARS = 300
+DEFAULT_VERIFY_LOG_TAIL_CHARS = 128000
+
+
+def load_user_message_archive_min_chars() -> int:
+    """Return the message length at which user messages are archived verbatim."""
+    return load_config().get(
+        "user_message_archive_min_chars", DEFAULT_USER_MESSAGE_ARCHIVE_MIN_CHARS
+    )
+
+
+def load_user_messages_dest() -> str:
+    """Return the pod directory holding the archived user messages."""
+    return load_config().get("user_messages_dest", DEFAULT_USER_MESSAGES_DEST)
+
+
+def load_elide_user_message_head_chars() -> int:
+    """Return how much of an archived user message stays in history."""
+    return load_config().get(
+        "elide_user_message_head_chars", DEFAULT_ELIDE_USER_MESSAGE_HEAD_CHARS
+    )
+
+
+def load_verify_log_tail_chars() -> int:
+    """Return how much of the conversation log the work reviewer receives."""
+    return load_config().get("verify_log_tail_chars", DEFAULT_VERIFY_LOG_TAIL_CHARS)
