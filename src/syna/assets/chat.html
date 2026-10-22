@@ -1518,7 +1518,12 @@ footer {
   justify-content: center;
   padding: 24px 16px;
   z-index: 50;
-  animation: settings-fade-in 0.15s ease;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.settings-modal-backdrop.open {
+  opacity: 1;
 }
 
 .settings-modal {
@@ -1532,6 +1537,16 @@ footer {
   flex-direction: column;
   color: var(--text, #e6e8eb);
   overflow: hidden;
+  opacity: 0;
+  transform: translateY(-28px);
+  transition:
+    transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.25s ease;
+}
+
+.settings-modal-backdrop.open .settings-modal {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .settings-modal-header {
@@ -1711,16 +1726,6 @@ footer {
   pointer-events: none;
 }
 
-@keyframes settings-fade-in {
-  from {
-    opacity: 0;
-    transform: scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
 #newchat-btn .material-symbols-outlined {
   font-size: 19px;
 }
@@ -1729,6 +1734,10 @@ footer {
   .composer::before,
   #send-btn.pop .material-symbols-outlined {
     animation: none !important;
+  }
+  .settings-modal-backdrop,
+  .settings-modal {
+    transition: none;
   }
 }
 
@@ -4045,7 +4054,8 @@ const SPINNER_SVG =
 async function openSettingsModal() {
   const existing = document.querySelector(".settings-modal-backdrop");
   if (existing) {
-    existing.remove();
+    existing.classList.remove("open");
+    setTimeout(() => existing.remove(), 320);
     return;
   }
 
@@ -4071,6 +4081,14 @@ async function openSettingsModal() {
   const backdrop = document.createElement("div");
   backdrop.className = "settings-modal-backdrop";
 
+  let closing = false;
+  function closeSettingsModal() {
+    if (closing) return;
+    closing = true;
+    backdrop.classList.remove("open");
+    setTimeout(() => backdrop.remove(), 320);
+  }
+
   const modal = document.createElement("div");
   modal.className = "settings-modal";
 
@@ -4082,7 +4100,7 @@ async function openSettingsModal() {
     <button class="icon-btn settings-close-btn" title="Close" aria-label="Close">${ICONS.close}</button>
   `;
   const closeBtn = header.querySelector(".settings-close-btn");
-  closeBtn.addEventListener("click", () => backdrop.remove());
+  closeBtn.addEventListener("click", closeSettingsModal);
   modal.appendChild(header);
 
   // Body
@@ -4102,6 +4120,7 @@ async function openSettingsModal() {
     isSelect,
     options,
     type = "text",
+    placeholder = "",
     allowRestore = true,
     onChange,
   }) => {
@@ -4161,6 +4180,7 @@ async function openSettingsModal() {
       control.type = type;
       control.value = value ?? "";
       if (hasDefault) control.placeholder = `${defaultValue} (Default)`;
+      else if (placeholder) control.placeholder = placeholder;
       if (desc) control.title = desc;
       control.addEventListener("input", (e) => {
         onChange(e.target.value);
@@ -4276,6 +4296,7 @@ async function openSettingsModal() {
     desc: "Optional reviewer model for the review_work tool (defaults to main model when unset).",
     value: env.verifier_model || "",
     defaultValue: "",
+    placeholder: "Same as main model (Default)",
     onChange: (val) => {
       env.verifier_model = val;
     },
@@ -4522,10 +4543,13 @@ async function openSettingsModal() {
 
   backdrop.appendChild(modal);
   backdrop.addEventListener("click", (e) => {
-    if (e.target === backdrop) backdrop.remove();
+    if (e.target === backdrop) closeSettingsModal();
   });
 
   document.body.appendChild(backdrop);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => backdrop.classList.add("open"));
+  });
 }
 
 attachBtn.innerHTML = ICONS.clip;

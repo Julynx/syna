@@ -1363,7 +1363,8 @@ const SPINNER_SVG =
 async function openSettingsModal() {
   const existing = document.querySelector(".settings-modal-backdrop");
   if (existing) {
-    existing.remove();
+    existing.classList.remove("open");
+    setTimeout(() => existing.remove(), 320);
     return;
   }
 
@@ -1389,6 +1390,14 @@ async function openSettingsModal() {
   const backdrop = document.createElement("div");
   backdrop.className = "settings-modal-backdrop";
 
+  let closing = false;
+  function closeSettingsModal() {
+    if (closing) return;
+    closing = true;
+    backdrop.classList.remove("open");
+    setTimeout(() => backdrop.remove(), 320);
+  }
+
   const modal = document.createElement("div");
   modal.className = "settings-modal";
 
@@ -1400,7 +1409,7 @@ async function openSettingsModal() {
     <button class="icon-btn settings-close-btn" title="Close" aria-label="Close">${ICONS.close}</button>
   `;
   const closeBtn = header.querySelector(".settings-close-btn");
-  closeBtn.addEventListener("click", () => backdrop.remove());
+  closeBtn.addEventListener("click", closeSettingsModal);
   modal.appendChild(header);
 
   // Body
@@ -1420,6 +1429,7 @@ async function openSettingsModal() {
     isSelect,
     options,
     type = "text",
+    placeholder = "",
     allowRestore = true,
     onChange,
   }) => {
@@ -1479,6 +1489,7 @@ async function openSettingsModal() {
       control.type = type;
       control.value = value ?? "";
       if (hasDefault) control.placeholder = `${defaultValue} (Default)`;
+      else if (placeholder) control.placeholder = placeholder;
       if (desc) control.title = desc;
       control.addEventListener("input", (e) => {
         onChange(e.target.value);
@@ -1594,6 +1605,7 @@ async function openSettingsModal() {
     desc: "Optional reviewer model for the review_work tool (defaults to main model when unset).",
     value: env.verifier_model || "",
     defaultValue: "",
+    placeholder: "Same as main model (Default)",
     onChange: (val) => {
       env.verifier_model = val;
     },
@@ -1840,10 +1852,13 @@ async function openSettingsModal() {
 
   backdrop.appendChild(modal);
   backdrop.addEventListener("click", (e) => {
-    if (e.target === backdrop) backdrop.remove();
+    if (e.target === backdrop) closeSettingsModal();
   });
 
   document.body.appendChild(backdrop);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => backdrop.classList.add("open"));
+  });
 }
 
 attachBtn.innerHTML = ICONS.clip;
