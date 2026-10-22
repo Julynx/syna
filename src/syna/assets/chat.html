@@ -1585,6 +1585,10 @@ footer {
   text-align: left;
 }
 
+.settings-category-header .settings-category-title {
+  margin-bottom: 0;
+}
+
 .settings-group {
   display: flex;
   flex-direction: column;
@@ -1594,6 +1598,56 @@ footer {
 .settings-modal-body .settings-group + .settings-group {
   border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
   padding-top: 18px;
+}
+
+.settings-category-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted, #9aa1ab);
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-toggle input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 30px;
+  height: 17px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  position: relative;
+  cursor: pointer;
+  margin: 0;
+  transition: background 0.15s ease;
+}
+
+.settings-toggle input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #cfd3da;
+  transition: transform 0.15s ease;
+}
+
+.settings-toggle input:checked {
+  background: var(--accent, #818cf8);
+}
+
+.settings-toggle input:checked::after {
+  transform: translateX(13px);
+  background: #0b0d14;
 }
 
 .settings-row {
@@ -4234,6 +4288,34 @@ async function openSettingsModal() {
     return { row, control };
   };
 
+  // Right-aligned on/off switch bound to a config key; editing the
+  // category's fields stays possible either way.
+  const categoryToggle = (key, fallback, title) => {
+    const wrap = document.createElement("label");
+    wrap.className = "settings-toggle";
+    wrap.title = title;
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = config[key] === undefined ? fallback : Boolean(config[key]);
+    input.addEventListener("change", () => {
+      config[key] = input.checked;
+      dirtyCheck();
+    });
+    wrap.appendChild(input);
+    const text = document.createElement("span");
+    text.textContent = "Enabled";
+    wrap.appendChild(text);
+    return wrap;
+  };
+
+  const categoryHeader = (title, toggle) => {
+    const header = document.createElement("div");
+    header.className = "settings-category-header";
+    header.innerHTML = `<h4 class="settings-category-title">${title}</h4>`;
+    if (toggle) header.appendChild(toggle);
+    return header;
+  };
+
   // --- Category 1: Provider and API Key ---
   const cat1 = document.createElement("div");
   cat1.className = "settings-group";
@@ -4371,7 +4453,16 @@ async function openSettingsModal() {
   // --- Category 3: Voice ---
   const cat3 = document.createElement("div");
   cat3.className = "settings-group";
-  cat3.innerHTML = '<h4 class="settings-category-title">Voice</h4>';
+  cat3.appendChild(
+    categoryHeader(
+      "Voice",
+      categoryToggle(
+        "voice_enabled",
+        true,
+        "Allow voice dictation and response read-aloud",
+      ),
+    ),
+  );
 
   const { row: sttRow } = createField({
     label: "Speech-to-Text Model (STT)",
@@ -4447,7 +4538,16 @@ async function openSettingsModal() {
   // --- Category 4: Images ---
   const cat4 = document.createElement("div");
   cat4.className = "settings-group";
-  cat4.innerHTML = '<h4 class="settings-category-title">Images</h4>';
+  cat4.appendChild(
+    categoryHeader(
+      "Images",
+      categoryToggle(
+        "image_generation_enabled",
+        false,
+        "Allow the model to generate images (off by default: it is expensive and model-initiated)",
+      ),
+    ),
+  );
 
   const { row: imgRow } = createField({
     label: "Image Generation Model",
@@ -4686,7 +4786,8 @@ const Voice = (() => {
   const MAX_RECORDING_MS = settings.max_recording_ms || 60000;
   const STT_AVAILABLE = !!settings.stt_available;
   const TTS_AVAILABLE = !!settings.tts_available;
-  const initialEnabled = settings.voice_mode_on === true;
+  const VOICE_ENABLED = settings.voice_enabled !== false;
+  const initialEnabled = settings.voice_mode_on === true && VOICE_ENABLED;
 
   const micBtn = document.getElementById("mic-btn");
   const voiceBtn = document.getElementById("voice-btn");
@@ -4715,8 +4816,12 @@ const Voice = (() => {
 
   function paint() {
     voiceBtn.classList.toggle("muted", !enabled);
-    voiceBtn.disabled = !(STT_AVAILABLE || TTS_AVAILABLE);
-    voiceBtn.title = enabled ? "Disable voice mode" : "Enable voice mode";
+    voiceBtn.disabled = !VOICE_ENABLED || !(STT_AVAILABLE || TTS_AVAILABLE);
+    voiceBtn.title = !VOICE_ENABLED
+      ? "Voice is disabled in the settings"
+      : enabled
+        ? "Disable voice mode"
+        : "Enable voice mode";
     document.body.classList.toggle("voice-off", !enabled || !STT_AVAILABLE);
   }
 

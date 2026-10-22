@@ -24,6 +24,12 @@ DEFAULT_TTS_MODEL = "google/gemini-3.8-flash-lite-tts"
 DEFAULT_TTS_VOICE = "Kore"
 DEFAULT_IMAGE_MODEL = "google/gemini-3.1-flash-image"
 
+# Feature toggles edited in the settings modal. Voice stays available with
+# default models but voice mode itself starts off; image generation is
+# opt-in because it is expensive and model-initiated.
+DEFAULT_VOICE_ENABLED = True
+DEFAULT_IMAGE_GENERATION_ENABLED = False
+
 
 def load_output_limit_chars() -> int:
     """Return the character limit at which tool output is cut to head and tail."""

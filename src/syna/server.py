@@ -42,11 +42,13 @@ from pydantic import BaseModel
 
 from . import interaction, setup, speech
 from .config import (
+    DEFAULT_IMAGE_GENERATION_ENABLED,
     DEFAULT_IMAGE_MODEL,
     DEFAULT_MODEL,
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
+    DEFAULT_VOICE_ENABLED,
     asset_path,
     get_data_home,
     get_logger,
@@ -779,6 +781,8 @@ def get_settings():
         "pod_memory_mb": 8192,
         "context_budget_tokens": 100000,
         "max_command_output_chars": 40000,
+        "voice_enabled": DEFAULT_VOICE_ENABLED,
+        "image_generation_enabled": DEFAULT_IMAGE_GENERATION_ENABLED,
     }
     current_base = (env.get("BASE_URL") or "").strip()
     detected_provider = "openrouter"
@@ -827,6 +831,13 @@ def get_settings():
             ),
             "max_command_output_chars": runtime_cfg.get(
                 "max_command_output_chars", defaults["max_command_output_chars"]
+            ),
+            "voice_enabled": runtime_cfg.get(
+                "voice_enabled", defaults["voice_enabled"]
+            ),
+            "image_generation_enabled": runtime_cfg.get(
+                "image_generation_enabled",
+                defaults["image_generation_enabled"],
             ),
         },
         "defaults": defaults,

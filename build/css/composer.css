@@ -271,6 +271,10 @@ footer {
   text-align: left;
 }
 
+.settings-category-header .settings-category-title {
+  margin-bottom: 0;
+}
+
 .settings-group {
   display: flex;
   flex-direction: column;
@@ -280,6 +284,56 @@ footer {
 .settings-modal-body .settings-group + .settings-group {
   border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
   padding-top: 18px;
+}
+
+.settings-category-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted, #9aa1ab);
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-toggle input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 30px;
+  height: 17px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  position: relative;
+  cursor: pointer;
+  margin: 0;
+  transition: background 0.15s ease;
+}
+
+.settings-toggle input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #cfd3da;
+  transition: transform 0.15s ease;
+}
+
+.settings-toggle input:checked {
+  background: var(--accent, #818cf8);
+}
+
+.settings-toggle input:checked::after {
+  transform: translateX(13px);
+  background: #0b0d14;
 }
 
 .settings-row {

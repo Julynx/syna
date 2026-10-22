@@ -20,7 +20,10 @@ from pathlib import Path
 import httpx
 
 from .config import (
+    DEFAULT_STT_MODEL,
+    DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
+    DEFAULT_VOICE_ENABLED,
     get_env,
     get_logger,
     load_config,
@@ -122,8 +125,8 @@ def load_speech_settings() -> SpeechSettings:
     from .session import is_openrouter  # noqa: PLC0415
 
     openrouter_only = is_openrouter()
-    stt_model = (env.get("STT_MODEL") or "").strip() or None
-    tts_model = (env.get("TTS_MODEL") or "").strip() or None
+    stt_model = (env.get("STT_MODEL") or "").strip() or DEFAULT_STT_MODEL
+    tts_model = (env.get("TTS_MODEL") or "").strip() or DEFAULT_TTS_MODEL
     if not openrouter_only:
         stt_model = None
         tts_model = None
@@ -279,10 +282,20 @@ def voice_flag(value) -> bool:
     return str(value).strip().lower() == "true"
 
 
+def voice_enabled() -> bool:
+    """Whether the user left the voice category enabled in the settings.
+
+    When off, the speech tools report themselves as unavailable and the
+    web client hides and disables the voice controls.
+    """
+    return voice_flag(load_config().get("voice_enabled", DEFAULT_VOICE_ENABLED))
+
+
 def client_configuration(settings: SpeechSettings, app_config: dict) -> dict:
     """Collect the settings the web client needs to run voice mode."""
     voice_config = app_config.get("voice", {})
     return {
+        "voice_enabled": voice_enabled(),
         "stt_available": settings.stt_available,
         "tts_available": settings.tts_available,
         "voice_mode_on": voice_flag(voice_config.get("voice_mode_on")),

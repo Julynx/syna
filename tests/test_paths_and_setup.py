@@ -143,6 +143,10 @@ def test_write_env_file_merges_and_clears_cache(monkeypatch):
             os.environ["SYNA_HOME"] = previous
         paths.get_data_home.cache_clear()
 
+        from syna.config import get_env
+
+        get_env.cache_clear()
+
 
 def test_provider_presets_are_complete():
     for name, preset in setup_module.PROVIDERS.items():

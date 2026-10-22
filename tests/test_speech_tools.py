@@ -68,6 +68,7 @@ def _configure(container, monkeypatch, **overrides):
 
     if "transcript" in overrides:
         monkeypatch.setattr(tools, "load_speech_settings", lambda: FAKE_SETTINGS)
+        monkeypatch.setattr(tools, "voice_enabled", lambda: True)
         monkeypatch.setattr(
             tools,
             "transcribe_audio",
@@ -75,6 +76,7 @@ def _configure(container, monkeypatch, **overrides):
         )
     if "audio" in overrides:
         monkeypatch.setattr(tools, "load_speech_settings", lambda: FAKE_SETTINGS)
+        monkeypatch.setattr(tools, "voice_enabled", lambda: True)
         monkeypatch.setattr(
             tools, "synthesize_speech", lambda text, settings: overrides["audio"]
         )
@@ -82,6 +84,7 @@ def _configure(container, monkeypatch, **overrides):
         monkeypatch.setattr(
             tools, "load_image_settings", lambda: ImageSettings(model="test-model")
         )
+        monkeypatch.setattr(tools, "image_generation_enabled", lambda: True)
         monkeypatch.setattr(
             tools, "generate_image", lambda prompt, settings: overrides["image"]
         )
@@ -172,13 +175,30 @@ def test_text_to_image_saves_image(monkeypatch):
 def test_text_to_image_without_config_reports_user_configuration(monkeypatch):
     container = FakeContainer()
     monkeypatch.setattr(tools, "get_container", lambda: container)
-    monkeypatch.setattr(tools, "load_image_settings", lambda: ImageSettings(model=None))
+    monkeypatch.setattr(
+        tools, "load_image_settings", lambda: ImageSettings(model="test-model")
+    )
+    monkeypatch.setattr(tools, "image_generation_enabled", lambda: False)
 
     result = tools.text_to_image("a cat")
 
-    assert "not configured by the user" in result["error"]
+    assert "disabled by the user" in result["error"]
     assert "You did nothing wrong" in result["error"]
-    assert "IMAGE_MODEL" in result["error"]
+    assert "Images category" in result["error"]
+    assert container.copied == []
+
+
+def test_text_to_image_requires_openrouter_endpoint(monkeypatch):
+    container = FakeContainer()
+    monkeypatch.setattr(tools, "get_container", lambda: container)
+    monkeypatch.setattr(
+        tools, "load_image_settings", lambda: ImageSettings(model=None)
+    )
+    monkeypatch.setattr(tools, "image_generation_enabled", lambda: True)
+
+    result = tools.text_to_image("a cat")
+
+    assert "requires an OpenRouter endpoint" in result["error"]
     assert container.copied == []
 
 
@@ -285,6 +305,7 @@ def test_text_to_image_malformed_response_is_a_clean_error(monkeypatch):
     monkeypatch.setattr(
         tools, "load_image_settings", lambda: ImageSettings(model="test-model")
     )
+    monkeypatch.setattr(tools, "image_generation_enabled", lambda: True)
 
     result = tools.text_to_image("a cat")
 
@@ -313,6 +334,7 @@ def main():
             test_text_to_speech_uses_media_type_extension,
             test_text_to_image_saves_image,
             test_text_to_image_without_config_reports_user_configuration,
+            test_text_to_image_requires_openrouter_endpoint,
             test_text_to_image_reports_api_errors,
             test_missing_pod_file_is_a_clean_error,
             test_artifact_names_are_unique,

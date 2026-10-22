@@ -5,8 +5,8 @@ first generated image is returned as decoded bytes together with the media
 type reported by the provider. The API bills all-or-nothing: a failed
 generation produces a 502 response and no charge, so error messages are
 safe to surface to the model verbatim. The model is configured in the .env
-file (IMAGE_MODEL); when unset the tool reports itself as not configured
-by the user instead of failing.
+file (IMAGE_MODEL) and falls back to the bundled default; the feature is
+gated by the image_generation_enabled config toggle, off by default.
 """
 
 import base64
@@ -14,7 +14,13 @@ from dataclasses import dataclass
 
 import httpx
 
-from .config import get_env, get_logger, load_config
+from .config import (
+    DEFAULT_IMAGE_GENERATION_ENABLED,
+    DEFAULT_IMAGE_MODEL,
+    get_env,
+    get_logger,
+    load_config,
+)
 
 IMAGE_ENDPOINT = "https://openrouter.ai/api/v1/images"
 
@@ -37,15 +43,30 @@ def load_image_settings() -> ImageSettings:
     """Build the image settings from the environment variables in .env.
 
     Image generation is an OpenRouter-only route; on any other endpoint
-    the tool reports itself as not configured.
+    the tool reports itself as not configured. An unset IMAGE_MODEL falls
+    back to the default model; the feature itself is gated separately by
+    the image_generation_enabled config toggle.
     """
     env = get_env()
-    model = (env.get("IMAGE_MODEL") or "").strip() or None
+    model = (env.get("IMAGE_MODEL") or "").strip() or DEFAULT_IMAGE_MODEL
     from .session import is_openrouter  # noqa: PLC0415
 
     if not is_openrouter():
         model = None
     return ImageSettings(model=model)
+
+
+def image_generation_enabled() -> bool:
+    """Whether the user enabled image generation in the settings.
+
+    Off by default: generation is expensive and model-initiated, so it is
+    strictly opt-in.
+    """
+    return bool(
+        load_config().get(
+            "image_generation_enabled", DEFAULT_IMAGE_GENERATION_ENABLED
+        )
+    )
 
 
 class ImageGenerationError(RuntimeError):

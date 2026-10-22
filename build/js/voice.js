@@ -11,7 +11,8 @@ const Voice = (() => {
   const MAX_RECORDING_MS = settings.max_recording_ms || 60000;
   const STT_AVAILABLE = !!settings.stt_available;
   const TTS_AVAILABLE = !!settings.tts_available;
-  const initialEnabled = settings.voice_mode_on === true;
+  const VOICE_ENABLED = settings.voice_enabled !== false;
+  const initialEnabled = settings.voice_mode_on === true && VOICE_ENABLED;
 
   const micBtn = document.getElementById("mic-btn");
   const voiceBtn = document.getElementById("voice-btn");
@@ -40,8 +41,12 @@ const Voice = (() => {
 
   function paint() {
     voiceBtn.classList.toggle("muted", !enabled);
-    voiceBtn.disabled = !(STT_AVAILABLE || TTS_AVAILABLE);
-    voiceBtn.title = enabled ? "Disable voice mode" : "Enable voice mode";
+    voiceBtn.disabled = !VOICE_ENABLED || !(STT_AVAILABLE || TTS_AVAILABLE);
+    voiceBtn.title = !VOICE_ENABLED
+      ? "Voice is disabled in the settings"
+      : enabled
+        ? "Disable voice mode"
+        : "Enable voice mode";
     document.body.classList.toggle("voice-off", !enabled || !STT_AVAILABLE);
   }
 

@@ -74,11 +74,11 @@ workflows keep working unchanged.
 | `OPENROUTER_API_KEY` | API key for the configured endpoint (any OpenAI-compatible provider's key goes here; the variable name predates multi-endpoint support). |
 | `MODEL` | Main agent model (default `~z-ai/glm-flash-latest` when unset). |
 | `BASE_URL` | OpenAI-like endpoint URL (default `https://openrouter.ai/api/v1`; also OpenAI, Gemini's compatibility layer, a local Ollama, or any compatible endpoint). Image generation and the speech tools are OpenRouter-only and report themselves as not configured elsewhere. |
-| `STT_MODEL` | Voice transcription model (voice dictation off when unset). |
-| `TTS_MODEL` | Speech synthesis model (reply read-aloud off when unset). |
+| `STT_MODEL` | Voice transcription model (default `google/chirp-3` when unset; gated by the `voice_enabled` toggle). |
+| `TTS_MODEL` | Speech synthesis model (default `google/gemini-3.8-flash-lite-tts` when unset; gated by the `voice_enabled` toggle). |
 | `TTS_VOICE` | Synthesis voice (default `Kore`). |
 | `TTS_RESPONSE_FORMAT` | Speech endpoint response format (default `pcm`; raw samples are wrapped in a WAV container server-side). Some models, e.g. OpenAI TTS, also accept `mp3`. |
-| `IMAGE_MODEL` | Image generation model for the `text_to_image` tool (tool reports itself as not configured when unset), e.g. `google/gemini-3.1-flash-image`. |
+| `IMAGE_MODEL` | Image generation model for the `text_to_image` tool (default `google/gemini-3.1-flash-image` when unset; the tool only runs when the `image_generation_enabled` toggle is on). |
 | `VERIFIER_MODEL` | Reviewer model for the `review_work` tool (defaults to `MODEL`, then the default model, when unset). |
 | `VERIFIER_MODEL_EFFORT` | Reasoning effort for the reviewer request (default `high`). |
 | `SPEECH_LANGUAGE` | Spoken language hint for STT (default `en`). |
@@ -107,6 +107,8 @@ workflows keep working unchanged.
 | `max_history_messages` | History length that triggers compaction. |
 | `enable_compaction` | Master switch for history compaction. |
 | `max_visible_tool_calls` | UI limit on rendered tool rows. |
+| `voice_enabled` | Voice category toggle (default `true`): off hides the mic, disables the top-bar voice icon, and makes the speech tools report themselves as unavailable. |
+| `image_generation_enabled` | Image generation toggle (default `false`): off makes `text_to_image` report itself as unavailable; on, the model may generate images. |
 | `log_file` | Log file name (written to the project root). |
 | `session_dump_file` | Per-session message dump file name template. |
 | `server_host`, `server_port` | Web server binding. |

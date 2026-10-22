@@ -1538,6 +1538,34 @@ async function openSettingsModal() {
     return { row, control };
   };
 
+  // Right-aligned on/off switch bound to a config key; editing the
+  // category's fields stays possible either way.
+  const categoryToggle = (key, fallback, title) => {
+    const wrap = document.createElement("label");
+    wrap.className = "settings-toggle";
+    wrap.title = title;
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = config[key] === undefined ? fallback : Boolean(config[key]);
+    input.addEventListener("change", () => {
+      config[key] = input.checked;
+      dirtyCheck();
+    });
+    wrap.appendChild(input);
+    const text = document.createElement("span");
+    text.textContent = "Enabled";
+    wrap.appendChild(text);
+    return wrap;
+  };
+
+  const categoryHeader = (title, toggle) => {
+    const header = document.createElement("div");
+    header.className = "settings-category-header";
+    header.innerHTML = `<h4 class="settings-category-title">${title}</h4>`;
+    if (toggle) header.appendChild(toggle);
+    return header;
+  };
+
   // --- Category 1: Provider and API Key ---
   const cat1 = document.createElement("div");
   cat1.className = "settings-group";
@@ -1675,7 +1703,16 @@ async function openSettingsModal() {
   // --- Category 3: Voice ---
   const cat3 = document.createElement("div");
   cat3.className = "settings-group";
-  cat3.innerHTML = '<h4 class="settings-category-title">Voice</h4>';
+  cat3.appendChild(
+    categoryHeader(
+      "Voice",
+      categoryToggle(
+        "voice_enabled",
+        true,
+        "Allow voice dictation and response read-aloud",
+      ),
+    ),
+  );
 
   const { row: sttRow } = createField({
     label: "Speech-to-Text Model (STT)",
@@ -1751,7 +1788,16 @@ async function openSettingsModal() {
   // --- Category 4: Images ---
   const cat4 = document.createElement("div");
   cat4.className = "settings-group";
-  cat4.innerHTML = '<h4 class="settings-category-title">Images</h4>';
+  cat4.appendChild(
+    categoryHeader(
+      "Images",
+      categoryToggle(
+        "image_generation_enabled",
+        false,
+        "Allow the model to generate images (off by default: it is expensive and model-initiated)",
+      ),
+    ),
+  );
 
   const { row: imgRow } = createField({
     label: "Image Generation Model",

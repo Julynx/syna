@@ -34,6 +34,7 @@ from .editor import read_file as e_read_file
 from .image_generation import (
     ImageGenerationError,
     generate_image,
+    image_generation_enabled,
     load_image_settings,
 )
 from .interaction import InteractionCancelled, InteractionError
@@ -45,6 +46,7 @@ from .speech import (
     load_speech_settings,
     synthesize_speech,
     transcribe_audio,
+    voice_enabled,
 )
 from .state import get_call_output_path, get_container, set_last_exit_code
 from .verification import run_verification as v_run_verification
@@ -370,13 +372,19 @@ def speech_to_text(file_path: str, language: str | None = None):
     The full transcript is saved as a text file in /workspace/transcripts and its text is returned. Transcription quality drops with heavy background noise; the transcript may mishear names and numbers.
     """
     settings = load_speech_settings()
+    if not voice_enabled():
+        return {
+            "error": (
+                "Voice is disabled by the user (settings, Voice category)."
+                " You did nothing wrong; tell the user they can enable it"
+                " there if they want dictation."
+            )
+        }
     if not settings.stt_available:
         return {
             "error": (
-                "Speech transcription is not configured by the user"
-                " (no STT_MODEL in the .env file). You did nothing wrong;"
-                " tell the user they can enable it by setting STT_MODEL"
-                " in the .env file."
+                "Speech transcription is not available on this endpoint;"
+                " it requires an OpenRouter endpoint."
             )
         }
     with tempfile.TemporaryDirectory(prefix="syna-speech-") as temp_dir:
@@ -423,13 +431,19 @@ def text_to_speech(file_path: str):
     The audio is saved into /workspace/audio; deliver it to the user with `share_file`. Very long texts take longer to synthesize and may be rejected by the speech model.
     """
     settings = load_speech_settings()
+    if not voice_enabled():
+        return {
+            "error": (
+                "Voice is disabled by the user (settings, Voice category)."
+                " You did nothing wrong; tell the user they can enable it"
+                " there if they want read-aloud."
+            )
+        }
     if not settings.tts_available:
         return {
             "error": (
-                "Speech synthesis is not configured by the user"
-                " (no TTS_MODEL in the .env file). You did nothing wrong;"
-                " tell the user they can enable it by setting TTS_MODEL"
-                " in the .env file."
+                "Speech synthesis is not available on this endpoint;"
+                " it requires an OpenRouter endpoint."
             )
         }
     with tempfile.TemporaryDirectory(prefix="syna-speech-") as temp_dir:
@@ -470,13 +484,19 @@ def text_to_image(prompt: str):
     - `prompt` (string, required): description of the image to generate; mention subject, style, composition, lighting, and mood concretely.
     """
     settings = load_image_settings()
+    if not image_generation_enabled():
+        return {
+            "error": (
+                "Image generation is disabled by the user (settings,"
+                " Images category) because it is expensive. You did"
+                " nothing wrong; tell the user they can enable it there."
+            )
+        }
     if not settings.model:
         return {
             "error": (
-                "Image generation is not configured by the user"
-                " (no IMAGE_MODEL in the .env file). You did nothing wrong;"
-                " tell the user they can enable it by setting IMAGE_MODEL"
-                " in the .env file."
+                "Image generation is not available on this endpoint;"
+                " it requires an OpenRouter endpoint."
             )
         }
     try:
