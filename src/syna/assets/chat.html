@@ -3952,11 +3952,50 @@ function connect() {
     setStatus("", "Connecting...");
     updateAmbient();
     banner.classList.add("visible");
-    setTimeout(connect, reconnectDelay);
-    reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+    scheduleReconnect();
   };
 
   ws.onerror = () => ws.close();
+}
+
+/* Probe the server before each reconnect. A 401 means this page holds a
+   token from a previous server process (e.g. after Save and Restart);
+   reconnecting can never succeed, so stop the loop and ask for a reload. */
+function scheduleReconnect() {
+  setTimeout(async () => {
+    try {
+      const probe = await fetch(withToken(API_BASE + "/api/settings"), {
+        headers: authHeaders(),
+      });
+      if (probe.status === 401) {
+        setStatus("error", "Session expired");
+        banner.textContent =
+          "Session expired: the server restarted with new settings." +
+          ' Reload the page to continue.';
+        return;
+      }
+    } catch (err) {
+      // The server is still down; fall through and retry the socket.
+    }
+    connect();
+    reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+  }, reconnectDelay);
+}
+
+/* Poll until the restarted server answers, then reload so the page
+   picks up the fresh auth token. Any response means it is listening. */
+async function waitForRestartThenReload() {
+  for (;;) {
+    try {
+      await fetch(withToken(API_BASE + "/api/settings"), {
+        headers: authHeaders(),
+      });
+      window.location.reload();
+      return;
+    } catch (err) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+  }
 }
 
 function setSendState() {
@@ -4535,9 +4574,7 @@ async function openSettingsModal() {
         body: JSON.stringify({ env, config }),
       });
       if (!res.ok) throw new Error("Server returned " + res.status);
-      setTimeout(() => {
-        window.location.reload();
-      }, 1200);
+      waitForRestartThenReload();
     } catch (err) {
       alert("Failed to save settings: " + err.message);
       saveBtn.disabled = false;
