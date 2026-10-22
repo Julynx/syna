@@ -60,8 +60,9 @@ workflows keep working unchanged.
 - `python-dotenv` — loads `OPENROUTER_API_KEY` and model settings from `.env`.
 - `httpx` — OpenRouter audio endpoints (speech transcription and synthesis).
 - `bollard` — Docker/Podman container client used for the sandbox.
-- `ddgs`, `playwright`, `drissionpage`, `camoufox`, `markdownify` — web search
-  and page-to-markdown conversion, plus the persistent stealth browser session.
+- `playwright`, `drissionpage`, `camoufox`, `markdownify` — browser-based web
+  search and page-to-markdown conversion, plus the persistent stealth browser
+  session.
 - `pillow` — image downscaling for the vision pipeline.
 - `fastapi`, `uvicorn`, `python-multipart` — web server and uploads.
 
@@ -815,11 +816,27 @@ burns the completion budget on hidden reasoning and can return no content
 at all.
 
 ### `src/syna/web_search.py`
-`search(query, delay_s=2)` — DuckDuckGo text search for queries; URLs are
-fetched and converted to markdown via `web_to_markdown`. Sleeps `delay_s`
-before every request, holding a process-wide lock across the sleep and the
-request so searches from concurrent sessions or detached calls serialize
-and stay `delay_s` apart instead of firing together.
+`search(query, delay_s=2)` — URLs are fetched and converted to markdown via
+`web_to_markdown`; everything else is searched through the stealth browser
+(Camoufox) against server-rendered endpoints, trying engines in order
+(DuckDuckGo html, DuckDuckGo lite, Bing, Mojeek) until one returns results,
+with per-engine redirect unwrapping (DuckDuckGo's `uddg=` wrapper, Bing's
+base64 `/ck/a` redirect) and an AD-loaded warm browser kept for the process
+lifetime. A previous ddgs-based implementation was dropped: its plain-HTTP
+engine fleet was blocked or challenged (google 403, brave 429, DuckDuckGo
+202 anomaly pages, startpage bot walls), its only working engine (yahoo)
+failed 60% of the time, and every failed attempt was bot-shaped traffic
+that risked the IP's reputation — which would also poison the stealth
+browser. Navigations carry a same-site referer, and an engine that serves
+a captcha/challenge page (detected by widget selectors or marker phrases)
+is paused for a randomized 15-30 minute cooldown instead of being
+re-requested on the next search — repeated visits to a host that demands
+verification are the repeat-offense pattern that hardens soft challenges
+into IP bans. Sleeps a randomized duration in `[delay_s, 1.5*delay_s)` before
+every request (fixed waits are a fingerprint of their own), holding a
+process-wide lock across the sleep and the request so searches from
+concurrent sessions or detached calls serialize and stay at least
+`delay_s` apart instead of firing together.
 
 ### `src/syna/web_to_markdown.py`
 Headless-browser page fetcher (Playwright/DrissionPage) that renders JavaScript
@@ -941,6 +958,22 @@ All suites are plain scripts runnable with the project venv
   query), 403 on foreign Host headers, localhost accepted, shell and
   vendor staying open with the token injected, and WebSocket handshake
   rejection for foreign Origins and missing tokens.
+- `tests/test_web_search_pacing.py` — search rate-limit pacing: concurrent
+  searches never overlap, the gap survives separate non-overlapping calls,
+  and the pacing sleep is randomized within `[delay_s, 1.5*delay_s)` rather
+  than a fixed value.
+- `tests/test_web_search_parsing.py` — search result post-processing:
+  DuckDuckGo `uddg=` and Bing base64 `/ck/a` redirect unwrapping (including
+  plain links and malformed payloads), the title/URL/snippet block
+  renderer, challenge-page detection (widget/marker probes), and the
+  engine cooldown: challenged engines are paused and skipped, healthy
+  engines behind a broken one keep serving.
+- `tests/test_live_web_search.py` — live search chain (manual run): every
+  extractor verified against markup fixtures in the real browser, live
+  ddg-html/ddg-lite/bing required to return results (mojeek best-effort —
+  it may serve an ALTCHA challenge, which the chain treats as no
+  results), broken-first-engine fall-through, and graceful degradation
+  when every engine is broken.
 - `tests/_runner.py` — shared harness for the plain-script suites: a
   monkeypatch (attribute/mapping overrides with automatic undo) and
   `run_suite`, which executes every test, prints per-test results, and
