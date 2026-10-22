@@ -104,7 +104,7 @@ const GLYPH = (name, cls) =>
   "</span>";
 
 const ICONS = {
-  settings: GLYPH("settings"),
+  settings: GLYPH("tune"),
   close: GLYPH("close"),
   reset: GLYPH("restart_alt"),
   send: GLYPH("send"),
