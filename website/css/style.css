@@ -115,7 +115,7 @@ ul {
 }
 
 .logo img {
-  height: 32px;
+  height: 26px;
 }
 
 .nav-links {
@@ -151,6 +151,12 @@ ul {
     #2d2d30 0%,
     var(--bg-primary) 70%
   );
+}
+
+.hero-logo {
+  height: 130px;
+  margin: 0 auto var(--spacing-xs);
+  display: block;
 }
 
 .hero-title {
@@ -483,6 +489,10 @@ footer {
 
   .nav-links.active {
     display: flex;
+  }
+
+  .hero-logo {
+    height: 80px;
   }
 
   .hero-title {

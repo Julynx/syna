@@ -27,10 +27,10 @@
 - **A sandboxed pod.** Every command runs inside an isolated container, with a full Debian shell, root access, and your host machine out of reach.
 - **A complete toolset.** Web search and browser automation (both local, no API key), image understanding, image generation, speech-to-text, text-to-speech, and precise line-number, diff-style file editing.
 - **Built for long, complex tasks.** Every tool output is saved to a file, context is managed automatically (elision and compaction, with a high cache hit rate), and deliverables keep a verifiable chain of custody from source to artifact.
-- **Honest reporting.** Syna is trained to say exactly what happened and what it can't verify — it resists prompt injection and false-flag attacks baked into web content, and it scores at the top of honesty benchmarks.
+- **Honest reporting.** Syna is trained to say exactly what happened and what it can't verify; it resists prompt injection and false-flag attacks baked into web content, and it scores at the top of honesty benchmarks.
 - **It asks when it should.** Multiple-choice or open-ended questions, mid-task, whenever a decision isn't Syna's to make.
 - **Voice mode.** Talk to it, and it reads its answers out loud.
-- **A beautiful UI.** Frosted glass, sound effects, and a Y2K-video-player-style background visualizer that reacts to the agent — thinking, calling tools, speaking.
+- **A beautiful UI.** Frosted glass, sound effects, and a Y2K-video-player-style background visualizer that reacts to the agent (thinking, calling tools, speaking).
 - **Any provider.** Works with OpenRouter (recommended, most tested), OpenAI, Google Gemini, local Ollama, or any OpenAI-compatible endpoint.
 
 ## Getting started
@@ -47,7 +47,7 @@
    syna-setup
    ```
 
-3. Start Syna — the terminal version, or the web UI at `http://127.0.0.1:8000`:
+3. Start Syna (the terminal version, or the web UI at `http://127.0.0.1:8000`):
 
    ```bash
    syna
@@ -78,7 +78,7 @@ Image generation (the model's `text_to_image` tool) is enabled the same way:
 IMAGE_MODEL=google/gemini-3.1-flash-image
 ```
 
-Requirements: Python 3.12+ and a container engine (Podman or Docker — the setup wizard checks and installs one for you).
+Requirements: Python 3.12+ and a container engine (Podman or Docker; the setup wizard checks and installs one for you).
 
 ## Privacy
 
