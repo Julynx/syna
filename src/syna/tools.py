@@ -459,8 +459,15 @@ def text_to_speech(file_path: str):
 
 def text_to_image(prompt: str):
     """
-    Generate an image from a text description and save it into the pod. Call this tool when the user asks you to generate, draw, or create an image. The result can differ from the prompt in details; inspect it with `describe_image` if the exact content matters, and share it with `share_file` when it is a deliverable.
-    - `prompt` (string, required): description of the image to generate; mention style, composition, colors, and any text that should appear in the image.
+    Generate an image from a text description and save it into the pod. Generated images suit artistic, conceptual, or personalized creations; they make mistakes on real-world objects, people, and places.
+
+    Routing:
+    * Deliverables illustrating the real world: source images online instead.
+    * Graphs, charts, and data visuals: use scripts or markup, even if the request says "generate" or "create."
+    * Original illustrations, concept art, or stylized pieces: use this tool. "Include images of..." usually means sourcing, not generating.
+
+    The result can differ from the prompt in details. If exact content matters, check it with `describe_image`; regenerate at most twice. Share with `share_file` only when the image is a deliverable.
+    - `prompt` (string, required): description of the image to generate; mention subject, style, composition, lighting, and mood concretely.
     """
     settings = load_image_settings()
     if not settings.model:

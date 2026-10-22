@@ -136,7 +136,25 @@
         </div>
 
         <div class="hero-image">
-          <img src="assets/screenshot.png" alt="Syna Chat Interface" />
+          <!-- The demo video is the first thing visitors see; the
+               screenshot only shows if the video is missing or autoplay
+               is blocked. Drop real files into website/assets/. -->
+          <video
+            id="hero-video"
+            class="hero-video"
+            src="assets/demo.mp4"
+            poster="assets/screenshot.png"
+            autoplay
+            muted
+            loop
+            playsinline
+          ></video>
+          <img
+            id="hero-fallback"
+            src="assets/screenshot.png"
+            alt="Syna Chat Interface"
+            style="display: none"
+          />
         </div>
       </div>
     </header>
@@ -255,6 +273,27 @@
       if (mobileBtn) {
         mobileBtn.addEventListener("click", () => {
           navLinks.classList.toggle("active");
+        });
+      }
+
+      // Hero video with screenshot fallback: if the video is missing,
+      // unsupported, or blocked from autoplaying, swap in the still.
+      const heroVideo = document.getElementById("hero-video");
+      const heroFallback = document.getElementById("hero-fallback");
+      function showHeroFallback() {
+        if (heroFallback.style.display === "none") {
+          heroVideo.style.display = "none";
+          heroFallback.style.display = "";
+        }
+      }
+      if (heroVideo && heroFallback) {
+        heroVideo.addEventListener("error", showHeroFallback);
+        heroVideo.addEventListener("stalled", showHeroFallback);
+        // Autoplay policy: muted+playsinline usually plays, but some
+        // browsers still refuse; a paused video after load means the
+        // poster would sit frozen, so fall back.
+        heroVideo.addEventListener("loadeddata", () => {
+          heroVideo.play().catch(showHeroFallback);
         });
       }
     </script>

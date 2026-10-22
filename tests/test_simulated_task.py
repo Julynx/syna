@@ -10,7 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from syna.channel import is_channel_message, unwrap_channel
-from syna.session import AgentSession
+from syna.context import estimate_tokens
+from syna.session import AgentSession, build_prompt
 from syna.tools import TOOL_REGISTRY
 
 
@@ -105,7 +106,11 @@ def main():
         )
         session.dump_path = Path(tempfile.mkdtemp(prefix="syna-sim-")) / "dump.json"
         session.request_delay = 0
-        session.context_budget_tokens = 9000
+        # The budget must sit above the natural post-elision history size
+        # (so the turn ends without compaction) but below its pre-elision
+        # size (so elision actually runs). Scaling it off the prompt size
+        # keeps both properties as the prompt grows.
+        session.context_budget_tokens = estimate_tokens(build_prompt()) + 3500
         session.elide_keep_recent_messages = 0
         events = []
         session.on_event = events.append
