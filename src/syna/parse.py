@@ -21,7 +21,6 @@ from pathlib import Path, PurePosixPath
 
 from .config import (
     get_logger,
-    get_project_root,
     load_output_limit_chars,
     load_tool_call_timeout_s,
 )
@@ -70,8 +69,15 @@ def _tool_signatures() -> dict[str, dict]:
     """Return the parsed signature metadata of every tool, keyed by name."""
     from .inspect_module import get_function_metadata
 
-    tools_path = get_project_root() / "src" / "syna" / "tools.py"
+    tools_path = _tools_module_path()
     return {entry["name"]: entry for entry in get_function_metadata(tools_path)}
+
+
+def _tools_module_path():
+    """Return the filesystem path of the tools module."""
+    from . import tools
+
+    return tools.__file__
 
 
 def _render_signature(tool_name: str, entry: dict) -> str:

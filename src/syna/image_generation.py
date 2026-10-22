@@ -34,9 +34,18 @@ class ImageSettings:
 
 
 def load_image_settings() -> ImageSettings:
-    """Build the image settings from the environment variables in .env."""
+    """Build the image settings from the environment variables in .env.
+
+    Image generation is an OpenRouter-only route; on any other endpoint
+    the tool reports itself as not configured.
+    """
     env = get_env()
-    return ImageSettings(model=(env.get("IMAGE_MODEL") or "").strip() or None)
+    model = (env.get("IMAGE_MODEL") or "").strip() or None
+    from .session import is_openrouter  # noqa: PLC0415
+
+    if not is_openrouter():
+        model = None
+    return ImageSettings(model=model)
 
 
 class ImageGenerationError(RuntimeError):

@@ -1,16 +1,15 @@
 """Transcript rendering and request assembly for history compaction."""
 
 from .channel import harness_notice, is_channel_message, unwrap_channel, wrap_channel
-from .config import get_project_root
+from .config import read_asset_text
 
 COMPACTION_CHANNEL_KIND = "COMPACTION"
 COMPACTION_NOTE_PREFIX = "[System]: [Compaction] "
 
 
 def load_compaction_prompt() -> str:
-    """Load the compaction system prompt from the assets folder."""
-    prompt_path = get_project_root() / "assets" / "compaction_prompt.md"
-    return prompt_path.read_text(encoding="utf-8")
+    """Load the compaction system prompt from the bundled assets."""
+    return read_asset_text("compaction_prompt.md")
 
 
 def format_compaction_message(summary: str) -> str:

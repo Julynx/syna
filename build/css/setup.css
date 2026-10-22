@@ -1,0 +1,312 @@
+/* Setup wizard: a single centered frosted-glass window over the ambient
+   page background. The title sits at the top; the step's explanation and
+   action buttons fill the vertical center; Back (left) and Next (right)
+   anchor the footer. */
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", sans-serif;
+  color: var(--text, #e8eaf0);
+  overflow: auto;
+}
+
+.setup-backdrop {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  box-sizing: border-box;
+}
+
+.setup-window {
+  width: min(640px, 100%);
+  min-height: 480px;
+  border-radius: 24px;
+  padding: 28px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  box-sizing: border-box;
+}
+
+.glass {
+  background: rgba(24, 26, 34, 0.55);
+  backdrop-filter: blur(28px) saturate(1.3);
+  -webkit-backdrop-filter: blur(28px) saturate(1.3);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.setup-title {
+  margin: 0;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.setup-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.setup-body p {
+  margin: 0;
+  line-height: 1.55;
+  font-size: 14.5px;
+  color: rgba(232, 234, 240, 0.86);
+  max-width: 52ch;
+}
+
+.setup-body .fineprint {
+  font-size: 12.5px;
+  color: rgba(232, 234, 240, 0.6);
+}
+
+.setup-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+  width: min(360px, 100%);
+}
+
+.setup-btn {
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 11px 18px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.setup-btn:active {
+  transform: scale(0.98);
+}
+
+.setup-btn.primary {
+  background: linear-gradient(
+    135deg,
+    rgba(124, 140, 255, 0.9),
+    rgba(90, 200, 250, 0.85)
+  );
+  border: none;
+  color: #0b0d14;
+}
+
+.setup-btn.ghost {
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+}
+
+.setup-btn.ghost[disabled] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.setup-btn.success {
+  background: rgba(70, 200, 140, 0.85);
+  border: none;
+  color: #07130d;
+}
+
+.setup-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.setup-footer .setup-btn {
+  min-width: 96px;
+}
+
+.setup-select,
+.setup-input {
+  width: 100%;
+  font-family: inherit;
+  font-size: 14px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  padding: 11px 14px;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.setup-select:focus,
+.setup-input:focus {
+  border-color: rgba(124, 140, 255, 0.7);
+}
+
+.setup-field {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.setup-field label {
+  font-size: 12.5px;
+  color: rgba(232, 234, 240, 0.66);
+}
+
+.setup-hint {
+  font-size: 12.5px;
+  color: rgba(232, 234, 240, 0.66);
+}
+
+.setup-hint a {
+  color: rgba(140, 190, 255, 0.95);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, 100%);
+  text-align: left;
+}
+
+.checklist .row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.checklist .row .material-symbols-outlined {
+  font-size: 20px;
+  flex: none;
+}
+
+.checklist .row.ok .material-symbols-outlined {
+  color: #6fe0a8;
+}
+
+.checklist .row.missing .material-symbols-outlined {
+  color: rgba(232, 234, 240, 0.45);
+}
+
+.checklist .row .detail {
+  margin-left: auto;
+  font-size: 12px;
+  color: rgba(232, 234, 240, 0.5);
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error-box {
+  width: min(520px, 100%);
+  text-align: left;
+  background: rgba(255, 96, 96, 0.08);
+  border: 1px solid rgba(255, 96, 96, 0.25);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 13px;
+}
+
+.error-box summary {
+  cursor: pointer;
+  color: rgba(255, 150, 150, 0.95);
+  font-size: 13px;
+}
+
+.error-box pre {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgba(232, 234, 240, 0.75);
+}
+
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(232, 234, 240, 0.7);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.copy-btn .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.step-dots {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.step-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  transition: background 0.2s ease;
+}
+
+.step-dots span.on {
+  background: rgba(140, 190, 255, 0.95);
+}
+
+.inline-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: rgba(232, 234, 240, 0.75);
+}
+
+.spin {
+  animation: setup-spin 1s linear infinite;
+}
+
+@keyframes setup-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

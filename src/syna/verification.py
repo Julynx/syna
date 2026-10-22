@@ -16,7 +16,7 @@ from .ask_utils import ask_question
 from .config import (
     get_env,
     get_logger,
-    get_project_root,
+    read_asset_text,
     load_verify_log_tail_chars,
 )
 
@@ -55,9 +55,7 @@ def load_verifier_effort() -> str:
 
 def build_verifier_messages(log_tail: str, summary: str) -> list[dict]:
     """Assemble the reviewer's two-message conversation."""
-    verifier_prompt = (get_project_root() / "assets" / "verifier_prompt.md").read_text(
-        encoding="utf-8"
-    )
+    verifier_prompt = read_asset_text("verifier_prompt.md")
     user_body = (
         "```text\n"
         f"Last {len(log_tail)} chars of agent execution log\n"

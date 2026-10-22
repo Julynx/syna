@@ -109,11 +109,23 @@ class SynthesizedAudio:
 
 
 def load_speech_settings() -> SpeechSettings:
-    """Build the speech settings from the environment variables in .env."""
+    """Build the speech settings from the environment variables in .env.
+
+    Speech routes are OpenRouter-only; on any other endpoint the tools
+    report themselves as not configured.
+    """
     env = get_env()
+    from .session import is_openrouter  # noqa: PLC0415
+
+    openrouter_only = is_openrouter()
+    stt_model = (env.get("STT_MODEL") or "").strip() or None
+    tts_model = (env.get("TTS_MODEL") or "").strip() or None
+    if not openrouter_only:
+        stt_model = None
+        tts_model = None
     return SpeechSettings(
-        stt_model=(env.get("STT_MODEL") or "").strip() or None,
-        tts_model=(env.get("TTS_MODEL") or "").strip() or None,
+        stt_model=stt_model,
+        tts_model=tts_model,
         tts_voice=(env.get("TTS_VOICE") or "").strip() or DEFAULT_TTS_VOICE,
         tts_response_format=(env.get("TTS_RESPONSE_FORMAT") or "").strip().lower()
         or DEFAULT_TTS_RESPONSE_FORMAT,

@@ -32,7 +32,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from syna.channel import contains_sentinel, is_channel_message, unwrap_channel
-from syna.config import get_project_root
+from syna.paths import get_data_home
 from syna.session import AgentSession
 from syna.state import (
     get_registered_container,
@@ -172,7 +172,7 @@ def run_scenario(scenario_index: int, timeout_seconds: int = DEFAULT_EVAL_TIMEOU
     scenario_name = scenario["name"]
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
-    log_dir = get_project_root() / "logs"
+    log_dir = get_data_home() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file_path = log_dir / f"live_eval_{timestamp}_{scenario_name}.json"
     md_file_path = log_dir / f"live_eval_{timestamp}_{scenario_name}.md"

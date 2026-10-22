@@ -9,6 +9,8 @@ from typing import Any
 
 from dotenv import dotenv_values
 
+from .paths import asset_path, get_data_home, read_asset_text
+
 DEFAULT_COMMAND_TIMEOUT_S = 50
 DEFAULT_TOOL_CALL_TIMEOUT_S = 60
 DEFAULT_OUTPUT_LIMIT_CHARS = 40000
@@ -21,23 +23,19 @@ def load_output_limit_chars() -> int:
 
 @lru_cache(maxsize=1)
 def get_env() -> dict[str, str]:
-    """Read the project .env file once and return its values."""
-    return dotenv_values(get_project_root() / ".env")
-
-
-def get_project_root() -> Path:
-    """Return the absolute path to the project root directory."""
-    return Path(__file__).resolve().parent.parent.parent
+    """Read the .env file in the Syna data home and return its values."""
+    return dotenv_values(get_data_home() / ".env")
 
 
 @lru_cache(maxsize=1)
 def load_config() -> dict[str, Any]:
-    """Load configuration values from assets/config.json.
+    """Load configuration values from config.json in the Syna data home.
 
-    The configuration is cached after the first read; treat the returned
-    dict as read-only and expect a server restart to pick up edits.
+    The data home is seeded with the bundled defaults on first run. The
+    configuration is cached after the first read; treat the returned dict
+    as read-only and expect a restart to pick up edits.
     """
-    config_path = get_project_root() / "assets" / "config.json"
+    config_path = get_data_home() / "config.json"
     with open(config_path, "r", encoding="utf-8") as config_file:
         return json.load(config_file)
 
@@ -46,7 +44,7 @@ def get_logger() -> logging.Logger:
     """Configure file-based logging for the application and return the logger."""
     config = load_config()
     log_file_name = config.get("log_file", "syna.log")
-    log_file_path = get_project_root() / log_file_name
+    log_file_path = get_data_home() / log_file_name
 
     logger = logging.getLogger("syna")
     if not logger.handlers:
@@ -76,7 +74,7 @@ def get_session_dump_path(session_id: str | None = None) -> Path:
         configured_path = Path(dump_file_name)
         suffix = configured_path.suffix or ".json"
         dump_file_name = f"{configured_path.stem}-{safe_id}{suffix}"
-    return get_project_root() / dump_file_name
+    return get_data_home() / dump_file_name
 
 
 def load_command_timeout_s() -> int:
@@ -117,3 +115,14 @@ def load_elide_user_message_head_chars() -> int:
 def load_verify_log_tail_chars() -> int:
     """Return how much of the conversation log the work reviewer receives."""
     return load_config().get("verify_log_tail_chars", DEFAULT_VERIFY_LOG_TAIL_CHARS)
+
+
+__all__ = [
+    "asset_path",
+    "get_data_home",
+    "read_asset_text",
+    "load_command_timeout_s",
+    "load_config",
+    "load_output_limit_chars",
+    "load_tool_call_timeout_s",
+]

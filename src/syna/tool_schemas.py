@@ -109,9 +109,9 @@ def function_metadata_to_tool_schema(metadata: dict[str, Any]) -> dict[str, Any]
 def get_tool_definitions(tools_path=None) -> list[dict[str, Any]]:
     """Return OpenRouter-compatible tool schemas for all tools in tools.py."""
     if tools_path is None:
-        from .config import get_project_root
+        from . import tools
 
-        tools_path = get_project_root() / "src" / "syna" / "tools.py"
+        tools_path = tools.__file__
 
     metadata_list = get_function_metadata(tools_path)
     from .tools import TOOL_REGISTRY

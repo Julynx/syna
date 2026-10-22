@@ -4,7 +4,9 @@ import json
 import secrets
 import threading
 from datetime import date
+from pathlib import Path
 
+import syna.tools as tools
 from openrouter import OpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
 
@@ -25,13 +27,13 @@ from .compaction import (
 from .config import (
     get_env,
     get_logger,
-    get_project_root,
     get_session_dump_path,
     load_command_timeout_s,
     load_config,
     load_elide_user_message_head_chars,
     load_output_limit_chars,
     load_user_message_archive_min_chars,
+    read_asset_text,
 )
 from .context import (
     elide_archived_user_messages,
@@ -114,9 +116,8 @@ class TurnCancelled(Exception):
 
 def build_prompt():
     """Build the system prompt with tool docs, date, and limits filled in."""
-    root = get_project_root()
-    template = (root / "assets" / "prompt.md").read_text(encoding="utf-8")
-    tools = _get_tool_metadata(root / "src" / "syna" / "tools.py")
+    template = read_asset_text("prompt.md")
+    tools = _get_tool_metadata(_tools_path())
 
     tool_blocks = [f"### {tool['name']}\n{tool['docstring']}" for tool in tools]
     prompt = template.replace("{tools}", "\n\n".join(tool_blocks))
@@ -126,14 +127,50 @@ def build_prompt():
     return prompt
 
 
+def _tools_path() -> Path:
+    """Return the path of the tools module for metadata extraction."""
+    return Path(tools.__file__)
+
+
 def _get_tool_metadata(tools_path):
     from .inspect_module import get_function_metadata
 
     return get_function_metadata(tools_path)
 
 
+DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def load_base_url() -> str:
+    """Return the OpenAI-like endpoint URL the model client talks to.
+
+    Defaults to OpenRouter; any OpenAI-compatible endpoint works (OpenAI,
+    Gemini's compatibility layer, a local Ollama), set via BASE_URL in
+    the .env file. A trailing slash is stripped so URL joins never
+    produce double slashes.
+    """
+    return (
+        (get_env().get("BASE_URL") or "").strip() or DEFAULT_OPENROUTER_BASE_URL
+    ).rstrip("/")
+
+
+def is_openrouter() -> bool:
+    """Whether the configured endpoint is OpenRouter itself.
+
+    OpenRouter-only features (image generation, speech transcription and
+    synthesis) report themselves as not configured on other endpoints.
+    """
+    return load_base_url() == DEFAULT_OPENROUTER_BASE_URL
+
+
 def create_model_client():
-    """Instantiate an OpenRouter client configured with timeout and retry limits."""
+    """Instantiate an OpenRouter client configured with timeout and retry limits.
+
+    The client speaks the OpenAI wire format, so any OpenAI-compatible
+    endpoint works: BASE_URL selects it, OPENROUTER_API_KEY carries the
+    key (the variable name predates multi-endpoint support; every
+    provider's key goes there).
+    """
     config = load_config()
     retry_settings = config["retry"]
     retry_config = RetryConfig(
@@ -152,6 +189,7 @@ def create_model_client():
 
     return OpenRouter(
         api_key=api_key,
+        server_url=load_base_url(),
         timeout_ms=config["timeout_ms"],
         retry_config=retry_config,
     )

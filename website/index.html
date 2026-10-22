@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Syna — The AI Agent with a Pod</title>
+    <meta
+      name="description"
+      content="An AI agent that researches, codes, browses, and builds inside a sandboxed container pod — and reports back honestly."
+    />
+    <meta
+      name="keywords"
+      content="AI agent, LLM, tools, sandbox, podman, docker, openrouter"
+    />
+    <meta name="author" content="Julynx" />
+    <meta name="robots" content="index, follow" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://julynx.github.io/syna/" />
+    <meta property="og:title" content="Syna — The AI Agent with a Pod" />
+    <meta
+      property="og:description"
+      content="An AI agent that researches, codes, browses, and builds inside a sandboxed container pod — and reports back honestly."
+    />
+    <meta
+      property="og:image"
+      content="https://julynx.github.io/syna/assets/screenshot.png"
+    />
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content="https://julynx.github.io/syna/" />
+    <meta property="twitter:title" content="Syna — The AI Agent with a Pod" />
+    <meta
+      property="twitter:description"
+      content="An AI agent that researches, codes, browses, and builds inside a sandboxed container pod — and reports back honestly."
+    />
+    <meta
+      property="twitter:image"
+      content="https://julynx.github.io/syna/assets/screenshot.png"
+    />
+
+    <link rel="canonical" href="https://julynx.github.io/syna/" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Syna",
+        "operatingSystem": "Windows, Linux, macOS",
+        "applicationCategory": "DeveloperApplication",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "description": "An AI agent that researches, codes, browses, and builds inside a sandboxed container pod — and reports back honestly.",
+        "author": {
+          "@type": "Person",
+          "name": "Julynx"
+        },
+        "downloadUrl": "https://pypi.org/project/syna-agent/",
+        "featureList": "Sandboxed container pod, Web search and browser use, Image understanding and generation, Speech to text and text to speech, Voice mode, Line-number file editing, Honest reporting"
+      }
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
+    />
+    <link rel="stylesheet" href="css/style.css" />
+    <link rel="icon" type="image/png" href="assets/syna-favicon.png" />
+  </head>
+
+  <body>
+    <nav class="navbar">
+      <div class="container">
+        <a href="index.html" class="logo">
+          <img src="assets/syna-mark-pill.png" alt="Syna Logo" />
+          <span>Syna</span>
+        </a>
+        <button class="mobile-menu-btn" aria-label="Toggle navigation">
+          <i class="bi bi-list"></i>
+        </button>
+        <div class="nav-links">
+          <a href="index.html" class="active">Home</a>
+          <a href="https://github.com/Julynx/syna" target="_blank"
+            ><i class="bi bi-github"></i> GitHub</a
+          >
+        </div>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <div class="container">
+        <h1 class="hero-title">The AI Agent with a Pod</h1>
+        <p class="hero-subtitle">
+          Syna researches, codes, browses the web, and builds documents for you
+          — inside a sandboxed container — and reports back honestly.
+        </p>
+
+        <div class="hero-actions">
+          <a
+            href="https://pypi.org/project/syna-agent/"
+            class="btn btn-primary btn-lg"
+          >
+            <i class="bi bi-box"></i> Install from PyPI
+          </a>
+          <div class="install-cmd">
+            <code id="install-command">uv tool install syna-agent</code>
+            <button
+              class="copy-cmd"
+              aria-label="Copy install command"
+              onclick="
+                navigator.clipboard.writeText('uv tool install syna-agent')
+              "
+            >
+              <i class="bi bi-clipboard"></i>
+            </button>
+          </div>
+          <div class="inline-links small-text">
+            <a
+              href="https://github.com/Julynx/syna"
+              target="_blank"
+              style="color: inherit"
+              ><u>Source code</u></a
+            >
+          </div>
+        </div>
+
+        <div class="hero-image">
+          <img src="assets/screenshot.png" alt="Syna Chat Interface" />
+        </div>
+      </div>
+    </header>
+
+    <section class="features">
+      <div class="container">
+        <h2 class="section-title">Why Syna?</h2>
+        <div class="features-grid">
+          <div class="feature-card">
+            <div class="icon-wrapper"><i class="bi bi-shield-check"></i></div>
+            <h3>Sandboxed by Design</h3>
+            <p>
+              Every command runs inside an isolated container pod with full root
+              access — and your machine out of reach.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="icon-wrapper"><i class="bi bi-tools"></i></div>
+            <h3>A Complete Toolset</h3>
+            <p>
+              Web search and browser use (local, no API key), image
+              understanding and generation, speech tools, and precise
+              line-number file editing.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="icon-wrapper">
+              <i class="bi bi-hourglass-split"></i>
+            </div>
+            <h3>Made for Long Tasks</h3>
+            <p>
+              Automatic context management with a high cache hit rate, every
+              output saved to a file, and a verifiable chain of custody from
+              source to deliverable.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="icon-wrapper"><i class="bi bi-award"></i></div>
+            <h3>Honest Reporting</h3>
+            <p>
+              It says exactly what happened and what it couldn't verify —
+              hardened against prompt injection and false-flag attacks.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="icon-wrapper"><i class="bi bi-mic"></i></div>
+            <h3>Voice Mode</h3>
+            <p>
+              Talk to Syna and hear its answers read out loud, with
+              transcription and synthesis built in.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="icon-wrapper"><i class="bi bi-display"></i></div>
+            <h3>A Beautiful UI</h3>
+            <p>
+              Frosted glass, sound effects, and a Y2K-video-player-style
+              visualizer that reacts to what the agent is doing.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta-section">
+      <div class="container">
+        <h2>Ready to start?</h2>
+        <p>Two minutes of setup, then give Syna something hard.</p>
+        <div class="cta-buttons">
+          <a
+            href="https://pypi.org/project/syna-agent/"
+            class="btn btn-primary btn-lg"
+            >Install from PyPI</a
+          >
+        </div>
+        <div class="install-cmd cta-cmd">
+          <code>uv tool install syna-agent</code>
+          <button
+            class="copy-cmd"
+            aria-label="Copy install command"
+            onclick="
+              navigator.clipboard.writeText('uv tool install syna-agent')
+            "
+          >
+            <i class="bi bi-clipboard"></i>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="container">
+        <div class="footer-content">
+          <div class="footer-logo">
+            <img src="assets/syna-mark-pill.png" alt="Syna Logo" />
+            <span>Syna</span>
+          </div>
+          <div class="footer-links">
+            <a href="https://github.com/Julynx/syna" target="_blank">GitHub</a>
+            <a href="https://pypi.org/project/syna-agent/" target="_blank"
+              >PyPI</a
+            >
+          </div>
+        </div>
+        <div class="footer-bottom">
+          <p>&copy; 2026 Syna. Open source software.</p>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      // Mobile Menu Toggle
+      const mobileBtn = document.querySelector(".mobile-menu-btn");
+      const navLinks = document.querySelector(".nav-links");
+
+      if (mobileBtn) {
+        mobileBtn.addEventListener("click", () => {
+          navLinks.classList.toggle("active");
+        });
+      }
+    </script>
+  </body>
+</html>

@@ -15,10 +15,9 @@ from syna import verification
 from syna.parse import parse_and_execute_tools
 from syna.tool_schemas import get_tool_definitions
 from syna.tools import TOOL_REGISTRY
+from syna.config import read_asset_text
 
-VERIFIER_PROMPT_PATH = (
-    Path(__file__).resolve().parent.parent / "assets" / "verifier_prompt.md"
-)
+VERIFIER_PROMPT_TEXT = read_asset_text("verifier_prompt.md")
 
 
 class FakeClient:
@@ -139,7 +138,7 @@ def test_review_work_returns_verifier_report(monkeypatch):
     assert calls["session_id"] is None, "the reviewer session is isolated"
     system_message, user_message = calls["messages"]
     assert system_message["role"] == "system"
-    assert system_message["content"] == VERIFIER_PROMPT_PATH.read_text(encoding="utf-8")
+    assert system_message["content"] == VERIFIER_PROMPT_TEXT
     body = user_message["content"]
     assert body.startswith("```text\n"), "the log must sit in a code block"
     log_chars = len(json.dumps(conversation, ensure_ascii=False))

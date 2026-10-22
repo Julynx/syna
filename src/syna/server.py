@@ -24,13 +24,25 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from . import interaction, speech
-from .config import get_logger, get_project_root, load_config
+from . import interaction, setup, speech
+from .config import (
+    asset_path,
+    get_logger,
+    get_data_home,
+    load_config,
+    read_asset_text,
+)
 from .imaging import (
     MAX_SERVE_BYTES,
     RECOMPRESS_BYTES,
@@ -328,7 +340,7 @@ async def _janitor_loop():
 app = FastAPI(lifespan=lifespan)
 app.mount(
     "/vendor",
-    StaticFiles(directory=get_project_root() / "assets" / "vendor"),
+    StaticFiles(directory=str(asset_path("vendor"))),
     name="vendor",
 )
 
@@ -391,32 +403,33 @@ async def enforce_local_origin(request: Request, call_next):
     """Reject requests that did not come from the trusted local UI.
 
     With a token in force: the Host header must name the server's own
-    loopback address, and /api endpoints must present the token (header
-    or query — query because <img> and download links cannot set
-    headers). Static assets and the HTML shell stay open so the page can
-    bootstrap and learn the token.
+    loopback address, and /api and /setup endpoints must present the
+    token (header or query — query because <img> and download links
+    cannot set headers). Static assets, the HTML shell, and the setup
+    wizard page stay open so the page can bootstrap and learn the token.
     """
     if AUTH_TOKEN:
         if not _host_header_allowed(request.headers.get("host", "")):
             return JSONResponse(
                 status_code=403, content={"detail": "Untrusted Host header."}
             )
-        if (
-            request.url.path.startswith("/api/")
-            and request_token(request) != AUTH_TOKEN
-        ):
+        needs_token = request.url.path.startswith("/api/") or (
+            request.url.path.startswith("/setup/") and len(request.url.path) > 7
+        )
+        if needs_token and request_token(request) != AUTH_TOKEN:
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Missing or invalid session token."},
             )
+    if request.url.path == "/" and setup.setup_incomplete():
+        return RedirectResponse("/setup")
     return await call_next(request)
 
 
 @app.get("/")
 def index():
     """Serve the chat GUI with runtime settings injected."""
-    chat_path = get_project_root() / "assets" / "chat.html"
-    html = chat_path.read_text(encoding="utf-8")
+    html = read_asset_text("chat.html")
     gui_config = {
         "max_visible_tool_calls": config.get("max_visible_tool_calls", 3),
         "voice": speech.client_configuration(speech_settings, config),
@@ -427,6 +440,93 @@ def index():
     payload = json.dumps(gui_config).replace("</", "<\\/")
     script = f"<script>window.SYNA_CONFIG = {payload};</script>"
     return HTMLResponse(html.replace("</head>", script + "</head>"))
+
+
+@app.get("/setup")
+def setup_page():
+    """Serve the first-run setup wizard; redirect to chat when done."""
+    if not setup.setup_incomplete():
+        return RedirectResponse("/")
+    html = read_asset_text("setup.html")
+    gui_config = {
+        "auth_token": AUTH_TOKEN,
+        "issues_url": setup.ISSUES_URL,
+    }
+    payload = json.dumps(gui_config).replace("</", "<\\/")
+    script = f"<script>window.SYNA_CONFIG = {payload};</script>"
+    return HTMLResponse(html.replace("</head>", script + "</head>"))
+
+
+class SetupConfigRequest(BaseModel):
+    """The provider settings the wizard's third step collects."""
+
+    provider: str
+    base_url: str | None = None
+    api_key: str = ""
+    model: str
+
+
+@app.post("/setup/api/config")
+async def save_setup_config(request: SetupConfigRequest):
+    """Validate and write the provider settings into the data home .env."""
+    if request.provider == "custom":
+        if not request.base_url or not request.base_url.startswith(
+            ("http://", "https://")
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="A valid endpoint URL is required for a custom provider.",
+            )
+        base_url = request.base_url.rstrip("/")
+    elif request.provider in setup.PROVIDERS:
+        preset = setup.PROVIDERS[request.provider]
+        base_url = preset["base_url"]
+        if preset["needs_key"] and not request.api_key.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"An API key is required for {preset['name']}.",
+            )
+    else:
+        raise HTTPException(status_code=400, detail="Unknown provider.")
+    if not request.model.strip():
+        raise HTTPException(status_code=400, detail="A model name is required.")
+    env_path = setup.write_env_file(
+        {
+            "OPENROUTER_API_KEY": request.api_key.strip(),
+            "MODEL": request.model.strip(),
+            "BASE_URL": base_url,
+        }
+    )
+    logger.info("Setup wrote %s", env_path)
+    return {"status": "ok", "path": str(env_path)}
+
+
+@app.get("/setup/api/detect")
+def setup_detect():
+    """Dependency status for the wizard's dependency steps."""
+    return setup.detect_all()
+
+
+@app.post("/setup/api/install/{dependency}")
+async def setup_install(dependency: str):
+    """Try to install one dependency; report the outcome as data."""
+    installers = {"podman": setup.install_podman, "docker": setup.install_docker}
+    if dependency == "wsl":
+        found, tail, reboot = setup.install_wsl()
+        return {
+            "status": "reboot_required" if reboot else ("ok" if found else "failed"),
+            "log": tail,
+        }
+    if dependency not in installers:
+        raise HTTPException(status_code=404, detail="Unknown dependency.")
+    found, tail = installers[dependency]()
+    return {"status": "ok" if found else "failed", "log": tail}
+
+
+@app.post("/setup/api/sanity")
+async def setup_sanity():
+    """Run the closing sanity check: engine + one-token chat completion."""
+    return setup.sanity_check()
 
 
 @app.post("/api/upload/{client_id}")

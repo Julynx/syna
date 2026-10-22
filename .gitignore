@@ -9,7 +9,10 @@ wheels/
 .venv
 .env
 
-*.log
+# Syna data-home artifacts living in the repo root (repo checkouts act
+# as their own data home)
+/config.json
+syna.log
 message-session-log*
 TODO.md
 investigate/

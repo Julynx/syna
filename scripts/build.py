@@ -1,4 +1,4 @@
-"""Assemble assets/chat.html from the sources in build/.
+"""Assemble src/syna/assets/chat.html from the sources in build/.
 
 chat.html is a GENERATED file — edit the css/ and js/ sources in build/,
 then rebuild with: python scripts/build.py
@@ -19,32 +19,42 @@ CSS_FILES = [
     "voice.css",
 ]
 JS_FILES = ["ambient.js", "sfx.js", "markdown.js", "chat.js", "voice.js"]
+SETUP_CSS_FILES = ["base.css", "setup.css"]
+SETUP_JS_FILES = ["setup.js"]
+
+TARGETS = [
+    ("index.html", CSS_FILES, JS_FILES, "chat.html"),
+    ("index-setup.html", SETUP_CSS_FILES, SETUP_JS_FILES, "setup.html"),
+]
+
+
+def _fill(build_dir: Path, html: str, css_files: list[str], js_files: list[str]) -> str:
+    for name in css_files:
+        source = (build_dir / "css" / name).read_text(encoding="utf-8")
+        source = source.rstrip("\n") + "\n"
+        html = html.replace("{{CSS}}", "<style>\n" + source + "\n</style>", 1)
+    for name in js_files:
+        source = (build_dir / "js" / name).read_text(encoding="utf-8")
+        source = source.rstrip("\n") + "\n"
+        html = html.replace("{{JS}}", "<script>\n" + source + "\n</script>", 1)
+    if "{{CSS}}" in html or "{{JS}}" in html:
+        raise SystemExit("Unfilled {{CSS}}/{{JS}} markers remain in a skeleton")
+    return html
 
 
 def build() -> None:
     root = Path(__file__).resolve().parent.parent
     build_dir = root / "build"
-    html = (build_dir / "index.html").read_text(encoding="utf-8")
-
-    for name in CSS_FILES:
-        source = (build_dir / "css" / name).read_text(encoding="utf-8")
-        source = source.rstrip("\n") + "\n"
-        html = html.replace("{{CSS}}", "<style>\n" + source + "\n</style>", 1)
-
-    for name in JS_FILES:
-        source = (build_dir / "js" / name).read_text(encoding="utf-8")
-        source = source.rstrip("\n") + "\n"
-        html = html.replace("{{JS}}", "<script>\n" + source + "\n</script>", 1)
-
-    if "{{CSS}}" in html or "{{JS}}" in html:
-        raise SystemExit(
-            "Unfilled {{CSS}}/{{JS}} markers remain;"
-            " check the CSS_FILES/JS_FILES lists against build/index.html"
+    for skeleton, css_files, js_files, target_name in TARGETS:
+        html = _fill(
+            build_dir,
+            (build_dir / skeleton).read_text(encoding="utf-8"),
+            css_files,
+            js_files,
         )
-
-    target = root / "assets" / "chat.html"
-    target.write_text(html, encoding="utf-8")
-    print(f"Built {target} ({len(html)} bytes)")
+        target = root / "src" / "syna" / "assets" / target_name
+        target.write_text(html, encoding="utf-8")
+        print(f"Built {target} ({len(html)} bytes)")
 
 
 if __name__ == "__main__":
