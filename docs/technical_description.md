@@ -27,16 +27,15 @@ create files with full root access.
 
 ## Running
 
-- CLI: `syna` (entry point `syna:main`) - interactive prompt `/ask Syna):`,
-  supports slash commands.
-- Web server: `syna-server` (entry point `syna.server:main`) - FastAPI +
-  WebSocket chat UI served from the bundled `chat.html`.
-- Setup wizard: `syna-setup` (entry point `syna.setup:main`) - starts the
-  web server and opens the first-run wizard at `/setup`; `syna-server`
-  also redirects to it automatically while setup is incomplete (no
-  provider key/model or no container engine).
+- Web server & UI: `syna` (entry point `syna.server:main`, aliases: `syna-agent`,
+  `syna-server`) — FastAPI + WebSocket chat UI served from the bundled `chat.html`.
+  Automatically opens the first-run setup wizard if setup is incomplete.
+- CLI: `syna-cli` (entry point `syna:main`) — interactive prompt `(Ask Syna):`,
+  supports slash commands. Exits cleanly with guidance if configuration is missing.
+- Setup wizard: `syna-setup` (entry point `syna.setup:main`) — starts the
+  web server and opens the first-run wizard at `/setup`.
 - Web UI sources live in `build/` (see below); after editing them, regenerate
-  the UIs with `python scripts/build.py` - `src/syna/assets/chat.html` and
+  the UIs with `python scripts/build.py` — `src/syna/assets/chat.html` and
   `src/syna/assets/setup.html` are generated files and
   must not be edited directly.
 - Install from PyPI with `uv tool install syna-agent` (or

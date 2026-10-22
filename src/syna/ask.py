@@ -126,8 +126,32 @@ def _reset_session(session: AgentSession) -> AgentSession:
     return _create_session()
 
 
+def check_setup() -> None:
+    """Verify that Syna is configured before starting the CLI session."""
+    from . import setup  # noqa: PLC0415
+    from .config import get_data_home  # noqa: PLC0415
+
+    if setup.setup_incomplete():
+        status = setup.config_status()
+        print("\n  ! Syna is not configured yet.\n")
+        if not status["has_key"] and status["needs_key"]:
+            print("    Missing API key in .env.")
+        elif not status["has_model"]:
+            print("    Missing MODEL in .env.")
+        elif not setup.detect_engine().found:
+            print("    No container engine (Podman or Docker) found on your system.")
+        print("\n    To configure Syna through the first-run wizard, run:")
+        print("      syna         (starts the web server and opens the wizard)")
+        print("      syna-setup   (opens the wizard directly)\n")
+        print(
+            f"    Or configure your settings manually in:\n      {get_data_home() / '.env'}\n"
+        )
+        sys.exit(1)
+
+
 def ask_loop():
     """Execute the interactive conversation and tool execution loop."""
+    check_setup()
     show_welcome()
     session = _create_session()
     register_responder(_terminal_responder(session))

@@ -47,18 +47,18 @@
    syna-setup
    ```
 
-3. Start Syna (the terminal version, or the web UI at `http://127.0.0.1:8000`):
+3. Start Syna (the web UI at `http://127.0.0.1:8000`, or the terminal CLI):
 
    ```bash
-   syna
-   syna-server
+   syna        # Starts the web UI (and first-run wizard if not configured)
+   syna-cli    # Starts the terminal CLI
    ```
 
 The wizard writes a `.env` file in `~/.syna` for you. To configure manually, create `~/.syna/.env` with:
 
 ```sh
 OPENROUTER_API_KEY=your-api-key
-MODEL=z-ai/glm-5.3-flash        # Or any one of your preference
+MODEL=~z-ai/glm-flash-latest        # Or any model of your preference
 BASE_URL=https://openrouter.ai/api/v1   # Optional: any OpenAI-compatible endpoint
 THINKING_EFFORT=medium          # Can be either of none|minimal|low|medium|high|xhigh|max
 ```

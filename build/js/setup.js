@@ -1,11 +1,11 @@
 "use strict";
 
 /* First-run setup wizard: four steps (welcome, dependencies, provider,
-   review), a closing sanity check, and a friendly error template with a
-   copy button everywhere something can fail. */
+   review), a closing sanity check, and friendly modal dialogs for unexpected errors. */
 
 const CONFIG = window.SYNA_CONFIG || {};
 const ISSUES_URL = CONFIG.issues_url || "https://github.com/Julynx/syna/issues";
+const INITIAL = CONFIG.initial_config || {};
 
 const bodyEl = document.getElementById("setup-body");
 const titleEl = document.getElementById("setup-title");
@@ -19,12 +19,19 @@ const GLYPH = (name, cls) =>
   name +
   "</span>";
 
+const SPINNER_SVG =
+  '<svg class="btn-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>';
+
 const PROVIDERS = {
   openrouter: {
     label: "OpenRouter (Recommended \u00b7 Most tested)",
     baseUrl: "https://openrouter.ai/api/v1",
     keysUrl: "https://openrouter.ai/settings/keys",
-    model: "z-ai/glm-5.3-flash",
+    model: "~z-ai/glm-flash-latest",
+    sttModel: "google/chirp-3",
+    ttsModel: "google/gemini-3.8-flash-lite-tts",
+    ttsVoice: "Kore",
+    imageModel: "google/gemini-3.1-flash-image",
     needsKey: true,
   },
   openai: {
@@ -32,6 +39,10 @@ const PROVIDERS = {
     baseUrl: "https://api.openai.com/v1",
     keysUrl: "https://platform.openai.com/api-keys",
     model: "gpt-4o-mini",
+    sttModel: "",
+    ttsModel: "",
+    ttsVoice: "",
+    imageModel: "",
     needsKey: true,
   },
   google: {
@@ -39,6 +50,10 @@ const PROVIDERS = {
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
     keysUrl: "https://aistudio.google.com/apikey",
     model: "gemini-2.5-flash",
+    sttModel: "",
+    ttsModel: "",
+    ttsVoice: "",
+    imageModel: "",
     needsKey: true,
   },
   ollama: {
@@ -46,6 +61,10 @@ const PROVIDERS = {
     baseUrl: "http://localhost:11434/v1",
     keysUrl: "",
     model: "llama3.2",
+    sttModel: "",
+    ttsModel: "",
+    ttsVoice: "",
+    imageModel: "",
     needsKey: false,
   },
   custom: {
@@ -53,13 +72,28 @@ const PROVIDERS = {
     baseUrl: "",
     keysUrl: "",
     model: "",
+    sttModel: "",
+    ttsModel: "",
+    ttsVoice: "",
+    imageModel: "",
     needsKey: true,
   },
 };
 
+// Persistent in-memory state preserved across Back/Next and prefilled from .env
+const state = {
+  provider: "openrouter",
+  apiKey: INITIAL.api_key || "",
+  model: INITIAL.model || "",
+  baseUrl: INITIAL.base_url || "",
+  sttModel: INITIAL.stt_model || "",
+  ttsModel: INITIAL.tts_model || "",
+  ttsVoice: INITIAL.tts_voice || "",
+  imageModel: INITIAL.image_model || "",
+};
+
 let step = 0;
 let detection = null;
-let provider = "openrouter";
 let busy = false;
 
 function withToken(url) {
@@ -73,12 +107,19 @@ function withToken(url) {
 }
 
 async function api(path, options) {
+  const headers = {};
+  if (options?.body) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (CONFIG.auth_token) {
+    headers["X-Syna-Token"] = CONFIG.auth_token;
+  }
+  if (options?.headers) {
+    Object.assign(headers, options.headers);
+  }
   const response = await fetch(withToken("/setup/api/" + path), {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options?.headers || {}),
-    },
+    headers,
   });
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}));
@@ -103,35 +144,72 @@ function copyButton(text) {
   return btn;
 }
 
-function friendlyError(action, errorText) {
-  const box = document.createElement("div");
-  box.className = "error-box";
-  const summary = document.createElement("div");
-  summary.innerHTML =
-    "I tried to " +
-    esc(action) +
-    " and it failed." +
-    '<br><span class="fineprint">Here is the error message:</span>';
-  const pre = document.createElement("pre");
-  pre.textContent = errorText || "(no output)";
-  const details = document.createElement("details");
-  details.appendChild(summary);
-  details.appendChild(pre);
-  box.appendChild(details);
-  const row = document.createElement("div");
-  row.style.marginTop = "8px";
-  row.appendChild(copyButton(errorText || ""));
-  box.appendChild(row);
+function showModal(title, textHtml, errorDetails) {
+  const existing = document.querySelector(".setup-modal-backdrop");
+  if (existing) existing.remove();
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "setup-modal-backdrop";
+
+  const modal = document.createElement("div");
+  modal.className = "setup-modal";
+
+  const h3 = document.createElement("h3");
+  h3.className = "setup-modal-title";
+  h3.innerHTML = GLYPH("error") + esc(title || "Notice");
+  modal.appendChild(h3);
+
+  if (textHtml) {
+    const p = document.createElement("p");
+    p.className = "setup-modal-text";
+    p.innerHTML = textHtml;
+    modal.appendChild(p);
+  }
+
+  if (errorDetails) {
+    const pre = document.createElement("pre");
+    pre.className = "setup-modal-pre";
+    pre.textContent = errorDetails;
+    modal.appendChild(pre);
+  }
+
   const issue = document.createElement("p");
   issue.className = "fineprint";
   issue.innerHTML =
-    'We would greatly appreciate if you could take the time to <a href="' +
+    'If this looks like a bug, please <a href="' +
     ISSUES_URL +
-    '" target="_blank">open a GitHub issue</a> and paste it there. It would' +
-    " help us improve the app and ensure it works properly for everyone" +
-    " who is excited about using it. Thank you.";
-  box.appendChild(issue);
-  return box;
+    '" target="_blank">open a GitHub issue</a> so we can fix it. Thank you!';
+  modal.appendChild(issue);
+
+  const footer = document.createElement("div");
+  footer.className = "setup-modal-footer";
+
+  const left = document.createElement("div");
+  if (errorDetails) {
+    left.appendChild(copyButton(errorDetails));
+  }
+  footer.appendChild(left);
+
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "setup-btn primary";
+  closeBtn.textContent = "Dismiss";
+  closeBtn.addEventListener("click", () => backdrop.remove());
+  footer.appendChild(closeBtn);
+
+  modal.appendChild(footer);
+  backdrop.appendChild(modal);
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) backdrop.remove();
+  });
+  document.body.appendChild(backdrop);
+}
+
+function friendlyError(action, errorText) {
+  showModal(
+    "Action Failed",
+    "I tried to " + esc(action) + " and it failed.",
+    errorText,
+  );
 }
 
 function dots() {
@@ -150,6 +228,29 @@ function para(html, cls) {
   if (cls) p.className = cls;
   p.innerHTML = html;
   return p;
+}
+
+function clearFieldError(inputEl) {
+  if (!inputEl) return;
+  inputEl.classList.remove("error");
+  const parent = inputEl.closest(".setup-field");
+  if (parent) {
+    parent.querySelectorAll(".field-error").forEach((el) => el.remove());
+  }
+}
+
+function setFieldError(inputEl, message) {
+  if (!inputEl) return;
+  clearFieldError(inputEl);
+  inputEl.classList.add("error");
+  const parent = inputEl.closest(".setup-field");
+  if (parent) {
+    const err = document.createElement("p");
+    err.className = "field-error";
+    err.textContent = message;
+    parent.appendChild(err);
+  }
+  inputEl.focus();
 }
 
 /* ---- Steps ---- */
@@ -180,31 +281,43 @@ const STEPS = [
   {
     title: "Dependencies",
     render() {
+      if (detection) {
+        renderDependencies(detection);
+        return;
+      }
+      updateButtons();
       const status = para("Checking your system...");
       bodyEl.appendChild(status);
       api("detect")
         .then((result) => {
           detection = result;
           status.remove();
+          updateButtons();
           renderDependencies(result);
         })
         .catch((error) => {
           status.remove();
-          bodyEl.appendChild(friendlyError("check your system", error.message));
+          updateButtons();
+          friendlyError("check your system", error.message);
         });
     },
     async next() {
-      if (depsSatisfied()) return;
-      throw new Error("Install the missing dependencies to continue.");
+      if (!detection) return false;
+      return depsSatisfied();
     },
   },
   {
-    title: "Choose a provider",
+    title: "Choose a Provider",
     render() {
-      const field = document.createElement("div");
-      field.className = "setup-field";
-      const label = document.createElement("label");
-      label.textContent = "Provider";
+      const providerField = document.createElement("div");
+      providerField.className = "setup-field";
+      const providerHeader = document.createElement("div");
+      providerHeader.className = "setup-field-header";
+      const providerLabel = document.createElement("label");
+      providerLabel.textContent = "Provider";
+      providerHeader.appendChild(providerLabel);
+      providerField.appendChild(providerHeader);
+
       const select = document.createElement("select");
       select.className = "setup-select";
       select.id = "provider-select";
@@ -214,99 +327,225 @@ const STEPS = [
         option.textContent = preset.label;
         select.appendChild(option);
       }
-      select.value = provider;
-      field.appendChild(label);
-      field.appendChild(select);
-      bodyEl.appendChild(field);
+      select.value = state.provider || "openrouter";
+      providerField.appendChild(select);
+      bodyEl.appendChild(providerField);
 
       const urlField = document.createElement("div");
       urlField.className = "setup-field";
       urlField.id = "custom-url-field";
       urlField.style.display = "none";
+      const urlHeader = document.createElement("div");
+      urlHeader.className = "setup-field-header";
       const urlLabel = document.createElement("label");
       urlLabel.textContent = "Endpoint URL";
+      urlHeader.appendChild(urlLabel);
+      urlField.appendChild(urlHeader);
       const urlInput = document.createElement("input");
       urlInput.className = "setup-input";
       urlInput.id = "custom-url";
+      urlInput.value = state.baseUrl || "";
       urlInput.placeholder = "https://example.com/v1";
-      urlField.appendChild(urlLabel);
+      urlInput.addEventListener("input", () => {
+        clearFieldError(urlInput);
+        state.baseUrl = urlInput.value.trim();
+      });
       urlField.appendChild(urlInput);
       bodyEl.appendChild(urlField);
 
       const keyField = document.createElement("div");
       keyField.className = "setup-field";
       keyField.id = "key-field";
+      const keyHeader = document.createElement("div");
+      keyHeader.className = "setup-field-header";
       const keyLabel = document.createElement("label");
-      keyLabel.textContent = "API key";
+      keyLabel.textContent = "API Key";
+      keyHeader.appendChild(keyLabel);
+
+      const keyLink = document.createElement("a");
+      keyLink.className = "setup-field-link";
+      keyLink.id = "key-link";
+      keyLink.target = "_blank";
+      keyHeader.appendChild(keyLink);
+
+      keyField.appendChild(keyHeader);
       const keyInput = document.createElement("input");
       keyInput.className = "setup-input";
       keyInput.id = "api-key";
       keyInput.type = "password";
+      keyInput.value = state.apiKey || "";
       keyInput.placeholder = "Paste your API key";
-      keyField.appendChild(keyLabel);
+      keyInput.addEventListener("input", () => {
+        clearFieldError(keyInput);
+        state.apiKey = keyInput.value.trim();
+      });
       keyField.appendChild(keyInput);
       bodyEl.appendChild(keyField);
 
-      const hint = document.createElement("p");
-      hint.className = "setup-hint";
-      hint.id = "key-hint";
-      bodyEl.appendChild(hint);
-
       const modelField = document.createElement("div");
       modelField.className = "setup-field";
+      const modelHeader = document.createElement("div");
+      modelHeader.className = "setup-field-header";
       const modelLabel = document.createElement("label");
       modelLabel.textContent = "Model";
+      modelHeader.appendChild(modelLabel);
+      modelField.appendChild(modelHeader);
       const modelInput = document.createElement("input");
       modelInput.className = "setup-input";
       modelInput.id = "model-input";
-      modelField.appendChild(modelLabel);
+      modelInput.value = state.model || PROVIDERS[select.value].model || "";
+      modelInput.addEventListener("input", () => {
+        clearFieldError(modelInput);
+        state.model = modelInput.value.trim();
+      });
       modelField.appendChild(modelInput);
       bodyEl.appendChild(modelField);
 
-      bodyEl.appendChild(
-        para(
-          "Your key is stored in a local .env file on this machine and is" +
-            " only sent to the provider you choose.",
-          "fineprint",
-        ),
-      );
+      // Advanced capabilities (voice & image models)
+      const capSection = document.createElement("details");
+      capSection.className = "setup-advanced";
+      capSection.id = "advanced-section";
+      const capSummary = document.createElement("summary");
+      capSummary.textContent = "Optional features (voice, image generation)";
+      capSection.appendChild(capSummary);
+
+      const capBody = document.createElement("div");
+      capBody.className = "setup-advanced-body";
+
+      // STT Model
+      const sttField = document.createElement("div");
+      sttField.className = "setup-field";
+      sttField.innerHTML = '<div class="setup-field-header"><label>Voice Dictation Model (STT)</label></div>';
+      const sttInput = document.createElement("input");
+      sttInput.className = "setup-input";
+      sttInput.id = "stt-model-input";
+      sttInput.value = state.sttModel || PROVIDERS[select.value].sttModel || "";
+      sttInput.placeholder = "e.g. google/chirp-3";
+      sttInput.addEventListener("input", () => {
+        state.sttModel = sttInput.value.trim();
+      });
+      sttField.appendChild(sttInput);
+      capBody.appendChild(sttField);
+
+      // TTS Model
+      const ttsField = document.createElement("div");
+      ttsField.className = "setup-field";
+      ttsField.innerHTML = '<div class="setup-field-header"><label>Voice Synthesis Model (TTS)</label></div>';
+      const ttsInput = document.createElement("input");
+      ttsInput.className = "setup-input";
+      ttsInput.id = "tts-model-input";
+      ttsInput.value = state.ttsModel || PROVIDERS[select.value].ttsModel || "";
+      ttsInput.placeholder = "e.g. google/gemini-3.8-flash-lite-tts";
+      ttsInput.addEventListener("input", () => {
+        state.ttsModel = ttsInput.value.trim();
+      });
+      ttsField.appendChild(ttsInput);
+      capBody.appendChild(ttsField);
+
+      // Image Model
+      const imgField = document.createElement("div");
+      imgField.className = "setup-field";
+      imgField.innerHTML = '<div class="setup-field-header"><label>Image Generation Model</label></div>';
+      const imgInput = document.createElement("input");
+      imgInput.className = "setup-input";
+      imgInput.id = "image-model-input";
+      imgInput.value = state.imageModel || PROVIDERS[select.value].imageModel || "";
+      imgInput.placeholder = "e.g. google/gemini-3.1-flash-image";
+      imgInput.addEventListener("input", () => {
+        state.imageModel = imgInput.value.trim();
+      });
+      imgField.appendChild(imgInput);
+      capBody.appendChild(imgField);
+
+      capSection.appendChild(capBody);
+      bodyEl.appendChild(capSection);
+
       bodyEl.appendChild(dots());
 
       const sync = () => {
-        provider = select.value;
-        const preset = PROVIDERS[provider];
-        urlField.style.display = provider === "custom" ? "" : "none";
+        const curProvider = select.value;
+        state.provider = curProvider;
+        const preset = PROVIDERS[curProvider];
+        urlField.style.display = curProvider === "custom" ? "" : "none";
         keyField.style.display =
-          preset.needsKey || provider === "custom" ? "" : "none";
-        if (preset.model) modelInput.value = preset.model;
-        hint.innerHTML = preset.keysUrl
-          ? '(<a href="' +
-            preset.keysUrl +
-            '" target="_blank">Click here</a>) to get a ' +
-            esc(preset.label.split(" (")[0]) +
-            " API key if you don't have one."
-          : "No API key needed for local providers.";
+          preset.needsKey || curProvider === "custom" ? "" : "none";
+        capSection.style.display =
+          curProvider === "openrouter" || curProvider === "custom" ? "" : "none";
+
+        // Update default model if user hasn't overridden it
+        if (!state.model || Object.values(PROVIDERS).some((p) => p.model === state.model)) {
+          state.model = preset.model || "";
+          modelInput.value = state.model;
+        }
+
+        // Update voice & image defaults if unset or matching a preset default
+        if (preset.sttModel && !state.sttModel) {
+          sttInput.value = preset.sttModel;
+        }
+        if (preset.ttsModel && !state.ttsModel) {
+          ttsInput.value = preset.ttsModel;
+        }
+        if (preset.imageModel && !state.imageModel) {
+          imgInput.value = preset.imageModel;
+        }
+
+        if (preset.keysUrl) {
+          keyLink.style.display = "";
+          keyLink.href = preset.keysUrl;
+          keyLink.textContent = "Get an API key \u2197";
+        } else {
+          keyLink.style.display = "none";
+        }
+        clearFieldError(keyInput);
+        clearFieldError(modelInput);
+        clearFieldError(urlInput);
       };
       select.addEventListener("change", sync);
       sync();
     },
     async next() {
-      const apiKey = document.getElementById("api-key")?.value || "";
-      const model = document.getElementById("model-input")?.value || "";
-      const baseUrl = document.getElementById("custom-url")?.value || "";
+      const apiKeyInput = document.getElementById("api-key");
+      const modelInput = document.getElementById("model-input");
+      const urlInput = document.getElementById("custom-url");
+
+      const apiKey = state.apiKey.trim();
+      const model = state.model.trim();
+      const baseUrl = state.baseUrl.trim();
+
+      const preset = PROVIDERS[state.provider];
+      const needsKey = preset ? preset.needsKey : true;
+
+      if (state.provider === "custom" && !baseUrl) {
+        setFieldError(urlInput, "Endpoint URL is required");
+        return false;
+      }
+      if (needsKey && !apiKey) {
+        setFieldError(apiKeyInput, "API key is required");
+        return false;
+      }
+      if (!model) {
+        setFieldError(modelInput, "Model name is required");
+        return false;
+      }
+
       await api("config", {
         method: "POST",
         body: JSON.stringify({
-          provider,
+          provider: state.provider,
           base_url: baseUrl || null,
           api_key: apiKey,
           model,
+          stt_model: state.sttModel || preset.sttModel || null,
+          tts_model: state.ttsModel || preset.ttsModel || null,
+          tts_voice: state.ttsVoice || preset.ttsVoice || null,
+          image_model: state.imageModel || preset.imageModel || null,
         }),
       });
+      return true;
     },
   },
   {
-    title: "Privacy and first contact",
+    title: "Privacy and First Contact",
     render() {
       bodyEl.appendChild(
         para(
@@ -334,7 +573,7 @@ const STEPS = [
       actions.appendChild(go);
       bodyEl.appendChild(actions);
       document.getElementById("provider-name").textContent =
-        PROVIDERS[provider].label.split(" (")[0];
+        PROVIDERS[state.provider].label.split(" (")[0];
     },
     async next() {},
   },
@@ -352,7 +591,14 @@ function depsSatisfied() {
   if (!detection) return false;
   const platform = detection.platform;
   if (platform === "win32" && !detection.wsl.found) return false;
-  return detection.podman.found || detection.docker.found;
+  const select = document.getElementById("engine-pill-select");
+  if (select && select.value === "docker") {
+    return Boolean(detection.docker.found);
+  }
+  if (select && select.value === "podman") {
+    return Boolean(detection.podman.found);
+  }
+  return Boolean(detection.podman.found || detection.docker.found);
 }
 
 function renderDependencies(result) {
@@ -378,30 +624,88 @@ function renderDependencies(result) {
       "download",
       result.wsl.found,
       "WSL2",
-      "Runs the Linux container",
-      () => installDependency("wsl", rows),
+      result.wsl.found
+        ? "Runs the Linux container"
+        : "Required for containers on Windows",
+      result.wsl.found ? null : () => installDependency("wsl", rows),
     );
   }
-  const engineFound = result.podman.found || result.docker.found;
-  addRow(
-    "download",
-    result.podman.found,
-    "Podman" + (result.podman.found ? "" : " (suggested)"),
-    result.podman.detail,
-    () => installDependency("podman", rows),
-  );
-  addRow("download", result.docker.found, "Docker", result.docker.detail, () =>
-    installDependency("docker", rows),
-  );
+
+  // Unified Container Engine Dropdown Pill
+  const engineRow = document.createElement("div");
+  engineRow.id = "engine-pill-row";
+
+  // Pre-selection: If Docker is installed and Podman is NOT, pre-select Docker.
+  // Otherwise default to Podman (recommended/rootless).
+  let selectedEngine =
+    result.docker.found && !result.podman.found ? "docker" : "podman";
+
+  const updateEngineRow = () => {
+    engineRow.innerHTML = "";
+    const isPodman = selectedEngine === "podman";
+    const engineData = isPodman ? result.podman : result.docker;
+    const isInstalled = Boolean(engineData.found);
+
+    if (isInstalled) {
+      engineRow.className = "row ok";
+      engineRow.innerHTML = GLYPH("check_circle");
+    } else {
+      engineRow.className = "row warn";
+      engineRow.innerHTML = GLYPH("download");
+    }
+
+    const select = document.createElement("select");
+    select.className = "engine-pill-select";
+    select.id = "engine-pill-select";
+
+    const optPodman = document.createElement("option");
+    optPodman.value = "podman";
+    optPodman.textContent = "Podman (suggested)";
+    select.appendChild(optPodman);
+
+    const optDocker = document.createElement("option");
+    optDocker.value = "docker";
+    optDocker.textContent = "Docker";
+    select.appendChild(optDocker);
+
+    select.value = selectedEngine;
+    select.addEventListener("change", (e) => {
+      selectedEngine = e.target.value;
+      updateEngineRow();
+      updateButtons();
+    });
+    engineRow.appendChild(select);
+
+    const detailSpan = document.createElement("span");
+    detailSpan.className = "detail";
+    detailSpan.textContent = isInstalled
+      ? engineData.detail || "Ready"
+      : "Not installed";
+    engineRow.appendChild(detailSpan);
+
+    if (!isInstalled) {
+      const installBtn = document.createElement("button");
+      installBtn.className = "setup-btn success";
+      installBtn.textContent = "Install";
+      installBtn.style.marginLeft = "8px";
+      installBtn.addEventListener("click", () =>
+        installDependency(selectedEngine, rows)
+      );
+      engineRow.appendChild(installBtn);
+    }
+  };
+
+  updateEngineRow();
+  rows.appendChild(engineRow);
+
   bodyEl.appendChild(rows);
 
-  if (!engineFound) {
+  if (!result.podman.found && !result.docker.found) {
     bodyEl.appendChild(
       para(
-        "Syna executes most commands inside of an isolated container, but" +
+        "Syna executes commands inside an isolated container, but" +
           " no container engine was found on your system. Podman is" +
-          " suggested because it runs rootless by default, for maximum" +
-          " safety.",
+          " suggested because it runs rootless by default.",
       ),
     );
   }
@@ -409,21 +713,20 @@ function renderDependencies(result) {
 
 function installDependency(name, container) {
   busy = true;
+  updateButtons();
   const status = document.createElement("p");
   status.className = "inline-status";
   status.innerHTML =
-    GLYPH("progress_activity", "spin") + " Installing " + name + "...";
+    SPINNER_SVG + "<span>Installing " + esc(name) + "...</span>";
   container.appendChild(status);
   api("install/" + name, { method: "POST" })
     .then((result) => {
       status.remove();
       if (result.status === "reboot_required") {
-        bodyEl.appendChild(
-          para(
-            name.toUpperCase() +
-              " was installed. Restart your computer, then run" +
-              " <b>syna-setup</b> again to continue.",
-          ),
+        showModal(
+          "Restart Required",
+          esc(name.toUpperCase()) +
+            " was installed. Please restart your computer, then launch Syna again to continue.",
         );
         nextBtn.disabled = true;
         return;
@@ -435,71 +738,50 @@ function installDependency(name, container) {
           renderDependencies(fresh);
         });
       }
-      renderInstallFailure(name, result.log || "");
+      showInstallFailure(name, result.log || "");
     })
-    .catch((error) => renderInstallFailure(name, error.message))
+    .catch((error) => showInstallFailure(name, error.message))
     .finally(() => {
       busy = false;
+      updateButtons();
     });
 }
 
-function renderInstallFailure(name, log) {
-  const friendly = {
-    wsl: "WSL2 is required to run containers on Windows.",
-    podman:
-      "Podman / Docker is required to create an isolated container for" +
-      " Syna to use, for maximum safety.",
-    docker:
-      "Podman / Docker is required to create an isolated container for" +
-      " Syna to use, for maximum safety.",
-  };
-  bodyEl.appendChild(
-    para(friendly[name] || "A required dependency failed to install."),
-  );
-  bodyEl.appendChild(
-    para(
-      "I couldn't find " +
-        name +
-        " on your system, and I tried to install it for you but it failed.",
-      "fineprint",
-    ),
-  );
-  bodyEl.appendChild(friendlyError("install " + name, log));
+function showInstallFailure(name, log) {
   const link =
     (detection && detection.docs && detection.docs[name]) || ISSUES_URL;
-  bodyEl.appendChild(
-    para(
-      'Check (<a href="' +
-        link +
-        '" target="_blank">this link</a>) to learn how to install ' +
-        esc(name) +
-        " yourself, then restart your computer to continue.",
-      "fineprint",
-    ),
-  );
+  const text =
+    "Failed to install " +
+    esc(name) +
+    '. You can install it manually from <a href="' +
+    link +
+    '" target="_blank">here</a>, then restart your terminal.';
+  showModal("Installation Failed", text, log);
 }
 
 async function runSanity(button) {
   button.disabled = true;
-  button.innerHTML = GLYPH("progress_activity", "spin") + " Checking...";
+  button.innerHTML = SPINNER_SVG + "<span>Checking...</span>";
   try {
     const results = await api("sanity", { method: "POST" });
     const failed = Object.values(results).filter((entry) => !entry.ok);
     if (failed.length) {
       button.disabled = false;
       button.textContent = "Let's Go!";
-      const box = friendlyError(
-        "reach " + (results.endpoint.detail || "your provider"),
-        Object.values(results)
-          .filter((entry) => !entry.ok)
-          .map((entry) => entry.detail)
-          .join("\n"),
+      const details = Object.values(results)
+        .filter((entry) => !entry.ok)
+        .map((entry) => entry.detail)
+        .join("\n");
+      showModal(
+        "Sanity Check Failed",
+        "Could not verify " + esc(results.endpoint.detail || "your provider settings") + ".",
+        details,
       );
-      document.querySelector(".setup-body").appendChild(box);
       return;
     }
     const done = para("Everything checks out. Welcome aboard!");
     bodyEl.appendChild(done);
+    button.disabled = false;
     button.textContent = "Start chatting";
     button.onclick = () => {
       window.location.href = "/";
@@ -507,16 +789,25 @@ async function runSanity(button) {
   } catch (error) {
     button.disabled = false;
     button.textContent = "Let's Go!";
-    document
-      .querySelector(".setup-body")
-      .appendChild(friendlyError("run the sanity check", error.message));
+    friendlyError("run the sanity check", error.message);
+  }
+}
+
+function updateButtons() {
+  backBtn.disabled = step === 0 || busy;
+  nextBtn.disabled = busy || (step === 1 && (!detection || !depsSatisfied()));
+  nextBtn.style.visibility = step === STEPS.length - 1 ? "hidden" : "visible";
+  if (!busy) {
+    nextBtn.innerHTML = "Next";
   }
 }
 
 function render() {
   bodyEl.innerHTML = "";
-  backBtn.disabled = step === 0 || busy;
-  nextBtn.style.visibility = step === STEPS.length - 1 ? "hidden" : "visible";
+  if (titleEl && STEPS[step]) {
+    titleEl.textContent = STEPS[step].title;
+  }
+  updateButtons();
   STEPS[step].render();
 }
 
@@ -530,16 +821,25 @@ backBtn.addEventListener("click", () => {
 nextBtn.addEventListener("click", async () => {
   if (busy) return;
   busy = true;
-  nextBtn.disabled = true;
+  nextBtn.innerHTML = SPINNER_SVG + "<span>Next</span>";
+  updateButtons();
   try {
-    await STEPS[step].next();
+    const ok = await STEPS[step].next();
+    if (ok === false) {
+      busy = false;
+      updateButtons();
+      return;
+    }
     step = Math.min(step + 1, STEPS.length - 1);
+    busy = false;
     render();
   } catch (error) {
-    bodyEl.appendChild(friendlyError("save your settings", error.message));
+    busy = false;
+    updateButtons();
+    friendlyError("save your settings", error.message);
   } finally {
     busy = false;
-    nextBtn.disabled = false;
+    updateButtons();
   }
 });
 

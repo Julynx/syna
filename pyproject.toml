@@ -41,8 +41,10 @@ dependencies = [
 ]
 
 [project.scripts]
-syna = "syna:main"
+syna = "syna.server:main"
+syna-agent = "syna.server:main"
 syna-server = "syna.server:main"
+syna-cli = "syna:main"
 syna-setup = "syna.setup:main"
 
 [project.urls]

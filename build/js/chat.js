@@ -5,6 +5,7 @@ const input = document.getElementById("input");
 const sendBtn = document.getElementById("send-btn");
 const attachBtn = document.getElementById("attach-btn");
 const newchatBtn = document.getElementById("newchat-btn");
+const settingsBtn = document.getElementById("settings-btn");
 const fileInput = document.getElementById("file-input");
 const statusRow = document.createElement("div");
 statusRow.className = "inline-status glass";
@@ -103,6 +104,9 @@ const GLYPH = (name, cls) =>
   "</span>";
 
 const ICONS = {
+  settings: GLYPH("settings"),
+  close: GLYPH("close"),
+  restore: GLYPH("restart_alt"),
   send: GLYPH("send"),
   stop: GLYPH("stop"),
   clip: GLYPH("attach_file"),
@@ -1353,8 +1357,513 @@ function uploadFiles(files) {
   }
 }
 
+const SPINNER_SVG =
+  '<svg class="btn-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>';
+
+async function openSettingsModal() {
+  const existing = document.querySelector(".settings-modal-backdrop");
+  if (existing) {
+    existing.remove();
+    return;
+  }
+
+  let data;
+  try {
+    const res = await fetch(withToken(API_BASE + "/api/settings"), {
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw new Error("Could not load settings (" + res.status + ")");
+    data = await res.json();
+  } catch (err) {
+    alert("Could not load settings: " + err.message);
+    return;
+  }
+
+  const env = { ...(data.env || {}) };
+  const config = { ...(data.config || {}) };
+  const defaults = { ...(data.defaults || {}) };
+  const providers = data.providers || {};
+
+  const initialSnapshot = JSON.stringify({ env, config });
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "settings-modal-backdrop";
+
+  const modal = document.createElement("div");
+  modal.className = "settings-modal";
+
+  // Header
+  const header = document.createElement("div");
+  header.className = "settings-modal-header";
+  header.innerHTML = `
+    <h3 class="settings-modal-title">${ICONS.settings}<span>Settings</span></h3>
+    <button class="icon-btn settings-close-btn" title="Close" aria-label="Close">${ICONS.close}</button>
+  `;
+  const closeBtn = header.querySelector(".settings-close-btn");
+  closeBtn.addEventListener("click", () => backdrop.remove());
+  modal.appendChild(header);
+
+  // Body
+  const body = document.createElement("div");
+  body.className = "settings-modal-body";
+
+  const dirtyCheck = () => {
+    const currentSnapshot = JSON.stringify({ env, config });
+    saveBtn.disabled = currentSnapshot === initialSnapshot;
+  };
+
+  const createField = ({
+    label,
+    desc,
+    value,
+    defaultValue,
+    isSelect,
+    options,
+    type = "text",
+    allowRestore = true,
+    onChange,
+  }) => {
+    const row = document.createElement("div");
+    row.className = "settings-row";
+
+    const rowHeader = document.createElement("div");
+    rowHeader.className = "settings-row-header";
+
+    const labelEl = document.createElement("label");
+    labelEl.className = "settings-label";
+    labelEl.textContent = label;
+    if (desc) labelEl.title = desc;
+    rowHeader.appendChild(labelEl);
+
+    let control;
+    let helpEl = null;
+
+    const updateHelp = () => {
+      if (!helpEl) return;
+      const cur = String(control.value || "").trim();
+      if (!cur && defaultValue !== undefined && defaultValue !== "") {
+        helpEl.textContent = `${defaultValue} (Default)`;
+      } else if (defaultValue !== undefined && defaultValue !== "") {
+        helpEl.textContent = `Default: ${defaultValue}`;
+      } else {
+        helpEl.textContent = "";
+      }
+    };
+
+    if (allowRestore && defaultValue !== undefined) {
+      const restoreBtn = document.createElement("button");
+      restoreBtn.className = "settings-restore-btn";
+      restoreBtn.title = "Restore recommended default";
+      restoreBtn.innerHTML = `${ICONS.restore}<span>Restore</span>`;
+      restoreBtn.addEventListener("click", () => {
+        control.value = defaultValue;
+        control.dispatchEvent(new Event("change"));
+        control.dispatchEvent(new Event("input"));
+      });
+      rowHeader.appendChild(restoreBtn);
+    }
+    row.appendChild(rowHeader);
+
+    if (isSelect) {
+      control = document.createElement("select");
+      control.className = "settings-select";
+      if (desc) control.title = desc;
+      for (const opt of options) {
+        const optEl = document.createElement("option");
+        optEl.value = opt.value;
+        optEl.textContent = opt.label;
+        control.appendChild(optEl);
+      }
+      control.value = value;
+      control.addEventListener("change", (e) => {
+        onChange(e.target.value);
+        dirtyCheck();
+      });
+      row.appendChild(control);
+    } else {
+      control = document.createElement("input");
+      control.className = "settings-input";
+      control.type = type;
+      control.value = value ?? "";
+      if (desc) control.title = desc;
+      control.addEventListener("input", (e) => {
+        onChange(e.target.value);
+        updateHelp();
+        dirtyCheck();
+      });
+      row.appendChild(control);
+
+      helpEl = document.createElement("p");
+      helpEl.className = "settings-help";
+      row.appendChild(helpEl);
+      updateHelp();
+    }
+
+    return { row, control };
+  };
+
+  // --- Category 1: Provider and API Key ---
+  const cat1 = document.createElement("div");
+  cat1.className = "settings-group";
+  cat1.innerHTML = '<h4 class="settings-category-title">Provider and API Key</h4>';
+
+  const providerOpts = [
+    { value: "openrouter", label: "OpenRouter (Recommended · Most tested)" },
+    { value: "openai", label: "OpenAI" },
+    { value: "google", label: "Google Gemini" },
+    { value: "ollama", label: "Ollama (local)" },
+    { value: "custom", label: "Custom endpoint" },
+  ];
+  const { row: providerRow } = createField({
+    label: "Provider",
+    desc: "Target LLM service provider.",
+    value: env.provider || "openrouter",
+    isSelect: true,
+    options: providerOpts,
+    allowRestore: false,
+    onChange: (val) => {
+      env.provider = val;
+      const preset = providers[val];
+      if (preset) {
+        if (preset.base_url) env.base_url = preset.base_url;
+        if (preset.model) env.model = preset.model;
+      }
+      urlFieldWrapper.style.display = val === "custom" ? "" : "none";
+      keyFieldWrapper.style.display = val === "ollama" ? "none" : "";
+    },
+  });
+  cat1.appendChild(providerRow);
+
+  const { row: keyRow } = createField({
+    label: "API Key",
+    desc: "Your secret API key for the chosen LLM provider.",
+    value: env.api_key || "",
+    type: "password",
+    allowRestore: false,
+    onChange: (val) => {
+      env.api_key = val;
+    },
+  });
+  const keyFieldWrapper = keyRow;
+  if (env.provider === "ollama") keyFieldWrapper.style.display = "none";
+  cat1.appendChild(keyFieldWrapper);
+
+  const { row: urlRow } = createField({
+    label: "Endpoint URL",
+    desc: "Base URL for the provider API.",
+    value: env.base_url || "",
+    defaultValue: defaults.base_url,
+    onChange: (val) => {
+      env.base_url = val;
+    },
+  });
+  const urlFieldWrapper = urlRow;
+  if (env.provider !== "custom") urlFieldWrapper.style.display = "none";
+  cat1.appendChild(urlFieldWrapper);
+
+  body.appendChild(cat1);
+
+  // --- Category 2: Text & Reasoning ---
+  const cat2 = document.createElement("div");
+  cat2.className = "settings-group";
+  cat2.innerHTML = '<h4 class="settings-category-title">Text & Reasoning</h4>';
+
+  const { row: modelRow } = createField({
+    label: "Main Model",
+    desc: "The primary agent model driven by Syna.",
+    value: env.model || "",
+    defaultValue: defaults.model,
+    onChange: (val) => {
+      env.model = val;
+    },
+  });
+  cat2.appendChild(modelRow);
+
+  const effortOpts = [
+    { value: "medium", label: "medium (Default)" },
+    { value: "none", label: "none" },
+    { value: "minimal", label: "minimal" },
+    { value: "low", label: "low" },
+    { value: "high", label: "high" },
+    { value: "xhigh", label: "xhigh" },
+    { value: "max", label: "max" },
+  ];
+  const { row: effortRow } = createField({
+    label: "Thinking Effort",
+    desc: "Reasoning budget/effort for reasoning models.",
+    value: env.thinking_effort || defaults.thinking_effort,
+    defaultValue: defaults.thinking_effort,
+    isSelect: true,
+    options: effortOpts,
+    onChange: (val) => {
+      env.thinking_effort = val;
+    },
+  });
+  cat2.appendChild(effortRow);
+
+  const { row: verifierModelRow } = createField({
+    label: "Verifier Model",
+    desc: "Optional reviewer model for the review_work tool (defaults to main model when unset).",
+    value: env.verifier_model || "",
+    defaultValue: "",
+    onChange: (val) => {
+      env.verifier_model = val;
+    },
+  });
+  cat2.appendChild(verifierModelRow);
+
+  const verifierEffortOpts = [
+    { value: "high", label: "high (Default)" },
+    { value: "none", label: "none" },
+    { value: "minimal", label: "minimal" },
+    { value: "low", label: "low" },
+    { value: "medium", label: "medium" },
+    { value: "xhigh", label: "xhigh" },
+    { value: "max", label: "max" },
+  ];
+  const { row: verifierEffortRow } = createField({
+    label: "Verifier Effort",
+    desc: "Reasoning effort for the review_work reviewer request.",
+    value: env.verifier_model_effort || defaults.verifier_model_effort,
+    defaultValue: defaults.verifier_model_effort,
+    isSelect: true,
+    options: verifierEffortOpts,
+    onChange: (val) => {
+      env.verifier_model_effort = val;
+    },
+  });
+  cat2.appendChild(verifierEffortRow);
+
+  body.appendChild(cat2);
+
+  // --- Category 3: Voice ---
+  const cat3 = document.createElement("div");
+  cat3.className = "settings-group";
+  cat3.innerHTML = '<h4 class="settings-category-title">Voice</h4>';
+
+  const { row: sttRow } = createField({
+    label: "Speech-to-Text Model (STT)",
+    desc: "Model used for transcribing microphone voice recordings.",
+    value: env.stt_model || "",
+    defaultValue: defaults.stt_model,
+    onChange: (val) => {
+      env.stt_model = val;
+    },
+  });
+  cat3.appendChild(sttRow);
+
+  const { row: ttsRow } = createField({
+    label: "Text-to-Speech Model (TTS)",
+    desc: "Model used for speaking agent responses aloud.",
+    value: env.tts_model || "",
+    defaultValue: defaults.tts_model,
+    onChange: (val) => {
+      env.tts_model = val;
+    },
+  });
+  cat3.appendChild(ttsRow);
+
+  const voiceOpts = [
+    { value: "Kore", label: "Kore (Default)" },
+    { value: "Alloy", label: "Alloy" },
+    { value: "Echo", label: "Echo" },
+    { value: "Fable", label: "Fable" },
+    { value: "Onyx", label: "Onyx" },
+    { value: "Nova", label: "Nova" },
+    { value: "Shimmer", label: "Shimmer" },
+  ];
+  const { row: voiceRow } = createField({
+    label: "TTS Voice",
+    desc: "Voice persona for speech synthesis.",
+    value: env.tts_voice || defaults.tts_voice,
+    defaultValue: defaults.tts_voice,
+    isSelect: true,
+    options: voiceOpts,
+    onChange: (val) => {
+      env.tts_voice = val;
+    },
+  });
+  cat3.appendChild(voiceRow);
+
+  const langOpts = [
+    { value: "en", label: "en - English (Default)" },
+    { value: "es", label: "es - Spanish" },
+    { value: "fr", label: "fr - French" },
+    { value: "de", label: "de - German" },
+    { value: "it", label: "it - Italian" },
+    { value: "pt", label: "pt - Portuguese" },
+    { value: "zh", label: "zh - Chinese" },
+    { value: "ja", label: "ja - Japanese" },
+    { value: "ko", label: "ko - Korean" },
+    { value: "auto", label: "auto - Detect Automatically" },
+  ];
+  const { row: langRow } = createField({
+    label: "Spoken Language",
+    desc: "Spoken language hint for voice transcription.",
+    value: env.speech_language || defaults.speech_language,
+    defaultValue: defaults.speech_language,
+    isSelect: true,
+    options: langOpts,
+    onChange: (val) => {
+      env.speech_language = val;
+    },
+  });
+  cat3.appendChild(langRow);
+
+  body.appendChild(cat3);
+
+  // --- Category 4: Images ---
+  const cat4 = document.createElement("div");
+  cat4.className = "settings-group";
+  cat4.innerHTML = '<h4 class="settings-category-title">Images</h4>';
+
+  const { row: imgRow } = createField({
+    label: "Image Generation Model",
+    desc: "Model used by the text_to_image tool to generate images.",
+    value: env.image_model || "",
+    defaultValue: defaults.image_model,
+    onChange: (val) => {
+      env.image_model = val;
+    },
+  });
+  cat4.appendChild(imgRow);
+
+  body.appendChild(cat4);
+
+  // --- Category 5: Advanced (collapsed by default) ---
+  const cat5 = document.createElement("details");
+  cat5.className = "settings-details";
+  const cat5Summary = document.createElement("summary");
+  cat5Summary.textContent = "Advanced Runtime Settings";
+  cat5.appendChild(cat5Summary);
+
+  const cat5Body = document.createElement("div");
+  cat5Body.className = "settings-group";
+  cat5Body.style.marginTop = "14px";
+
+  const { row: stepsRow } = createField({
+    label: "Max Steps Per Turn",
+    desc: "Maximum model requests allowed per turn.",
+    value: config.max_steps_per_turn,
+    defaultValue: defaults.max_steps_per_turn,
+    type: "number",
+    onChange: (val) => {
+      config.max_steps_per_turn = Number(val) || defaults.max_steps_per_turn;
+    },
+  });
+  cat5Body.appendChild(stepsRow);
+
+  const { row: cmdTimeoutRow } = createField({
+    label: "Command Timeout (seconds)",
+    desc: "Timeout in seconds for execute_command inside the pod.",
+    value: config.command_timeout_s,
+    defaultValue: defaults.command_timeout_s,
+    type: "number",
+    onChange: (val) => {
+      config.command_timeout_s = Number(val) || defaults.command_timeout_s;
+    },
+  });
+  cat5Body.appendChild(cmdTimeoutRow);
+
+  const { row: toolTimeoutRow } = createField({
+    label: "Tool Call Timeout (seconds)",
+    desc: "Timeout in seconds for individual tool calls before detaching.",
+    value: config.tool_call_timeout_s,
+    defaultValue: defaults.tool_call_timeout_s,
+    type: "number",
+    onChange: (val) => {
+      config.tool_call_timeout_s = Number(val) || defaults.tool_call_timeout_s;
+    },
+  });
+  cat5Body.appendChild(toolTimeoutRow);
+
+  const { row: memRow } = createField({
+    label: "Pod Memory Limit (MB)",
+    desc: "Pod memory ceiling in MB guarding the host against runaway processes.",
+    value: config.pod_memory_mb,
+    defaultValue: defaults.pod_memory_mb,
+    type: "number",
+    onChange: (val) => {
+      config.pod_memory_mb = Number(val) || defaults.pod_memory_mb;
+    },
+  });
+  cat5Body.appendChild(memRow);
+
+  const { row: ctxBudgetRow } = createField({
+    label: "Context Budget (tokens)",
+    desc: "Estimated-token ceiling for the entire conversation.",
+    value: config.context_budget_tokens,
+    defaultValue: defaults.context_budget_tokens,
+    type: "number",
+    onChange: (val) => {
+      config.context_budget_tokens = Number(val) || defaults.context_budget_tokens;
+    },
+  });
+  cat5Body.appendChild(ctxBudgetRow);
+
+  const { row: outLimitRow } = createField({
+    label: "Output Limit (chars)",
+    desc: "Tool output character ceiling above which output is cut to head and tail.",
+    value: config.max_command_output_chars,
+    defaultValue: defaults.max_command_output_chars,
+    type: "number",
+    onChange: (val) => {
+      config.max_command_output_chars = Number(val) || defaults.max_command_output_chars;
+    },
+  });
+  cat5Body.appendChild(outLimitRow);
+
+  cat5.appendChild(cat5Body);
+  body.appendChild(cat5);
+
+  modal.appendChild(body);
+
+  // Footer with Save and Restart
+  const footer = document.createElement("div");
+  footer.className = "settings-modal-footer";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "settings-save-btn";
+  saveBtn.textContent = "Save and Restart";
+  saveBtn.disabled = true;
+
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = SPINNER_SVG + "<span>Restarting...</span>";
+    try {
+      const res = await fetch(withToken(API_BASE + "/api/settings"), {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ env, config }),
+      });
+      if (!res.ok) throw new Error("Server returned " + res.status);
+      setTimeout(() => {
+        window.location.reload();
+      }, 1200);
+    } catch (err) {
+      alert("Failed to save settings: " + err.message);
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save and Restart";
+    }
+  });
+
+  footer.appendChild(saveBtn);
+  modal.appendChild(footer);
+
+  backdrop.appendChild(modal);
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) backdrop.remove();
+  });
+
+  document.body.appendChild(backdrop);
+}
+
 attachBtn.innerHTML = ICONS.clip;
 newchatBtn.innerHTML = ICONS.newchat;
+if (settingsBtn) {
+  settingsBtn.innerHTML = ICONS.settings;
+  settingsBtn.addEventListener("click", openSettingsModal);
+}
 setSendState();
 input.focus();
 

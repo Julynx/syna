@@ -10,6 +10,10 @@ def main() -> None:
     """Start the interactive agent loop."""
     try:
         ask_loop()
+    except ValueError as exc:
+        print(f"\n  ! Configuration error: {exc}")
+        print("\n    Please run 'syna' or 'syna-setup' to complete first-time setup.\n")
+        sys.exit(1)
     except KeyboardInterrupt:
         print("\n  + (Received CTRL+C)")
         sys.exit(0)

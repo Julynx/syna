@@ -3,10 +3,12 @@
 import asyncio
 import ipaddress
 import json
+import os
 import queue
 import re
 import secrets
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -16,6 +18,7 @@ from pathlib import Path
 from posixpath import basename, normpath
 
 import uvicorn
+from dotenv import dotenv_values
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -24,6 +27,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -338,6 +342,13 @@ async def _janitor_loop():
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.mount(
     "/vendor",
     StaticFiles(directory=str(asset_path("vendor"))),
@@ -372,6 +383,10 @@ def _loopback_binding() -> bool:
         return False
 
 
+LOCAL_ORIGIN_PATTERN = re.compile(r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$")
+HOST_HEADER_PATTERN = re.compile(r"^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$")
+
+
 def _host_header_allowed(host_header: str) -> bool:
     """Whether a request's Host header names this server's own address.
 
@@ -380,22 +395,14 @@ def _host_header_allowed(host_header: str) -> bool:
     """
     if not host_header or not _loopback_binding():
         return bool(host_header)
-    port = int(config.get("server_port", 8000))
-    return host_header.lower() in {
-        f"127.0.0.1:{port}",
-        f"localhost:{port}",
-        f"[::1]:{port}",
-    }
+    return bool(HOST_HEADER_PATTERN.match(host_header.lower()))
 
 
-def _local_origins() -> set[str]:
-    """The Origin values the served UI produces for this server."""
-    port = int(config.get("server_port", 8000))
-    return {
-        f"http://127.0.0.1:{port}",
-        f"http://localhost:{port}",
-        f"http://[::1]:{port}",
-    }
+def _is_local_origin(origin: str) -> bool:
+    """Whether an Origin header comes from a local loopback interface."""
+    if not origin:
+        return True
+    return bool(LOCAL_ORIGIN_PATTERN.match(origin.lower()))
 
 
 @app.middleware("http")
@@ -451,6 +458,7 @@ def setup_page():
     gui_config = {
         "auth_token": AUTH_TOKEN,
         "issues_url": setup.ISSUES_URL,
+        "initial_config": setup.config_status(),
     }
     payload = json.dumps(gui_config).replace("</", "<\\/")
     script = f"<script>window.SYNA_CONFIG = {payload};</script>"
@@ -458,12 +466,17 @@ def setup_page():
 
 
 class SetupConfigRequest(BaseModel):
-    """The provider settings the wizard's third step collects."""
+    """The provider settings the wizard collects."""
 
     provider: str
     base_url: str | None = None
     api_key: str = ""
     model: str
+    stt_model: str | None = None
+    tts_model: str | None = None
+    tts_voice: str | None = None
+    image_model: str | None = None
+    thinking_effort: str | None = None
 
 
 @app.post("/setup/api/config")
@@ -490,13 +503,24 @@ async def save_setup_config(request: SetupConfigRequest):
         raise HTTPException(status_code=400, detail="Unknown provider.")
     if not request.model.strip():
         raise HTTPException(status_code=400, detail="A model name is required.")
-    env_path = setup.write_env_file(
-        {
-            "OPENROUTER_API_KEY": request.api_key.strip(),
-            "MODEL": request.model.strip(),
-            "BASE_URL": base_url,
-        }
-    )
+
+    env_updates = {
+        "OPENROUTER_API_KEY": request.api_key.strip(),
+        "MODEL": request.model.strip(),
+        "BASE_URL": base_url,
+    }
+    if request.stt_model:
+        env_updates["STT_MODEL"] = request.stt_model.strip()
+    if request.tts_model:
+        env_updates["TTS_MODEL"] = request.tts_model.strip()
+    if request.tts_voice:
+        env_updates["TTS_VOICE"] = request.tts_voice.strip()
+    if request.image_model:
+        env_updates["IMAGE_MODEL"] = request.image_model.strip()
+    if request.thinking_effort:
+        env_updates["THINKING_EFFORT"] = request.thinking_effort.strip()
+
+    env_path = setup.write_env_file(env_updates)
     logger.info("Setup wrote %s", env_path)
     return {"status": "ok", "path": str(env_path)}
 
@@ -714,6 +738,146 @@ class SynthesisRequest(BaseModel):
     text: str
 
 
+class SettingsUpdateRequest(BaseModel):
+    """Payload for updating settings from the GUI."""
+
+    env: dict[str, str]
+    config: dict[str, Any]
+
+
+@app.get("/api/settings")
+def get_settings():
+    """Return all current settings, recommended defaults, and provider presets."""
+    env = dotenv_values(get_data_home() / ".env")
+    runtime_cfg = load_config()
+    defaults = {
+        "provider": "openrouter",
+        "api_key": "",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "~z-ai/glm-flash-latest",
+        "thinking_effort": "medium",
+        "verifier_model": "",
+        "verifier_model_effort": "high",
+        "stt_model": "google/chirp-3",
+        "tts_model": "google/gemini-3.8-flash-lite-tts",
+        "tts_voice": "Kore",
+        "speech_language": "en",
+        "image_model": "google/gemini-3.1-flash-image",
+        "max_steps_per_turn": 100,
+        "command_timeout_s": 50,
+        "tool_call_timeout_s": 60,
+        "pod_memory_mb": 8192,
+        "context_budget_tokens": 100000,
+        "max_command_output_chars": 40000,
+    }
+    current_base = (env.get("BASE_URL") or "").strip()
+    detected_provider = "openrouter"
+    if current_base:
+        for p_key, p_val in setup.PROVIDERS.items():
+            if p_val["base_url"].rstrip("/") == current_base.rstrip("/"):
+                detected_provider = p_key
+                break
+        else:
+            detected_provider = "custom"
+
+    return {
+        "env": {
+            "provider": detected_provider,
+            "api_key": (env.get("OPENROUTER_API_KEY") or "").strip(),
+            "base_url": current_base or defaults["base_url"],
+            "model": (env.get("MODEL") or "").strip() or defaults["model"],
+            "thinking_effort": (env.get("THINKING_EFFORT") or "").strip()
+            or defaults["thinking_effort"],
+            "verifier_model": (env.get("VERIFIER_MODEL") or "").strip(),
+            "verifier_model_effort": (env.get("VERIFIER_MODEL_EFFORT") or "").strip()
+            or defaults["verifier_model_effort"],
+            "stt_model": (env.get("STT_MODEL") or "").strip() or defaults["stt_model"],
+            "tts_model": (env.get("TTS_MODEL") or "").strip() or defaults["tts_model"],
+            "tts_voice": (env.get("TTS_VOICE") or "").strip() or defaults["tts_voice"],
+            "speech_language": (env.get("SPEECH_LANGUAGE") or "").strip()
+            or defaults["speech_language"],
+            "image_model": (env.get("IMAGE_MODEL") or "").strip()
+            or defaults["image_model"],
+        },
+        "config": {
+            "max_steps_per_turn": runtime_cfg.get(
+                "max_steps_per_turn", defaults["max_steps_per_turn"]
+            ),
+            "command_timeout_s": runtime_cfg.get(
+                "command_timeout_s", defaults["command_timeout_s"]
+            ),
+            "tool_call_timeout_s": runtime_cfg.get(
+                "tool_call_timeout_s", defaults["tool_call_timeout_s"]
+            ),
+            "pod_memory_mb": runtime_cfg.get(
+                "pod_memory_mb", defaults["pod_memory_mb"]
+            ),
+            "context_budget_tokens": runtime_cfg.get(
+                "context_budget_tokens", defaults["context_budget_tokens"]
+            ),
+            "max_command_output_chars": runtime_cfg.get(
+                "max_command_output_chars", defaults["max_command_output_chars"]
+            ),
+        },
+        "defaults": defaults,
+        "providers": setup.PROVIDERS,
+    }
+
+
+@app.post("/api/settings")
+async def save_settings(request: SettingsUpdateRequest):
+    """Save updated .env and config.json settings and schedule a server restart."""
+    from .config import save_config
+
+    env_data = request.env
+    env_updates = {}
+    if "api_key" in env_data:
+        env_updates["OPENROUTER_API_KEY"] = env_data["api_key"].strip()
+    if "base_url" in env_data:
+        env_updates["BASE_URL"] = env_data["base_url"].strip()
+    if "model" in env_data:
+        env_updates["MODEL"] = env_data["model"].strip()
+    if "thinking_effort" in env_data:
+        env_updates["THINKING_EFFORT"] = env_data["thinking_effort"].strip()
+    if "verifier_model" in env_data:
+        env_updates["VERIFIER_MODEL"] = env_data["verifier_model"].strip()
+    if "verifier_model_effort" in env_data:
+        env_updates["VERIFIER_MODEL_EFFORT"] = env_data["verifier_model_effort"].strip()
+    if "stt_model" in env_data:
+        env_updates["STT_MODEL"] = env_data["stt_model"].strip()
+    if "tts_model" in env_data:
+        env_updates["TTS_MODEL"] = env_data["tts_model"].strip()
+    if "tts_voice" in env_data:
+        env_updates["TTS_VOICE"] = env_data["tts_voice"].strip()
+    if "speech_language" in env_data:
+        env_updates["SPEECH_LANGUAGE"] = env_data["speech_language"].strip()
+    if "image_model" in env_data:
+        env_updates["IMAGE_MODEL"] = env_data["image_model"].strip()
+
+    setup.write_env_file(env_updates)
+
+    if request.config:
+        save_config(request.config)
+
+    # Invalidate caches and reset any open browser
+    load_config.cache_clear()
+    global speech_settings, config
+    config = load_config()
+    speech_settings = speech.load_speech_settings()
+    _reset_browser()
+
+    def _delayed_restart():
+        time.sleep(0.6)
+        try:
+            shutdown_all_sessions()
+        except Exception:
+            pass
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    threading.Thread(target=_delayed_restart, daemon=True).start()
+    return {"status": "ok", "restarting": True}
+
+
 @app.post("/api/speech/transcribe")
 async def transcribe_speech(file: UploadFile):
     """Transcribe a recorded voice clip into text."""
@@ -773,7 +937,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         # file:// fallback client and still needs the token; closing
         # before accepting denies the handshake with an HTTP 403.
         origin = websocket.headers.get("origin", "")
-        if origin and origin not in _local_origins():
+        if origin and not _is_local_origin(origin):
             await websocket.close(code=1008)
             return
         if websocket.query_params.get(AUTH_QUERY, "") != AUTH_TOKEN:
@@ -848,11 +1012,24 @@ def main():
     """Start the Syna web server."""
     global AUTH_TOKEN
     AUTH_TOKEN = secrets.token_urlsafe(32)
+    port = int(config.get("server_port", 8000))
+    host = str(config.get("server_host", "127.0.0.1"))
+    url = f"http://127.0.0.1:{port}/"
+
+    if setup.setup_incomplete():
+        import webbrowser
+
+        def open_browser():
+            time.sleep(1.5)
+            webbrowser.open(url)
+
+        threading.Thread(target=open_browser, daemon=True).start()
+
     try:
         uvicorn.run(
             app,
-            host=config.get("server_host", "127.0.0.1"),
-            port=config.get("server_port", 8000),
+            host=host,
+            port=port,
             log_level="info",
         )
     except KeyboardInterrupt:

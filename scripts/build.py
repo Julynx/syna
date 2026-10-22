@@ -29,6 +29,16 @@ TARGETS = [
 
 
 def _fill(build_dir: Path, html: str, css_files: list[str], js_files: list[str]) -> str:
+    css_markers = html.count("{{CSS}}")
+    if css_markers != len(css_files):
+        raise SystemExit(
+            f"Expected {len(css_files)} {{{{CSS}}}} markers, found {css_markers}"
+        )
+    js_markers = html.count("{{JS}}")
+    if js_markers != len(js_files):
+        raise SystemExit(
+            f"Expected {len(js_files)} {{{{JS}}}} markers, found {js_markers}"
+        )
     for name in css_files:
         source = (build_dir / "css" / name).read_text(encoding="utf-8")
         source = source.rstrip("\n") + "\n"
@@ -37,8 +47,6 @@ def _fill(build_dir: Path, html: str, css_files: list[str], js_files: list[str])
         source = (build_dir / "js" / name).read_text(encoding="utf-8")
         source = source.rstrip("\n") + "\n"
         html = html.replace("{{JS}}", "<script>\n" + source + "\n</script>", 1)
-    if "{{CSS}}" in html or "{{JS}}" in html:
-        raise SystemExit("Unfilled {{CSS}}/{{JS}} markers remain in a skeleton")
     return html
 
 

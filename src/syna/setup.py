@@ -42,7 +42,11 @@ PROVIDERS = {
         "name": "OpenRouter",
         "base_url": "https://openrouter.ai/api/v1",
         "keys_url": "https://openrouter.ai/settings/keys",
-        "model": "z-ai/glm-5.3-flash",
+        "model": "~z-ai/glm-flash-latest",
+        "stt_model": "google/chirp-3",
+        "tts_model": "google/gemini-3.8-flash-lite-tts",
+        "tts_voice": "Kore",
+        "image_model": "google/gemini-3.1-flash-image",
         "needs_key": True,
     },
     "openai": {
@@ -78,14 +82,14 @@ class DetectResult:
     detail: str = ""
 
 
-def _run_quiet(command: list[str]) -> tuple[bool, str]:
+def _run_quiet(command: list[str], timeout: float = 10.0) -> tuple[bool, str]:
     """Run a command and return (ok, last output lines) without raising."""
     try:
         completed = subprocess.run(
             command,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=timeout,
             encoding="utf-8",
             errors="replace",
         )
@@ -101,7 +105,7 @@ def detect_wsl() -> DetectResult:
     """Whether the Windows Subsystem for Linux is installed."""
     if sys.platform != "win32":
         return DetectResult("wsl", True, "not required on this platform")
-    found, _ = _run_quiet(["wsl", "--status"])
+    found, _ = _run_quiet(["wsl", "--status"], timeout=5.0)
     return DetectResult("wsl", found)
 
 
@@ -110,7 +114,7 @@ def detect_podman() -> DetectResult:
     binary = shutil.which("podman")
     if not binary:
         return DetectResult("podman", False, "not found on PATH")
-    found, tail = _run_quiet(["podman", "--version"])
+    found, tail = _run_quiet(["podman", "--version"], timeout=5.0)
     return DetectResult("podman", found, tail.splitlines()[-1] if tail else "")
 
 
@@ -119,7 +123,7 @@ def detect_docker() -> DetectResult:
     binary = shutil.which("docker")
     if not binary:
         return DetectResult("docker", False, "not found on PATH")
-    found, tail = _run_quiet(["docker", "--version"])
+    found, tail = _run_quiet(["docker", "--version"], timeout=5.0)
     return DetectResult("docker", found, tail.splitlines()[-1] if tail else "")
 
 
@@ -131,14 +135,22 @@ def detect_engine() -> DetectResult:
     return DetectResult("engine", False, "neither Podman nor Docker found")
 
 
+def _doc_platform() -> str:
+    """Normalize sys.platform to the key used in DOC_LINKS."""
+    if sys.platform == "win32":
+        return "windows"
+    return sys.platform
+
+
 def detect_all() -> dict:
     """The dependency status the wizard's first steps render."""
+    plat = _doc_platform()
     return {
         "platform": sys.platform,
         "wsl": detect_wsl().__dict__,
         "podman": detect_podman().__dict__,
         "docker": detect_docker().__dict__,
-        "docs": {name: links.get(sys.platform) for name, links in DOC_LINKS.items()},
+        "docs": {name: links.get(plat) for name, links in DOC_LINKS.items()},
         "issues_url": ISSUES_URL,
     }
 
@@ -157,16 +169,21 @@ def _winget(package_id: str) -> tuple[bool, str]:
             "--accept-source-agreements",
             "--accept-package-agreements",
             "--disable-interactivity",
-        ]
+        ],
+        timeout=180.0,
     )
 
 
 def _linux_install(package: str) -> tuple[bool, str]:
     """Best-effort install through the system package manager."""
     if shutil.which("apt-get"):
-        return _run_quiet(["sudo", "-n", "apt-get", "install", "-y", package])
+        return _run_quiet(
+            ["sudo", "-n", "apt-get", "install", "-y", package], timeout=180.0
+        )
     if shutil.which("dnf"):
-        return _run_quiet(["sudo", "-n", "dnf", "install", "-y", package])
+        return _run_quiet(
+            ["sudo", "-n", "dnf", "install", "-y", package], timeout=180.0
+        )
     return False, "No supported package manager was found (apt-get, dnf)."
 
 
@@ -178,7 +195,7 @@ def install_wsl() -> tuple[bool, str, bool]:
     """
     if sys.platform != "win32":
         return False, "WSL is only a Windows dependency.", False
-    found, tail = _run_quiet(["wsl", "--install", "--no-distribution"])
+    found, tail = _run_quiet(["wsl", "--install", "--no-distribution"], timeout=180.0)
     return found, tail, found
 
 
@@ -216,6 +233,11 @@ def write_env_file(values: dict[str, str]) -> Path:
     existing.update({key: value for key, value in values.items() if value})
     lines = [f"{key}={value}" for key, value in existing.items()]
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if sys.platform != "win32":
+        try:
+            env_path.chmod(0o600)
+        except OSError:
+            pass
     from .config import get_env  # noqa: PLC0415
 
     get_env.cache_clear()
@@ -239,11 +261,22 @@ def config_status() -> dict:
     api_key = (env.get("OPENROUTER_API_KEY") or "").strip()
     model = (env.get("MODEL") or "").strip()
     base_url = (env.get("BASE_URL") or "").strip()
+    stt_model = (env.get("STT_MODEL") or "").strip()
+    tts_model = (env.get("TTS_MODEL") or "").strip()
+    tts_voice = (env.get("TTS_VOICE") or "").strip()
+    image_model = (env.get("IMAGE_MODEL") or "").strip()
+    thinking_effort = (env.get("THINKING_EFFORT") or "").strip()
     return {
         "has_key": bool(api_key),
         "has_model": bool(model),
+        "api_key": api_key,
         "base_url": base_url,
         "model": model,
+        "stt_model": stt_model,
+        "tts_model": tts_model,
+        "tts_voice": tts_voice,
+        "image_model": image_model,
+        "thinking_effort": thinking_effort,
         "needs_key": endpoint_needs_key(base_url),
     }
 

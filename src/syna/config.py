@@ -40,6 +40,23 @@ def load_config() -> dict[str, Any]:
         return json.load(config_file)
 
 
+def save_config(updates: dict[str, Any]) -> Path:
+    """Merge updates into config.json in the Syna data home and clear cache."""
+    config_path = get_data_home() / "config.json"
+    current = {}
+    if config_path.is_file():
+        try:
+            with open(config_path, "r", encoding="utf-8") as config_file:
+                current = json.load(config_file)
+        except Exception:
+            current = {}
+    current.update(updates)
+    with open(config_path, "w", encoding="utf-8") as config_file:
+        json.dump(current, config_file, indent=2)
+    load_config.cache_clear()
+    return config_path
+
+
 def get_logger() -> logging.Logger:
     """Configure file-based logging for the application and return the logger."""
     config = load_config()
