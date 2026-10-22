@@ -1264,7 +1264,7 @@ function connect() {
 
 /* Probe the server before each reconnect. A 401 means this page holds a
    token from a previous server process (e.g. after Save and Restart);
-   reconnecting can never succeed, so stop the loop and ask for a reload. */
+   reconnecting can never succeed, so reload to pick up the fresh token. */
 function scheduleReconnect() {
   setTimeout(async () => {
     try {
@@ -1272,10 +1272,7 @@ function scheduleReconnect() {
         headers: authHeaders(),
       });
       if (probe.status === 401) {
-        setStatus("error", "Session expired");
-        banner.textContent =
-          "Session expired: the server restarted with new settings." +
-          ' Reload the page to continue.';
+        window.location.reload();
         return;
       }
     } catch (err) {
