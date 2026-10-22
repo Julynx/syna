@@ -15,6 +15,15 @@ DEFAULT_COMMAND_TIMEOUT_S = 50
 DEFAULT_TOOL_CALL_TIMEOUT_S = 60
 DEFAULT_OUTPUT_LIMIT_CHARS = 40000
 
+# Canonical provider model defaults. The first-run wizard, the settings
+# modal, and the runtime all read these; an unset .env value means the
+# default applies.
+DEFAULT_MODEL = "~z-ai/glm-flash-latest"
+DEFAULT_STT_MODEL = "google/chirp-3"
+DEFAULT_TTS_MODEL = "google/gemini-3.8-flash-lite-tts"
+DEFAULT_TTS_VOICE = "Kore"
+DEFAULT_IMAGE_MODEL = "google/gemini-3.1-flash-image"
+
 
 def load_output_limit_chars() -> int:
     """Return the character limit at which tool output is cut to head and tail."""

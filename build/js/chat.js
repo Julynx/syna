@@ -1508,13 +1508,11 @@ async function openSettingsModal() {
   cat1.innerHTML =
     '<h4 class="settings-category-title">Provider and API Key</h4>';
 
-  const providerOpts = [
-    { value: "openrouter", label: "OpenRouter (Recommended · Most tested)" },
-    { value: "openai", label: "OpenAI" },
-    { value: "google", label: "Google Gemini" },
-    { value: "ollama", label: "Ollama (local)" },
-    { value: "custom", label: "Custom endpoint" },
-  ];
+  const providerOpts = Object.entries(providers).map(([value, preset]) => ({
+    value,
+    label: preset.label || preset.name,
+  }));
+  providerOpts.push({ value: "custom", label: "Custom endpoint" });
   const { row: providerRow } = createField({
     label: "Provider",
     desc: "Target LLM service provider.",

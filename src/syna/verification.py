@@ -14,6 +14,7 @@ import threading
 
 from .ask_utils import ask_question
 from .config import (
+    DEFAULT_MODEL,
     get_env,
     get_logger,
     load_verify_log_tail_chars,
@@ -44,7 +45,7 @@ def current_conversation_log_provider():
 def load_verifier_model() -> str | None:
     """Return the reviewer model, defaulting to the agent's own model."""
     env = get_env()
-    return env.get("VERIFIER_MODEL") or env.get("MODEL")
+    return env.get("VERIFIER_MODEL") or env.get("MODEL") or DEFAULT_MODEL
 
 
 def load_verifier_effort() -> str:

@@ -8,14 +8,14 @@ from posixpath import basename
 from PIL import Image
 
 from .ask_utils import ask_question
-from .config import get_env, get_logger
+from .config import DEFAULT_MODEL, get_env, get_logger
 from .imaging import fit_image_to_box
 from .state import get_container
 
 
 def _load_model():
-    """Return the MODEL value from .env, or None when unset."""
-    return get_env().get("MODEL")
+    """Return the vision model, falling back to the default main model."""
+    return get_env().get("MODEL") or DEFAULT_MODEL
 
 
 def describe_image(file_path: str, question: str):

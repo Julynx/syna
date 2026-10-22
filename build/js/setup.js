@@ -7,6 +7,23 @@ const CONFIG = window.SYNA_CONFIG || {};
 const ISSUES_URL = CONFIG.issues_url || "https://github.com/Julynx/syna/issues";
 const INITIAL = CONFIG.initial_config || {};
 
+/* Provider presets come from the server (setup.PROVIDERS) so the wizard,
+   the settings modal, and the runtime share one source of truth. Only the
+   custom-endpoint entry is UI-only. */
+const PROVIDERS = Object.assign({}, CONFIG.providers || {}, {
+  custom: {
+    name: "Custom endpoint",
+    base_url: "",
+    keys_url: "",
+    model: "",
+    stt_model: "",
+    tts_model: "",
+    tts_voice: "",
+    image_model: "",
+    needs_key: true,
+  },
+});
+
 const bodyEl = document.getElementById("setup-body");
 const titleEl = document.getElementById("setup-title");
 const backBtn = document.getElementById("btn-back");
@@ -21,64 +38,6 @@ const GLYPH = (name, cls) =>
 
 const SPINNER_SVG =
   '<svg class="btn-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>';
-
-const PROVIDERS = {
-  openrouter: {
-    label: "OpenRouter (Recommended \u00b7 Most tested)",
-    baseUrl: "https://openrouter.ai/api/v1",
-    keysUrl: "https://openrouter.ai/settings/keys",
-    model: "~z-ai/glm-flash-latest",
-    sttModel: "google/chirp-3",
-    ttsModel: "google/gemini-3.8-flash-lite-tts",
-    ttsVoice: "Kore",
-    imageModel: "google/gemini-3.1-flash-image",
-    needsKey: true,
-  },
-  openai: {
-    label: "OpenAI",
-    baseUrl: "https://api.openai.com/v1",
-    keysUrl: "https://platform.openai.com/api-keys",
-    model: "gpt-4o-mini",
-    sttModel: "",
-    ttsModel: "",
-    ttsVoice: "",
-    imageModel: "",
-    needsKey: true,
-  },
-  google: {
-    label: "Google Gemini",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
-    keysUrl: "https://aistudio.google.com/apikey",
-    model: "gemini-2.5-flash",
-    sttModel: "",
-    ttsModel: "",
-    ttsVoice: "",
-    imageModel: "",
-    needsKey: true,
-  },
-  ollama: {
-    label: "Ollama (local)",
-    baseUrl: "http://localhost:11434/v1",
-    keysUrl: "",
-    model: "llama3.2",
-    sttModel: "",
-    ttsModel: "",
-    ttsVoice: "",
-    imageModel: "",
-    needsKey: false,
-  },
-  custom: {
-    label: "Custom endpoint",
-    baseUrl: "",
-    keysUrl: "",
-    model: "",
-    sttModel: "",
-    ttsModel: "",
-    ttsVoice: "",
-    imageModel: "",
-    needsKey: true,
-  },
-};
 
 // Persistent in-memory state preserved across Back/Next and prefilled from .env
 const state = {
@@ -324,7 +283,7 @@ const STEPS = [
       for (const [key, preset] of Object.entries(PROVIDERS)) {
         const option = document.createElement("option");
         option.value = key;
-        option.textContent = preset.label;
+        option.textContent = preset.label || preset.name;
         select.appendChild(option);
       }
       select.value = state.provider || "openrouter";
@@ -420,7 +379,7 @@ const STEPS = [
       const sttInput = document.createElement("input");
       sttInput.className = "setup-input";
       sttInput.id = "stt-model-input";
-      sttInput.value = state.sttModel || PROVIDERS[select.value].sttModel || "";
+      sttInput.value = state.sttModel || PROVIDERS[select.value].stt_model || "";
       sttInput.placeholder = "e.g. google/chirp-3";
       sttInput.addEventListener("input", () => {
         state.sttModel = sttInput.value.trim();
@@ -436,7 +395,7 @@ const STEPS = [
       const ttsInput = document.createElement("input");
       ttsInput.className = "setup-input";
       ttsInput.id = "tts-model-input";
-      ttsInput.value = state.ttsModel || PROVIDERS[select.value].ttsModel || "";
+      ttsInput.value = state.ttsModel || PROVIDERS[select.value].tts_model || "";
       ttsInput.placeholder = "e.g. google/gemini-3.8-flash-lite-tts";
       ttsInput.addEventListener("input", () => {
         state.ttsModel = ttsInput.value.trim();
@@ -453,7 +412,7 @@ const STEPS = [
       imgInput.className = "setup-input";
       imgInput.id = "image-model-input";
       imgInput.value =
-        state.imageModel || PROVIDERS[select.value].imageModel || "";
+        state.imageModel || PROVIDERS[select.value].image_model || "";
       imgInput.placeholder = "e.g. google/gemini-3.1-flash-image";
       imgInput.addEventListener("input", () => {
         state.imageModel = imgInput.value.trim();
@@ -472,7 +431,7 @@ const STEPS = [
         const preset = PROVIDERS[curProvider];
         urlField.style.display = curProvider === "custom" ? "" : "none";
         keyField.style.display =
-          preset.needsKey || curProvider === "custom" ? "" : "none";
+          preset.needs_key || curProvider === "custom" ? "" : "none";
         capSection.style.display =
           curProvider === "openrouter" || curProvider === "custom"
             ? ""
@@ -488,19 +447,19 @@ const STEPS = [
         }
 
         // Update voice & image defaults if unset or matching a preset default
-        if (preset.sttModel && !state.sttModel) {
-          sttInput.value = preset.sttModel;
+        if (preset.stt_model && !state.sttModel) {
+          sttInput.value = preset.stt_model;
         }
-        if (preset.ttsModel && !state.ttsModel) {
-          ttsInput.value = preset.ttsModel;
+        if (preset.tts_model && !state.ttsModel) {
+          ttsInput.value = preset.tts_model;
         }
-        if (preset.imageModel && !state.imageModel) {
-          imgInput.value = preset.imageModel;
+        if (preset.image_model && !state.imageModel) {
+          imgInput.value = preset.image_model;
         }
 
-        if (preset.keysUrl) {
+        if (preset.keys_url) {
           keyLink.style.display = "";
-          keyLink.href = preset.keysUrl;
+          keyLink.href = preset.keys_url;
           keyLink.textContent = "Get an API key \u2197";
         } else {
           keyLink.style.display = "none";
@@ -522,7 +481,7 @@ const STEPS = [
       const baseUrl = state.baseUrl.trim();
 
       const preset = PROVIDERS[state.provider];
-      const needsKey = preset ? preset.needsKey : true;
+      const needsKey = preset ? preset.needs_key : true;
 
       if (state.provider === "custom" && !baseUrl) {
         setFieldError(urlInput, "Endpoint URL is required");
@@ -544,10 +503,10 @@ const STEPS = [
           base_url: baseUrl || null,
           api_key: apiKey,
           model,
-          stt_model: state.sttModel || preset.sttModel || null,
-          tts_model: state.ttsModel || preset.ttsModel || null,
-          tts_voice: state.ttsVoice || preset.ttsVoice || null,
-          image_model: state.imageModel || preset.imageModel || null,
+          stt_model: state.sttModel || preset.stt_model || null,
+          tts_model: state.ttsModel || preset.tts_model || null,
+          tts_voice: state.ttsVoice || preset.tts_voice || null,
+          image_model: state.imageModel || preset.image_model || null,
         }),
       });
       return true;
@@ -581,8 +540,9 @@ const STEPS = [
       go.addEventListener("click", () => runSanity(go));
       actions.appendChild(go);
       bodyEl.appendChild(actions);
-      document.getElementById("provider-name").textContent =
-        PROVIDERS[state.provider].label.split(" (")[0];
+      document.getElementById("provider-name").textContent = (
+        PROVIDERS[state.provider].label || PROVIDERS[state.provider].name
+      ).split(" (")[0];
     },
     async next() {},
   },

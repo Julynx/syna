@@ -19,12 +19,16 @@ from pathlib import Path
 
 import httpx
 
-from .config import get_env, get_logger, load_config
+from .config import (
+    DEFAULT_TTS_VOICE,
+    get_env,
+    get_logger,
+    load_config,
+)
 
 TRANSCRIPTIONS_ENDPOINT = "https://openrouter.ai/api/v1/audio/transcriptions"
 SPEECH_ENDPOINT = "https://openrouter.ai/api/v1/audio/speech"
 
-DEFAULT_TTS_VOICE = "Kore"
 DEFAULT_TTS_RESPONSE_FORMAT = "pcm"
 DEFAULT_SPEECH_LANGUAGE = "en"
 DEFAULT_SILENCE_TIMEOUT_MS = 2000

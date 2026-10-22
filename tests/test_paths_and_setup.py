@@ -131,6 +131,11 @@ def test_write_env_file_merges_and_clears_cache(monkeypatch):
         setup_module.write_env_file({"MODEL": "m2"})
         assert get_env()["OPENROUTER_API_KEY"] == "sk-test", "merges, not replaces"
         assert get_env()["MODEL"] == "m2"
+
+        setup_module.write_env_file({"MODEL": "", "OPENROUTER_API_KEY": ""})
+        assert "MODEL" not in get_env(), "an empty value deletes the key"
+        assert "OPENROUTER_API_KEY" not in get_env()
+        assert "MODEL=" not in env_path.read_text(encoding="utf-8")
     finally:
         if previous is None:
             os.environ.pop("SYNA_HOME", None)
@@ -147,7 +152,21 @@ def test_provider_presets_are_complete():
             assert preset["keys_url"].startswith("https")
     openrouter = setup_module.PROVIDERS["openrouter"]
     assert "openrouter.ai/api/v1" in openrouter["base_url"]
-    assert "Most tested" not in openrouter["name"], "UI suffix lives in the frontend"
+    assert "Most tested" not in openrouter["name"], "UI suffix lives in the label"
+
+    from syna.config import (
+        DEFAULT_IMAGE_MODEL,
+        DEFAULT_MODEL,
+        DEFAULT_STT_MODEL,
+        DEFAULT_TTS_MODEL,
+        DEFAULT_TTS_VOICE,
+    )
+
+    assert openrouter["model"] == DEFAULT_MODEL
+    assert openrouter["stt_model"] == DEFAULT_STT_MODEL
+    assert openrouter["tts_model"] == DEFAULT_TTS_MODEL
+    assert openrouter["tts_voice"] == DEFAULT_TTS_VOICE
+    assert openrouter["image_model"] == DEFAULT_IMAGE_MODEL
 
 
 def test_detection_reports_data_not_exceptions():

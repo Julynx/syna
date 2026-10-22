@@ -17,7 +17,15 @@ from dataclasses import dataclass
 
 from dotenv import dotenv_values
 
-from .config import get_data_home, load_config
+from .config import (
+    DEFAULT_IMAGE_MODEL,
+    DEFAULT_MODEL,
+    DEFAULT_STT_MODEL,
+    DEFAULT_TTS_MODEL,
+    DEFAULT_TTS_VOICE,
+    get_data_home,
+    load_config,
+)
 
 ISSUES_URL = "https://github.com/Julynx/syna/issues"
 
@@ -40,13 +48,14 @@ DOC_LINKS = {
 PROVIDERS = {
     "openrouter": {
         "name": "OpenRouter",
+        "label": "OpenRouter (Recommended \u00b7 Most tested)",
         "base_url": "https://openrouter.ai/api/v1",
         "keys_url": "https://openrouter.ai/settings/keys",
-        "model": "~z-ai/glm-flash-latest",
-        "stt_model": "google/chirp-3",
-        "tts_model": "google/gemini-3.8-flash-lite-tts",
-        "tts_voice": "Kore",
-        "image_model": "google/gemini-3.1-flash-image",
+        "model": DEFAULT_MODEL,
+        "stt_model": DEFAULT_STT_MODEL,
+        "tts_model": DEFAULT_TTS_MODEL,
+        "tts_voice": DEFAULT_TTS_VOICE,
+        "image_model": DEFAULT_IMAGE_MODEL,
         "needs_key": True,
     },
     "openai": {
@@ -222,7 +231,11 @@ def install_docker() -> tuple[bool, str]:
 
 
 def write_env_file(values: dict[str, str]) -> Path:
-    """Merge the given keys into the .env file in the Syna data home."""
+    """Merge the given keys into the .env file in the Syna data home.
+
+    A key mapped to an empty value is removed from the file, so a setting
+    cleared in the GUI stops overriding its built-in default.
+    """
     data_home = get_data_home()
     env_path = data_home / ".env"
     existing = {
@@ -230,7 +243,11 @@ def write_env_file(values: dict[str, str]) -> Path:
         for key, value in dotenv_values(env_path).items()
         if value is not None
     }
-    existing.update({key: value for key, value in values.items() if value})
+    for key, value in values.items():
+        if value:
+            existing[key] = value
+        else:
+            existing.pop(key, None)
     lines = [f"{key}={value}" for key, value in existing.items()]
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     if sys.platform != "win32":
@@ -256,10 +273,14 @@ def endpoint_needs_key(base_url: str) -> bool:
 
 
 def config_status() -> dict:
-    """Whether the provider settings exist and look complete."""
+    """Whether the provider settings exist and look complete.
+
+    A cleared MODEL never makes the setup incomplete: the runtime falls
+    back to DEFAULT_MODEL, so the report reflects the effective value.
+    """
     env = dotenv_values(get_data_home() / ".env")
     api_key = (env.get("OPENROUTER_API_KEY") or "").strip()
-    model = (env.get("MODEL") or "").strip()
+    model = (env.get("MODEL") or "").strip() or DEFAULT_MODEL
     base_url = (env.get("BASE_URL") or "").strip()
     stt_model = (env.get("STT_MODEL") or "").strip()
     tts_model = (env.get("TTS_MODEL") or "").strip()
@@ -319,7 +340,7 @@ def sanity_check() -> dict:
     from .session import create_model_client, load_base_url  # noqa: PLC0415
 
     get_env.cache_clear()
-    model = (get_env().get("MODEL") or "").strip()
+    model = (get_env().get("MODEL") or "").strip() or DEFAULT_MODEL
     try:
         with create_model_client() as client:
             client.chat.send(

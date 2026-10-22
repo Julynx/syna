@@ -72,14 +72,14 @@ workflows keep working unchanged.
 | Key | Purpose |
 | --- | --- |
 | `OPENROUTER_API_KEY` | API key for the configured endpoint (any OpenAI-compatible provider's key goes here; the variable name predates multi-endpoint support). |
-| `MODEL` | Main agent model. |
+| `MODEL` | Main agent model (default `~z-ai/glm-flash-latest` when unset). |
 | `BASE_URL` | OpenAI-like endpoint URL (default `https://openrouter.ai/api/v1`; also OpenAI, Gemini's compatibility layer, a local Ollama, or any compatible endpoint). Image generation and the speech tools are OpenRouter-only and report themselves as not configured elsewhere. |
 | `STT_MODEL` | Voice transcription model (voice dictation off when unset). |
 | `TTS_MODEL` | Speech synthesis model (reply read-aloud off when unset). |
 | `TTS_VOICE` | Synthesis voice (default `Kore`). |
 | `TTS_RESPONSE_FORMAT` | Speech endpoint response format (default `pcm`; raw samples are wrapped in a WAV container server-side). Some models, e.g. OpenAI TTS, also accept `mp3`. |
 | `IMAGE_MODEL` | Image generation model for the `text_to_image` tool (tool reports itself as not configured when unset), e.g. `google/gemini-3.1-flash-image`. |
-| `VERIFIER_MODEL` | Reviewer model for the `review_work` tool (defaults to `MODEL` when unset). |
+| `VERIFIER_MODEL` | Reviewer model for the `review_work` tool (defaults to `MODEL`, then the default model, when unset). |
 | `VERIFIER_MODEL_EFFORT` | Reasoning effort for the reviewer request (default `high`). |
 | `SPEECH_LANGUAGE` | Spoken language hint for STT (default `en`). |
 
@@ -480,11 +480,13 @@ elsewhere) with the log tail returned for the wizard's error box; WSL
 reports `reboot_required`. `write_env_file` merges keys into the data
 home `.env` and clears the env cache; `endpoint_needs_key` exempts
 local endpoints; `setup_incomplete()` (checked live on every request,
-so finishing the wizard flips the server in-process) requires a model,
-a key unless local, and an engine; `sanity_check()` runs the engine
-probe and a one-token chat completion against the configured endpoint.
-`PROVIDERS` holds the preset base URLs, key-page links, and default
-models (OpenRouter, OpenAI, Google Gemini, Ollama).
+so finishing the wizard flips the server in-process) requires a key
+unless local, an engine, and treats a missing MODEL as satisfied since
+the runtime falls back to `config.DEFAULT_MODEL`; `sanity_check()` runs
+the engine probe and a one-token chat completion against the configured
+endpoint. `PROVIDERS` holds the preset base URLs, key-page links, and
+default models (OpenRouter, OpenAI, Google Gemini, Ollama), sourced
+from the canonical constants in `config.py`.
 
 ### `src/syna/parse.py`
 Tool-call parsing and execution under native OpenRouter tool calling.

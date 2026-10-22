@@ -42,6 +42,11 @@ from pydantic import BaseModel
 
 from . import interaction, setup, speech
 from .config import (
+    DEFAULT_IMAGE_MODEL,
+    DEFAULT_MODEL,
+    DEFAULT_STT_MODEL,
+    DEFAULT_TTS_MODEL,
+    DEFAULT_TTS_VOICE,
     asset_path,
     get_data_home,
     get_logger,
@@ -462,6 +467,7 @@ def setup_page():
         "auth_token": AUTH_TOKEN,
         "issues_url": setup.ISSUES_URL,
         "initial_config": setup.config_status(),
+        "providers": setup.PROVIDERS,
     }
     payload = json.dumps(gui_config).replace("</", "<\\/")
     script = f"<script>window.SYNA_CONFIG = {payload};</script>"
@@ -508,10 +514,11 @@ async def save_setup_config(request: SetupConfigRequest):
         raise HTTPException(status_code=400, detail="A model name is required.")
 
     env_updates = {
-        "OPENROUTER_API_KEY": request.api_key.strip(),
         "MODEL": request.model.strip(),
         "BASE_URL": base_url,
     }
+    if request.api_key.strip():
+        env_updates["OPENROUTER_API_KEY"] = request.api_key.strip()
     if request.stt_model:
         env_updates["STT_MODEL"] = request.stt_model.strip()
     if request.tts_model:
@@ -757,15 +764,15 @@ def get_settings():
         "provider": "openrouter",
         "api_key": "",
         "base_url": "https://openrouter.ai/api/v1",
-        "model": "~z-ai/glm-flash-latest",
+        "model": DEFAULT_MODEL,
         "thinking_effort": "medium",
         "verifier_model": "",
         "verifier_model_effort": "high",
-        "stt_model": "google/chirp-3",
-        "tts_model": "google/gemini-3.8-flash-lite-tts",
-        "tts_voice": "Kore",
+        "stt_model": DEFAULT_STT_MODEL,
+        "tts_model": DEFAULT_TTS_MODEL,
+        "tts_voice": DEFAULT_TTS_VOICE,
         "speech_language": "en",
-        "image_model": "google/gemini-3.1-flash-image",
+        "image_model": DEFAULT_IMAGE_MODEL,
         "max_steps_per_turn": 100,
         "command_timeout_s": 50,
         "tool_call_timeout_s": 60,
@@ -787,20 +794,20 @@ def get_settings():
         "env": {
             "provider": detected_provider,
             "api_key": (env.get("OPENROUTER_API_KEY") or "").strip(),
-            "base_url": current_base or defaults["base_url"],
-            "model": (env.get("MODEL") or "").strip() or defaults["model"],
+            "base_url": current_base,
+            "model": (env.get("MODEL") or "").strip(),
             "thinking_effort": (env.get("THINKING_EFFORT") or "").strip()
             or defaults["thinking_effort"],
             "verifier_model": (env.get("VERIFIER_MODEL") or "").strip(),
             "verifier_model_effort": (env.get("VERIFIER_MODEL_EFFORT") or "").strip()
             or defaults["verifier_model_effort"],
-            "stt_model": (env.get("STT_MODEL") or "").strip() or defaults["stt_model"],
-            "tts_model": (env.get("TTS_MODEL") or "").strip() or defaults["tts_model"],
-            "tts_voice": (env.get("TTS_VOICE") or "").strip() or defaults["tts_voice"],
+            "stt_model": (env.get("STT_MODEL") or "").strip(),
+            "tts_model": (env.get("TTS_MODEL") or "").strip(),
+            "tts_voice": (env.get("TTS_VOICE") or "").strip()
+            or defaults["tts_voice"],
             "speech_language": (env.get("SPEECH_LANGUAGE") or "").strip()
             or defaults["speech_language"],
-            "image_model": (env.get("IMAGE_MODEL") or "").strip()
-            or defaults["image_model"],
+            "image_model": (env.get("IMAGE_MODEL") or "").strip(),
         },
         "config": {
             "max_steps_per_turn": runtime_cfg.get(

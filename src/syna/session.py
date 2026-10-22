@@ -26,6 +26,7 @@ from .compaction import (
     load_compaction_prompt,
 )
 from .config import (
+    DEFAULT_MODEL,
     get_env,
     get_logger,
     get_session_dump_path,
@@ -993,7 +994,5 @@ class AgentSession:
         self.on_event(event)
 
     def _require_model(self):
-        model = get_env().get("MODEL")
-        if not model:
-            raise ValueError("MODEL not found in .env file.")
+        model = get_env().get("MODEL") or DEFAULT_MODEL
         return model
