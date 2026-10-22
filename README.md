@@ -15,24 +15,10 @@
 <hr />
 
 <p align="center">
-  <a
-    href="https://pypi.org/project/syna-agent/"
-    target="_blank"
-  >
-    <img
-      src="https://raw.githubusercontent.com/Julynx/julynx/refs/heads/main/assets/download.png"
-      height="48"
-    /> </a>
-  <br /><br />
-  <code>uv tool install syna-agent</code>
-  <br />
-  <span><sub>or <code>pip install syna-agent</code></sub></span>
+  <h3 align="center"><code>uv tool install syna-agent</code></h3>
 </p>
 
 ![Syna chat interface](website/assets/screenshot.png)
-
-<!-- TODO: drop real screenshots into website/assets/screenshot.png
-     (chat UI) and screenshot2.png (voice mode / visualizer) -->
 
 ![Syna voice mode with the ambient visualizer](website/assets/screenshot2.png)
 
