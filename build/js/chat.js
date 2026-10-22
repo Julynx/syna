@@ -1794,7 +1794,7 @@ async function openSettingsModal() {
       categoryToggle(
         "image_generation_enabled",
         false,
-        "Allow the model to generate images (off by default: it is expensive and model-initiated)",
+        "Allow the model to generate images",
       ),
     ),
   );
