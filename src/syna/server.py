@@ -68,6 +68,8 @@ EVENT_LOG_MAX_ITEMS = 500
 JANITOR_INTERVAL_S = 15
 NEW_CHAT_STOP_TIMEOUT_S = 20
 IMAGE_CACHE_LIMIT = 32
+SERVER_ENTRY_POINT = "syna-server"
+EXECUTABLE_SUFFIXES = (".exe", ".bat", ".cmd")
 
 SERVED_IMAGE_EXTENSIONS = {
     ".png": "image/png",
@@ -866,17 +868,59 @@ async def save_settings(request: SettingsUpdateRequest):
     config = load_config()
     speech_settings = speech.load_speech_settings()
     _reset_browser()
-
-    def _delayed_restart():
-        time.sleep(0.6)
-        try:
-            shutdown_all_sessions()
-        except Exception:
-            pass
-        os.execv(sys.executable, [sys.executable] + sys.argv)
-
-    threading.Thread(target=_delayed_restart, daemon=True).start()
+    _spawn_restart()
     return {"status": "ok", "restarting": True}
+
+
+def _restart_argv() -> list[str]:
+    """Build the argv that re-executes the server after a settings save.
+
+    Preference order: the current entry point (an entry-point executable
+    is re-executed directly, a script through the current interpreter),
+    the globally installed syna-server (any PATH entry outside the active
+    virtualenv), `uv run syna-server` for checkouts without a resolvable
+    entry point, and finally the current interpreter with the original
+    arguments.
+    """
+    argv0 = Path(sys.argv[0])
+    candidate = argv0 if argv0.is_file() else argv0.with_suffix(".exe")
+    if candidate.is_file():
+        if candidate.suffix.lower() in EXECUTABLE_SUFFIXES:
+            return [str(candidate), *sys.argv[1:]]
+        return [sys.executable, str(candidate), *sys.argv[1:]]
+    venv_root = Path(sys.prefix).resolve()
+    found = shutil.which(SERVER_ENTRY_POINT)
+    if found and not Path(found).resolve().is_relative_to(venv_root):
+        return [found, *sys.argv[1:]]
+    uv = shutil.which("uv")
+    if uv:
+        return [uv, "run", SERVER_ENTRY_POINT, *sys.argv[1:]]
+    return [sys.executable, str(argv0), *sys.argv[1:]]
+
+
+def _delayed_restart():
+    time.sleep(0.6)
+    try:
+        shutdown_all_sessions()
+    except Exception:
+        pass
+    argv = _restart_argv()
+    get_logger().info("Restarting server with: %s", argv)
+    print(f"Restarting server with: {' '.join(argv)}", file=sys.stderr, flush=True)
+    try:
+        os.execv(argv[0], argv)
+    except OSError as exc:
+        get_logger().exception("Failed to restart the server with %s", argv)
+        print(
+            f"Failed to restart the server with {' '.join(argv)}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise
+
+
+def _spawn_restart() -> None:
+    threading.Thread(target=_delayed_restart, daemon=True).start()
 
 
 @app.post("/api/speech/transcribe")
