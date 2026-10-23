@@ -58,6 +58,8 @@
 
    Then, open your browser and go to the following url: `http://127.0.0.1:8000`
 
+---
+
 ### Using Syna (CLI)
 
 1. Before you start, run the following command:
