@@ -61,8 +61,10 @@ function extractMath(source) {
     return "MQ" + (mathStore.length - 1) + "QM";
   });
   const unshieldDollars = (s) =>
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: \x00D is a placeholder sentinel for shielded `$` text
     s.replace(/\x00D(\d+)\x00/g, (_, i) => dollarStore[+i]);
   text = unshieldDollars(text);
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: \x00C is a placeholder sentinel for shielded code blocks
   text = text.replace(/\x00C(\d+)\x00/g, (_, i) => codeStore[+i]);
   mathStore.forEach((item) => {
     item.src = unshieldDollars(item.src);

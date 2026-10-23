@@ -465,16 +465,19 @@ function expandToolRun(run) {
   if (wrap && !REDUCE) {
     cancelAnim(wrap);
     wrap.style.overflow = "hidden";
-    rows.forEach((row) => cancelAnim(row));
+    rows.forEach((row) => {
+      cancelAnim(row);
+    });
     wrap.classList.remove("collapsed");
     const target = wrap.getBoundingClientRect().height;
-    const anim = (wrap._anim = wrap.animate(
+    wrap._anim = wrap.animate(
       [
         { height: "0px", marginTop: -CHAT_GAP + "px" },
         { height: target + "px", marginTop: "0px" },
       ],
       { duration: 520, easing: EASE_OUT, fill: "backwards" },
-    ));
+    );
+    const anim = wrap._anim;
     anim.onfinish = () => {
       wrap._anim = null;
       if (!run.expanded) return;
@@ -492,7 +495,9 @@ function expandToolRun(run) {
     });
   } else if (wrap) {
     wrap.classList.remove("collapsed");
-    rows.forEach((row) => cancelAnim(row));
+    rows.forEach((row) => {
+      cancelAnim(row);
+    });
   }
   updateToolRunThinking();
   if (stick) followBottom(900);
@@ -527,13 +532,14 @@ function collapseToolRun(run) {
     );
     Promise.all(fades.map((fade) => fade.finished.catch(() => {}))).then(() => {
       if (run.expanded) return;
-      const anim = (wrap._anim = wrap.animate(
+      wrap._anim = wrap.animate(
         [
           { height: start + "px", marginTop: "0px" },
           { height: "0px", marginTop: -CHAT_GAP + "px" },
         ],
         { duration: 420, easing: EASE_IN, fill: "forwards" },
-      ));
+      );
+      const anim = wrap._anim;
       anim.onfinish = () => {
         wrap.classList.add("collapsed");
         wrap.style.overflow = "";
@@ -770,9 +776,9 @@ function toggleDetail(row) {
   }
   const detail = document.createElement("div");
   detail.className = "tool-detail";
-  (row._detailSections || []).forEach((section) =>
-    detail.appendChild(detailSection(section)),
-  );
+  (row._detailSections || []).forEach((section) => {
+    detail.appendChild(detailSection(section));
+  });
   if (!detail.childElementCount) return;
   row._detailOpen = true;
   row.classList.add("detail-open");

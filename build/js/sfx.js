@@ -369,9 +369,9 @@ const Sfx = (() => {
     Sfx.setOn(!Sfx.on);
     paint();
   });
-  ["pointerdown", "keydown"].forEach((ev) =>
-    addEventListener(ev, () => Sfx.unlock(), { capture: true }),
-  );
+  ["pointerdown", "keydown"].forEach((ev) => {
+    addEventListener(ev, () => Sfx.unlock(), { capture: true });
+  });
   document.addEventListener("click", (e) => {
     if (e.target.closest("#send-btn, #sound-btn, .see-btn, .tool-row")) return;
     if (e.target.closest("button, a.file-chip")) Sfx.play("click");

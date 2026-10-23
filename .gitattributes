@@ -1,1 +1,11 @@
+# Normalize all text files to LF in the repository and on checkout.
 * text=auto eol=lf
+
+# Binary assets must never be line-ending normalized.
+*.png binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+
+# Vendored third-party assets: never normalize or re-encode; keep upstream bytes.
+src/syna/assets/vendor/** -text

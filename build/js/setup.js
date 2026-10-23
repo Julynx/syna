@@ -194,7 +194,9 @@ function clearFieldError(inputEl) {
   inputEl.classList.remove("error");
   const parent = inputEl.closest(".setup-field");
   if (parent) {
-    parent.querySelectorAll(".field-error").forEach((el) => el.remove());
+    parent.querySelectorAll(".field-error").forEach((el) => {
+      el.remove();
+    });
   }
 }
 
@@ -379,7 +381,8 @@ const STEPS = [
       const sttInput = document.createElement("input");
       sttInput.className = "setup-input";
       sttInput.id = "stt-model-input";
-      sttInput.value = state.sttModel || PROVIDERS[select.value].stt_model || "";
+      sttInput.value =
+        state.sttModel || PROVIDERS[select.value].stt_model || "";
       sttInput.placeholder = "e.g. google/chirp-3";
       sttInput.addEventListener("input", () => {
         state.sttModel = sttInput.value.trim();
@@ -395,7 +398,8 @@ const STEPS = [
       const ttsInput = document.createElement("input");
       ttsInput.className = "setup-input";
       ttsInput.id = "tts-model-input";
-      ttsInput.value = state.ttsModel || PROVIDERS[select.value].tts_model || "";
+      ttsInput.value =
+        state.ttsModel || PROVIDERS[select.value].tts_model || "";
       ttsInput.placeholder = "e.g. google/gemini-3.8-flash-lite-tts";
       ttsInput.addEventListener("input", () => {
         state.ttsModel = ttsInput.value.trim();

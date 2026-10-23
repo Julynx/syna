@@ -84,7 +84,9 @@ const Voice = (() => {
       pill.remove();
       return;
     }
-    pill.getAnimations().forEach((anim) => anim.cancel());
+    pill.getAnimations().forEach((anim) => {
+      anim.cancel();
+    });
     pill.style.overflow = "hidden";
     const cs = getComputedStyle(pill);
     const anim = pill.animate(
@@ -190,7 +192,9 @@ const Voice = (() => {
       meterContext = null;
     }
     if (recorderStream) {
-      recorderStream.getTracks().forEach((track) => track.stop());
+      recorderStream.getTracks().forEach((track) => {
+        track.stop();
+      });
       recorderStream = null;
     }
     recorder = null;
