@@ -70,7 +70,7 @@
    It saves them into an `.env` file in `~/.syna`.
 
    <details>
-     <summary>If you want to do this manually</summary>
+     <summary>[If you want to do this manually...]</summary>
 
      Create a new file in `~/.syna/.env` with the following contents:
 
