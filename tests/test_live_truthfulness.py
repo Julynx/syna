@@ -71,6 +71,7 @@ class LocalSandboxContainer:
             command = argv[2]
             proc = subprocess.run(
                 [self.bash_path, "-c", command],
+                check=False,
                 capture_output=True,
                 text=True,
                 cwd=str(self.root),
@@ -81,6 +82,7 @@ class LocalSandboxContainer:
 
         proc = subprocess.run(
             argv,
+            check=False,
             capture_output=True,
             text=True,
             cwd=str(self.root),

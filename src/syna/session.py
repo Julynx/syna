@@ -122,7 +122,7 @@ def build_prompt():
     tools = _get_tool_metadata(_tools_path())
 
     tool_blocks = [f"### {tool['name']}\n{tool['docstring']}" for tool in tools]
-    prompt = template.replace("{tools}", "\n\n".join(tool_blocks))
+    prompt = template.replace("{tools}", "\n\n".join(tool_blocks))  # noqa: RUF027
     prompt = prompt.replace("{{CURRENT_DATE}}", date.today().isoformat())
     prompt = prompt.replace("{{COMMAND_TIMEOUT}}", str(load_command_timeout_s()))
     prompt = prompt.replace("{{OUTPUT_LIMIT}}", str(load_output_limit_chars()))

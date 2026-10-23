@@ -100,7 +100,7 @@ def _capture_review_request(monkeypatch, reply="findings: none"):
         return {"content": reply}
 
     monkeypatch.setattr(verification, "ask_question", fake_ask_question)
-    monkeypatch.setattr(session_module, "create_model_client", lambda: FakeClient())
+    monkeypatch.setattr(session_module, "create_model_client", FakeClient)
     return calls
 
 
@@ -358,7 +358,7 @@ def test_run_turn_wires_the_reviewer_end_to_end(monkeypatch):
         return {"content": "review findings: none"}
 
     monkeypatch.setattr(verification, "ask_question", fake_ask_question)
-    monkeypatch.setattr(session_module, "create_model_client", lambda: FakeClient())
+    monkeypatch.setattr(session_module, "create_model_client", FakeClient)
     monkeypatch.setattr(verification, "get_env", lambda: {"MODEL": "agent/main"})
 
     session = AgentSession(session_id="review-e2e")

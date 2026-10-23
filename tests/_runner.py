@@ -31,7 +31,7 @@ class MonkeyPatch:
 
     def setitem(self, mapping, key, value):
         """Override mapping[key] and remember the previous state."""
-        previous = mapping[key] if key in mapping else _MISSING
+        previous = mapping.get(key, _MISSING)
         mapping[key] = value
         self._undo_stack.append(("item", mapping, key, previous))
 

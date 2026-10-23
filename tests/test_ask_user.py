@@ -153,7 +153,7 @@ def test_cancelled_question_fails_the_batch_and_skips_the_rest():
             _stub_call("call_1", "ask_user", question_text=QUESTION, choices=[]),
             _stub_call("call_2", "think", thought="never"),
         ]
-        outcome, events = _parse(calls)
+        outcome, _events = _parse(calls)
     finally:
         if original_ask is not None:
             parse.TOOL_REGISTRY["ask_user"] = original_ask

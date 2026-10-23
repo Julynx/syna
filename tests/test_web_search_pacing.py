@@ -57,7 +57,7 @@ def _run_concurrent_searches(thread_count):
 def test_concurrent_searches_do_not_overlap():
     intervals = _run_concurrent_searches(4)
     assert len(intervals) == 4
-    for (_, end_a), (start_b, _) in zip(intervals, intervals[1:]):
+    for (_, end_a), (start_b, _) in zip(intervals, intervals[1:], strict=False):
         assert start_b >= end_a + DELAY_S - 0.01
 
 

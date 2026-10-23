@@ -145,7 +145,7 @@ def test_live_engines_return_results():
 
 def test_broken_first_engine_falls_through():
     original_engines = web_search._ENGINES
-    web_search._ENGINES = (BROKEN_ENGINE,) + original_engines
+    web_search._ENGINES = (BROKEN_ENGINE, *original_engines)
     try:
         results = web_search._browser_search(QUERY)
     finally:

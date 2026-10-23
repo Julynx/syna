@@ -642,7 +642,7 @@ def test_session_internal_batch_error_closes_tool_group():
 
     tool_messages = [m for m in session.messages if m["role"] == "tool"]
     assert len(tool_messages) == 1, "the unanswered call must be closed"
-    assert "call_1" == tool_messages[0]["tool_call_id"]
+    assert tool_messages[0]["tool_call_id"] == "call_1"
     assert any(
         e["type"] == "error" and "Tool batch execution failed" in e["text"]
         for e in events

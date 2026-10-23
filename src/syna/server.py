@@ -575,7 +575,7 @@ async def upload_file(client_id: str, file: UploadFile, dest: str | None = None)
         record.wait_for_container()
         with tempfile.TemporaryDirectory(prefix="syna-upload-") as temp_dir:
             local_path = Path(temp_dir, safe_name)
-            local_path.write_bytes(await file.read())
+            await asyncio.to_thread(local_path.write_bytes, await file.read())
             await asyncio.to_thread(
                 record.container.copy_to, str(local_path), destination
             )
@@ -1039,12 +1039,13 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 content = str(data.get("content", "")).strip()
                 if not content:
                     continue
-                if record.pending_question.active:
-                    # A pending ask_user question is waiting: this message
-                    # is the typed answer, not the start of a new turn.
-                    if record.answer_pending_question(content):
-                        record.push({"type": "user_message", "content": content})
-                        continue
+                # A pending ask_user question is waiting: this message
+                # is the typed answer, not the start of a new turn.
+                if record.pending_question.active and record.answer_pending_question(
+                    content
+                ):
+                    record.push({"type": "user_message", "content": content})
+                    continue
                 record.push(
                     {
                         "type": "user_message",

@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import dotenv_values
 
@@ -96,6 +97,7 @@ def _run_quiet(command: list[str], timeout: float = 10.0) -> tuple[bool, str]:
     try:
         completed = subprocess.run(
             command,
+            check=False,
             capture_output=True,
             text=True,
             timeout=timeout,

@@ -423,6 +423,7 @@ class BrowserSession:
         self._cm = None
         self.context = None
         self.page = None
+        self._background_tasks: set[asyncio.Task] = set()
         self._last: tuple[str, list[str]] | None = None
         self._last_nav_url: str | None = None
         self._last_click_at = 0.0
@@ -512,6 +513,17 @@ class BrowserSession:
                 return True
         return False
 
+    def _spawn(self, coro) -> None:
+        """Schedule a fire-and-forget task while keeping a reference to it.
+
+        asyncio only holds weak references to running tasks: without keeping
+        one, a task can be garbage-collected mid-flight and any exception it
+        raises is silently dropped.
+        """
+        task = asyncio.ensure_future(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
     def _on_websocket(self, ws) -> None:
         """Kill WebSocket connections that bypass the request policy.
 
@@ -525,7 +537,7 @@ class BrowserSession:
             get_logger().info(
                 "Browser blocked WebSocket to %.200s: %s", ws.url, decision.reason
             )
-            asyncio.ensure_future(self._close_websocket(ws))
+            self._spawn(self._close_websocket(ws))
 
     async def _close_websocket(self, ws) -> None:
         try:
@@ -555,7 +567,7 @@ class BrowserSession:
         """A renderer crash must never end the session: reload transparently."""
         get_logger().warning("Browser page crashed: %.200s", page.url)
         self._last = None
-        asyncio.ensure_future(self._recover_from_crash(page))
+        self._spawn(self._recover_from_crash(page))
 
     def _on_page_error(self, error) -> None:
         get_logger().debug("Page JS error: %.300s", error)
@@ -609,7 +621,7 @@ class BrowserSession:
         self._watch_page(p)
         if time.monotonic() - self._last_click_at > POPUP_ADOPT_WINDOW_S:
             get_logger().info("Closing unsolicited popup: %.200s", p.url)
-            asyncio.ensure_future(self._close_quietly(p))
+            self._spawn(self._close_quietly(p))
             return
         self.page = p
         self._last = None
@@ -677,12 +689,12 @@ class BrowserSession:
 
         if diff and prev and prev[0] == url:
             old = set(prev[1])
-            new = [l for l in lines if l not in old]
+            new = [line for line in lines if line not in old]
             removed = len(old - set(lines))
             if len(new) < 0.6 * max(len(lines), 1):
                 if not new and not removed:
                     return head + "(no visible changes)"
-                body = "\n".join("+ " + l.strip() for l in new)
+                body = "\n".join("+ " + line.strip() for line in new)
                 return self._truncate(
                     head
                     + f"(changes since last view: {len(new)} added, {removed} removed; "
@@ -847,7 +859,7 @@ class BrowserSession:
                     text = await el.input_value()
             else:
                 text = await el.inner_text()
-        text = "\n".join(l.strip() for l in text.splitlines() if l.strip())
+        text = "\n".join(line.strip() for line in text.splitlines() if line.strip())
         return text[:max_chars] + ("\n... [truncated]" if len(text) > max_chars else "")
 
     async def screenshot_bytes(self) -> bytes:

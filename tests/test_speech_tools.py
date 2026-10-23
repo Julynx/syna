@@ -144,7 +144,6 @@ def test_text_to_speech_saves_audio(monkeypatch):
     assert pod_path.startswith("/workspace/audio/speech-")
     assert pod_path.endswith(".wav")
     assert "share_file" in result
-    written = [source for source, _ in container.copied]
     assert _copied_bytes(container) == FAKE_WAV
 
 
@@ -168,7 +167,6 @@ def test_text_to_image_saves_image(monkeypatch):
     assert pod_path.startswith("/workspace/images/generated-")
     assert pod_path.endswith(".png")
     assert "describe_image" in result
-    written = [source for source, _ in container.copied]
     assert _copied_bytes(container) == b"\x89PNG-bytes"
 
 
@@ -216,7 +214,7 @@ def test_text_to_image_reports_api_errors(monkeypatch):
 
 
 def test_missing_pod_file_is_a_clean_error(monkeypatch):
-    container = _configure(FakeContainer(), monkeypatch, transcript="ignored")
+    _configure(FakeContainer(), monkeypatch, transcript="ignored")
 
     result = tools.speech_to_text("/workspace/nothing.wav")
 

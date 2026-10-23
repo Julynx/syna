@@ -42,7 +42,9 @@ def get_function_metadata(file_path):
                         "default": None,
                     }
                 )
-            for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults):
+            for arg, default in zip(
+                node.args.kwonlyargs, node.args.kw_defaults, strict=False
+            ):
                 args.append(
                     {
                         "name": arg.arg,

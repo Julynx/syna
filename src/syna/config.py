@@ -152,9 +152,9 @@ def load_verify_log_tail_chars() -> int:
 __all__ = [
     "asset_path",
     "get_data_home",
-    "read_asset_text",
     "load_command_timeout_s",
     "load_config",
     "load_output_limit_chars",
     "load_tool_call_timeout_s",
+    "read_asset_text",
 ]
