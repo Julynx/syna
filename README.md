@@ -18,7 +18,7 @@
   <h3 align="center"><code>uv tool install syna-agent</code></h3>
 </p>
 
-![Syna chat interface](website/assets/screenshot.png)
+![Syna chat interface](https://raw.githubusercontent.com/Julynx/syna/main/website/assets/screenshot.png)
 
 ## You're getting the full kit
 
