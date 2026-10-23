@@ -104,7 +104,7 @@ workflows keep working unchanged.
 | `user_message_archive_min_chars` | User message length at which the message is archived verbatim into the pod and annotated with its path (default 2000). |
 | `user_messages_dest` | Pod directory holding the archived user messages (default `/user_messages`). |
 | `verify_log_tail_chars` | How many characters of the serialized conversation log the `review_work` reviewer receives (default 128000). |
-| `max_history_messages` | History length that triggers compaction. |
+| `max_history_messages` | History length that triggers compaction as a safety net for degenerate all-small-message histories; the token budget is the primary trigger. |
 | `enable_compaction` | Master switch for history compaction. |
 | `max_visible_tool_calls` | UI limit on rendered tool rows. |
 | `voice_enabled` | Voice category toggle (default `true`): off hides the mic, disables the top-bar voice icon, and makes the speech tools report themselves as unavailable. |
@@ -118,6 +118,12 @@ workflows keep working unchanged.
 | `voice.silence_threshold_dbfs` | Loudness level treated as silence. |
 | `voice.max_recording_ms` | Hard cap on one voice recording. |
 | `voice.voice_mode_on` | Initial voice-mode state pushed to the client on every fresh session (page load, new chat, server restart). Accepts booleans and "true"/"false" strings; voice never persists across sessions. |
+
+The data-home `config.json` is seeded from the bundled defaults on first run
+and is never re-merged with them afterwards. Upgrading the package therefore
+does not change any value in an existing install: a changed default (for
+example a recalibrated `max_history_messages`) must be applied by hand to
+`~/.syna/config.json` (repo root in a checkout).
 
 Static assets are bundled in `src/syna/assets/`: `prompt.md` (system prompt template with a
 `{tools}` placeholder where live tool documentation is injected, plus the
@@ -373,11 +379,15 @@ validates and dispatches.
 
 ### `src/syna/compaction.py`
 History-compaction support: loads the compaction prompt, renders history as a
-labeled transcript (`[user]`, `[tool_results]`, `[harness_notice]`,
-`[assistant]`), and builds the summarization request. Compaction summaries are
-wrapped with the `COMPACTION` sentinel channel and `<harness_notice>` tags
-(`format_compaction_message`) and detected via `is_summary_message` so repeated
-compactions merge rather than duplicate.
+labeled transcript (`[pinned user request]`, `[user]`, `[tool_results]`,
+`[harness_notice]`, `[assistant]`, `[previous summary]`), and builds the
+summarization request. The first real user message is kept verbatim in history
+after compaction and is additionally shown to the summarizer as the
+`[pinned user request]` block, so summaries represent the user's request
+faithfully instead of inferring the task. Compaction summaries are wrapped
+with the `COMPACTION` sentinel channel and `<harness_notice>` tags
+(`format_compaction_message`) and detected via `is_summary_message` so
+repeated compactions merge rather than duplicate.
 
 ### `src/syna/context.py`
 Token estimation and elision for context management:
@@ -672,9 +682,13 @@ the settings the web client needs for voice mode. Failures raise
   debugging information).
 - Neutral abort wording: after 3 consecutive failures, the task is ended with
   neutral language (the word "terminated" is completely removed).
-- Compacts history when reaching `max_history_messages`, retaining the system
-  prompt, first real user message, the compaction summary, and the trailing
-  atomic tool group.
+- Compacts history when reaching `max_history_messages` (a safety net; the
+  token budget is the primary trigger), retaining the system prompt, first
+  real user message, the compaction summary, and the trailing atomic tool
+  group. The first real user message is also included in the summarizer's
+  transcript as a labeled `[pinned user request]` block, so the summary
+  reflects the user's actual request; the summary notice states which parts
+  were kept verbatim.
 - Emits JSON events (`status`, `tool_call`, `model_message`, `compaction`,
   `error`) with quiet corrective statuses and full `raw`/`arguments` details.
   When a tool's raw return value is a dict it also travels as

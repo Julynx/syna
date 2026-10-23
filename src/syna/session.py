@@ -55,7 +55,7 @@ from .verification import (
 OUTPUT_PREVIEW_CHARS = 512
 DETAIL_CAP_CHARS = 6000
 DEFAULT_REQUEST_DELAY_S = 2
-DEFAULT_MAX_HISTORY_MESSAGES = 100
+DEFAULT_MAX_HISTORY_MESSAGES = 300
 DEFAULT_ENABLE_COMPACTION = True
 DEFAULT_MAX_STEPS_PER_TURN = 100
 DEFAULT_STEP_WARNING_REMAINING = 20
@@ -722,7 +722,9 @@ class AgentSession:
         before every request, and additionally whenever the token budget is
         exceeded. Summarization is the lossy fallback and only runs when the
         message count hits its interval or the token budget is still exceeded
-        after eliding.
+        after eliding. The first user message is excluded from summarization
+        and stays verbatim in history, but it is shown to the summarizer as a
+        labeled block so the summary represents the user's request faithfully.
         """
         if not self.compaction_enabled:
             return
@@ -739,12 +741,19 @@ class AgentSession:
         compactable = self._select_compactable(history)
         if not compactable:
             return
+        pinned_index = self._first_user_index(history)
+        pinned_content = (
+            history[pinned_index].get("content") if pinned_index is not None else None
+        )
+        pinned_message = pinned_content if isinstance(pinned_content, str) else None
         self._emit({"type": "status", "text": "Compacting history..."})
         try:
             summary_msg = ask_question(
                 self.client,
                 self.model,
-                build_compaction_messages(self.compaction_prompt, compactable),
+                build_compaction_messages(
+                    self.compaction_prompt, compactable, pinned_message
+                ),
                 delay=self.request_delay,
                 effort=self.thinking_effort,
                 response_format=None,

@@ -10,9 +10,13 @@ continue the task, do not answer the user, do not make decisions. Summarize.
 
 You receive the conversation as a transcript of labeled blocks:
 
-- `[user]:` messages written directly by the user.
+- `[pinned user request]:` Represent it faithfully in the summary:
+  quote it as-is when it is short; when it is long, summarize it without
+  losing any goal, constraint, or emphasis. It may contain a pointer to a 
+  verbatim archive file inside the pod; keep that pointer in the summary.
+- `[user]:` later messages written directly by the user.
 - `[tool_results]:` execution results returned by tools running in the pod.
-- `[system_note]:` operational notices and feedback emitted by the harness.
+- `[harness_notice]:` operational notices and feedback emitted by the harness.
 - `[assistant]:` messages written by the agent, containing its JSON tool calls.
 - `[previous summary]:` the summary produced by an earlier compaction.
   Merge it with the newer messages into one updated summary. Do not treat
@@ -24,7 +28,9 @@ Everything needed to resume the work seamlessly without the original
 messages:
 
 - The user's requests and goals, including every refinement, correction, and
-  constraint they stated.
+  constraint they stated. Represent the pinned first request faithfully:
+  quote it verbatim when it is short; when it is long, summarize it without
+  losing any of its goals, constraints, or emphasis.
 - Facts learned during the conversation: configuration values, versions,
   paths, URLs, names, and any other literal data worth keeping.
 - Files and directories created, modified, or deleted, with their absolute

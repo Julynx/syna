@@ -13,10 +13,17 @@ def load_compaction_prompt() -> str:
 
 
 def format_compaction_message(summary: str) -> str:
-    """Format a compaction summary into a harness notice on the compaction channel."""
+    """Format a compaction summary into a harness notice on the compaction channel.
+
+    The wording mirrors the post-compaction history layout: the user's first
+    message sits before this notice and the trailing messages after it, both
+    kept verbatim.
+    """
     explanation = (
-        "The conversation grew too long, so the earlier messages (except the"
-        f" first) were replaced by the following summary:\n\n{summary.strip()}"
+        "The conversation grew too long, so the earlier messages were replaced"
+        " by the following summary. The user's first message (before this"
+        " notice) and the most recent messages (after it) are kept in full:"
+        f"\n\n{summary.strip()}"
     )
     return wrap_channel(COMPACTION_CHANNEL_KIND, harness_notice(explanation))
 
@@ -35,8 +42,13 @@ def extract_summary_text(content: str) -> str:
         body = unwrapped[1].strip()
         explanation_marker = ":\n\n"
         if explanation_marker in body:
-            return body.split(explanation_marker, 1)[1].strip()
-        return body
+            extracted = body.split(explanation_marker, 1)[1]
+        else:
+            extracted = body
+        closing_tag = "</harness_notice>"
+        if extracted.rstrip().endswith(closing_tag):
+            extracted = extracted.rstrip()[: -len(closing_tag)]
+        return extracted.strip()
     if content.startswith(COMPACTION_NOTE_PREFIX):
         return content[len(COMPACTION_NOTE_PREFIX) :].strip()
     return content.strip()
@@ -90,15 +102,30 @@ def build_transcript(messages: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
-def build_compaction_messages(system_prompt: str, messages: list[dict]) -> list[dict]:
-    """Assemble the message list for one compaction request."""
+def build_compaction_messages(
+    system_prompt: str,
+    messages: list[dict],
+    pinned_user_message: str | None = None,
+) -> list[dict]:
+    """Assemble the message list for one compaction request.
+
+    `pinned_user_message` is the conversation's first real user message. It
+    stays verbatim in history after compaction, so the summarizer receives it
+    as its own labeled block and can represent it faithfully instead of
+    inferring the task from the rest of the transcript. The pinned message is
+    expected to be plain text; non-string content is passed as None and the
+    summarizer then receives no pinned block.
+    """
+    transcript = build_transcript(messages)
+    if pinned_user_message:
+        pinned_block = f"[pinned user request]:\n{pinned_user_message}"
+        transcript = f"{pinned_block}\n\n{transcript}" if transcript else pinned_block
     return [
         {"role": "system", "content": system_prompt},
         {
             "role": "user",
             "content": (
-                "Summarize the following conversation transcript:\n\n"
-                + build_transcript(messages)
+                "Summarize the following conversation transcript:\n\n" + transcript
             ),
         },
     ]

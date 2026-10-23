@@ -24,7 +24,7 @@
   "user_message_archive_min_chars": 2000,
   "user_messages_dest": "/user_messages",
   "verify_log_tail_chars": 128000,
-  "max_history_messages": 100,
+  "max_history_messages": 300,
   "enable_compaction": true,
   "max_visible_tool_calls": 3,
   "log_file": "syna.log",

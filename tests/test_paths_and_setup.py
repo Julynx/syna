@@ -1,5 +1,6 @@
 """Tests for the filesystem layout and the first-run setup logic."""
 
+import json
 import os
 import sys
 import tempfile
@@ -13,6 +14,7 @@ from _runner import run_suite
 from syna import paths
 from syna import setup as setup_module
 from syna.config import read_asset_text
+from syna.session import DEFAULT_MAX_HISTORY_MESSAGES
 
 
 def test_bundled_assets_resolve():
@@ -20,6 +22,11 @@ def test_bundled_assets_resolve():
     assert "red-team" in text
     assert paths.asset_path("vendor").is_dir()
     assert paths.asset_path("chat.html").is_file()
+
+
+def test_bundled_config_matches_code_defaults():
+    bundled = json.loads(read_asset_text("config.json"))
+    assert bundled["max_history_messages"] == DEFAULT_MAX_HISTORY_MESSAGES == 300
 
 
 def test_data_home_respects_syna_home_override(monkeypatch):
@@ -268,6 +275,7 @@ def main():
     run_suite(
         [
             test_bundled_assets_resolve,
+            test_bundled_config_matches_code_defaults,
             test_data_home_respects_syna_home_override,
             test_repo_checkout_uses_repo_root,
             test_endpoint_needs_key_matrix,

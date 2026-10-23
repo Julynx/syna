@@ -191,9 +191,7 @@ def test_text_to_image_without_config_reports_user_configuration(monkeypatch):
 def test_text_to_image_requires_openrouter_endpoint(monkeypatch):
     container = FakeContainer()
     monkeypatch.setattr(tools, "get_container", lambda: container)
-    monkeypatch.setattr(
-        tools, "load_image_settings", lambda: ImageSettings(model=None)
-    )
+    monkeypatch.setattr(tools, "load_image_settings", lambda: ImageSettings(model=None))
     monkeypatch.setattr(tools, "image_generation_enabled", lambda: True)
 
     result = tools.text_to_image("a cat")

@@ -807,8 +807,7 @@ def get_settings():
             or defaults["verifier_model_effort"],
             "stt_model": (env.get("STT_MODEL") or "").strip(),
             "tts_model": (env.get("TTS_MODEL") or "").strip(),
-            "tts_voice": (env.get("TTS_VOICE") or "").strip()
-            or defaults["tts_voice"],
+            "tts_voice": (env.get("TTS_VOICE") or "").strip() or defaults["tts_voice"],
             "speech_language": (env.get("SPEECH_LANGUAGE") or "").strip()
             or defaults["speech_language"],
             "image_model": (env.get("IMAGE_MODEL") or "").strip(),

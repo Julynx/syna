@@ -63,9 +63,7 @@ def image_generation_enabled() -> bool:
     strictly opt-in.
     """
     return bool(
-        load_config().get(
-            "image_generation_enabled", DEFAULT_IMAGE_GENERATION_ENABLED
-        )
+        load_config().get("image_generation_enabled", DEFAULT_IMAGE_GENERATION_ENABLED)
     )
 
 

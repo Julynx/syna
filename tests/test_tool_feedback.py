@@ -8,7 +8,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from syna.channel import is_channel_message, unwrap_channel
-from syna.compaction import is_summary_message
+from syna.compaction import (
+    extract_summary_text,
+    format_compaction_message,
+    is_summary_message,
+)
 from syna.session import AgentSession
 from syna.tools import TOOL_REGISTRY
 
@@ -311,7 +315,92 @@ def test_session_compaction_channel_detection():
     assert len(summary_messages) == 1
     assert is_channel_message(summary_messages[0], "COMPACTION")
     assert "compacted summary of progress" in summary_messages[0]
+
+    assert session.messages[0]["role"] == "system"
+    assert session.messages[1]["content"] == "user request"
+    assert is_summary_message(session.messages[2]["content"])
+    assert session.messages[3]["content"] == "next request"
+
+    compaction_request = session.client.requests[0]["messages"][1]["content"]
+    pinned_section = (
+        compaction_request.split("[pinned user request]:", 1)[1]
+        .split("\n\n", 1)[0]
+        .strip()
+    )
+    assert pinned_section == "user request"
+    assert "[assistant]:" in compaction_request
+    assert "[user]:\nnext request" not in compaction_request
     print("PASS history compaction uses the sentinel channel and is detected properly")
+
+
+def test_compaction_pins_first_non_channel_user_message():
+    session = _make_session()
+    session.compaction_enabled = True
+    session.max_history_messages = 4
+
+    upload_notice = "\ue000SYNA:HARNESS_NOTICE\ue001\n<harness_notice>file uploaded</harness_notice>"
+    session.messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": upload_notice},
+        {"role": "user", "content": "the real task is chess"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "smoke_tool", "arguments": "{}"},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "c1",
+            "content": '\ue000SYNA:TOOL_RESULTS\ue001\n<result status="ok">done</result>',
+        },
+    ]
+
+    session.client = FakeChat(["summary text"])
+    session._compact_history_if_needed()
+
+    assert session.messages[1]["content"] == "the real task is chess"
+    compaction_request = session.client.requests[0]["messages"][1]["content"]
+    assert "[pinned user request]:\nthe real task is chess" in compaction_request
+    assert "[harness_notice]:" in compaction_request
+    print("PASS compaction pins the first non-channel user message")
+
+
+def test_tail_atomic_slice_shapes():
+    keep = AgentSession._tail_atomic_slice
+
+    tool_group = [
+        {"role": "user", "content": "u1"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "c1"}, {"id": "c2"}],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "r1"},
+        {"role": "tool", "tool_call_id": "c2", "content": "r2"},
+    ]
+    assert keep(tool_group) == tool_group[1:]
+
+    assistant_text = [{"role": "assistant", "content": "working on it"}]
+    assert keep(assistant_text) == assistant_text
+
+    user_message = [{"role": "user", "content": "hello"}]
+    assert keep(user_message) == user_message
+
+    assert keep([]) == []
+    print("PASS trailing atomic slice keeps the last exchange intact")
+
+
+def test_compaction_notice_wording_and_extraction():
+    notice = format_compaction_message("SUMMARY TEXT")
+    assert "kept in full" in notice
+    assert extract_summary_text(notice) == "SUMMARY TEXT"
+    print("PASS compaction notice wording stays extractable")
 
 
 def test_web_signature_violation_becomes_failed_row():
@@ -586,6 +675,9 @@ def main():
         test_session_sentinel_channel_wrapping()
         test_session_channel_impersonation_rejected_and_defanged()
         test_session_compaction_channel_detection()
+        test_compaction_pins_first_non_channel_user_message()
+        test_tail_atomic_slice_shapes()
+        test_compaction_notice_wording_and_extraction()
         test_web_signature_violation_becomes_failed_row()
         test_web_events_carry_raw_and_arguments()
         test_session_tool_results_use_protocol_markers()
