@@ -20,7 +20,7 @@
 
 ![Syna chat interface](website/assets/screenshot.png)
 
-## Features
+## You're getting the full kit
 
 - **Syna has a pod,** a Debian container, and her commands run inside of it. They cannot touch your actual system. She can only see what you decide to share with her. She respects your boundaries.
 - **Syna has a browser,** and native web search and web interaction tools, no API key required.
@@ -69,33 +69,43 @@
    A wizard will guide you into configuring your API key, model, and other settings.
    It saves them into an `.env` file in `~/.syna`.
 
-   If you want to do this manually, create a new file in `~/.syna/.env` with the following contents:
+   <details>
+     <summary>If you want to do this manually</summary>
 
-   ```sh
-   OPENROUTER_API_KEY=your-api-key         # Your API key goes here
-   MODEL=~z-ai/glm-flash-latest            # Or any model of your preference
-   BASE_URL=https://openrouter.ai/api/v1   # Optional: Any OpenAI-compatible endpoint
-   THINKING_EFFORT=medium                  # Can be either of none|minimal|low|medium|high|xhigh|max
+     Create a new file in `~/.syna/.env` with the following contents:
+
+     ```sh
+     OPENROUTER_API_KEY=your-api-key         # Your API key goes here
+     MODEL=~z-ai/glm-flash-latest            # Or any model of your preference
+     BASE_URL=https://openrouter.ai/api/v1   # Optional: Any OpenAI-compatible endpoint
+     THINKING_EFFORT=medium                  # Can be either of none|minimal|low|medium|high|xhigh|max
+     ```
+
+     Voice mode is enabled by adding speech models to the same `.env` file:
+
+     ```sh
+     STT_MODEL=google/chirp-3                    # Transcribes microphone recordings
+     TTS_MODEL=google/gemini-3.8-flash-lite-tts  # Reads the answers out loud
+     TTS_VOICE=Kore                              # Optional: voice of the TTS model
+     SPEECH_LANGUAGE=en                          # Optional: ISO-639-1 code, English by default
+     ```
+
+     Image generation (the model's `text_to_image` tool) is enabled the same way:
+
+     ```sh
+     IMAGE_MODEL=google/gemini-3.1-flash-image
+     ```
+
+     > Please note that you need to have either `Podman` or `Docker` installed on your system.
+     > The setup wizard can install it for you in one click, or you can also do so manually.
+     > Podman is the recommended option, visit [podman.io](https://podman.io/) to get it.
+   </details>
+
+2. You're good to go. All it takes is:
+
+   ```bash
+   syna-cli
    ```
-
-   Voice mode is enabled by adding speech models to the same `.env` file:
-
-   ```sh
-   STT_MODEL=google/chirp-3                    # Transcribes microphone recordings
-   TTS_MODEL=google/gemini-3.8-flash-lite-tts  # Reads the answers out loud
-   TTS_VOICE=Kore                              # Optional: voice of the TTS model
-   SPEECH_LANGUAGE=en                          # Optional: ISO-639-1 code, English by default
-   ```
-
-   Image generation (the model's `text_to_image` tool) is enabled the same way:
-
-   ```sh
-   IMAGE_MODEL=google/gemini-3.1-flash-image
-   ```
-
-   > Please note that you need to have either `Podman` or `Docker` installed on your system.
-   > The setup wizard can install it for you in one click, or you can also do so manually.
-   > Podman is the recommended option, visit [podman.io](https://podman.io/) to get it.
 
 ## Privacy
 
