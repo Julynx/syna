@@ -473,14 +473,19 @@ def text_to_speech(file_path: str):
 
 def text_to_image(prompt: str):
     """
-    Generate an image from a text description and save it into the pod. Generated images suit artistic, conceptual, or personalized creations; they make mistakes on real-world objects, people, and places.
+    Generates an image from a text description using generative AI, and saves it into the pod.
 
-    Routing:
-    * Deliverables illustrating the real world: source images online instead.
-    * Graphs, charts, and data visuals: use scripts or markup, even if the request says "generate" or "create."
-    * Original illustrations, concept art, or stylized pieces: use this tool. "Include images of..." usually means sourcing, not generating.
+    Use this tool:
+      * For original characters, creatures, scenes or locations that don't exist in the real world, when no online image would fit the request.
+      * When the user explicitly asks for AI-generated or original art.
+      * To depict a real-world subject, object or location creatively or artistically rather than exactly, and a script can't easily do it (e.g., the Eiffel Tower made of pizza).
 
-    The result can differ from the prompt in details. If exact content matters, check it with `describe_image`; regenerate at most twice. Share with `share_file` only when the image is a deliverable.
+    Do not use this tool:
+      * To depict real-world events, people, places, species, animals, plants, products or objects as they exist in the world. Source an image from a reliable online source instead; accuracy prevails.
+      * To assemble images and text into an infographic, a grid with labels, or similar structures. This tool cannot source images from the pod or the web, and cannot reliably generate stuctured documents like that. Source the base images and compose them using a script or markup rendered to an image instead.
+      * For diagrams, charts, and other visualizations based on quantitative data. Use a script that parses such data and outputs the diagram instead of calling this tool.
+
+    If this tool is unavailable or unsuitable, and images are still needed for the task, fall back to downloading from online sources or using a script.
     - `prompt` (string, required): description of the image to generate; mention subject, style, composition, lighting, and mood concretely.
     """
     settings = load_image_settings()
