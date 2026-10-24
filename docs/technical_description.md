@@ -265,11 +265,27 @@ placeholders until real ones are dropped into `website/assets/`.
 
 ## File structure and module responsibilities
 
+The package is organized into three subpackages layered over a shared
+foundation; every cross-package import points downward, so there are no
+import cycles.
+
+- Foundation (package root): `config.py`, `paths.py`, `state.py`,
+  `interaction.py`, `ask_utils.py`, plus the entry points
+  (`__init__.py`, `__main__.py`, `server.py`, `setup.py`).
+- `syna.protocol` — conversation wire format: channel sentinels, output
+  bounding, context management, compaction, user-message archives,
+  tool-call parsing, and schema generation.
+- `syna.capabilities` — what the agent can do: the tool registry plus
+  browser, web search, editing, vision, imaging, image generation,
+  speech, and verification tools.
+- `syna.conversation` — the agent loop: session orchestration and the
+  interactive CLI with its slash commands.
+
 ### `src/syna/__init__.py`
 CLI entry point. `main()` starts the ask loop, handles Ctrl+C, and closes the
 global Docker client on exit.
 
-### `src/syna/ask.py`
+### `src/syna/conversation/ask.py`
 CLI loop. Renders session events (`_print_event`), dispatches slash commands
 via `commands.parse_and_execute_command`, and feeds plain queries to
 `AgentSession.run_turn`. The renderer shows tool calls as they start (in the
@@ -281,7 +297,7 @@ closes the session and destroys the shared pod. The terminal responder for
 free text; Ctrl+C or a closed stdin cancels the pending question and stops
 the task.
 
-### `src/syna/browser.py`
+### `src/syna/capabilities/browser.py`
 Persistent stealth browser session (Camoufox) exposed as LLM-callable actions.
 Renders pages through an accessibility-style walker that emits a compact
 line-based view (URL, title, scroll position and numbered interactables), and
@@ -316,7 +332,7 @@ surface). Note: interception in this Camoufox build pins the browser to
 HTTP/2 — HTTP/3 is unavailable in both route and proxy modes (verified
 against cloudflare-quic.com); absence of H3 is a common real-world pattern.
 
-### `src/syna/net_guard.py`
+### `src/syna/capabilities/net_guard.py`
 The browser's network policy: public internet targets only. Blocked ranges
 (loopback, RFC1918, link-local incl. the cloud metadata service, CGNAT,
 ULA, multicast, reserved, documentation) are an explicit list, independent
@@ -343,7 +359,7 @@ over 90 seconds; Phase 2
 (`--stealth`) visits bot.sannysoft.com and CreepJS and dumps their verdicts
 for human review of the "functional and undetectable" standard.
 
-### `src/syna/channel.py`
+### `src/syna/protocol/channel.py`
 System and agent communication channel separation using Unicode sentinels:
 `SENTINEL_OPEN = "\uE000"`, `SENTINEL_CLOSE = "\uE001"`. System-originated
 messages (tool results, harness notices, compaction summaries) are wrapped via
@@ -373,14 +389,14 @@ validator that raises `ReplyRejected` on channel impersonation in content or
 tool call arguments. Transient empty responses are retried up to
 `EMPTY_RESPONSE_MAX_ATTEMPTS` times.
 
-### `src/syna/commands.py`
+### `src/syna/conversation/commands.py`
 User slash commands (`/send`, `/receive`, `/help`, `/bye`) executed locally on
 the host. `send`/`receive` copy files between host and pod through the
 thread's container; they open native file dialogs via tkinter, so the CLI's
 file-transfer commands require a desktop session. `parse_and_execute_command`
 validates and dispatches.
 
-### `src/syna/compaction.py`
+### `src/syna/protocol/compaction.py`
 History-compaction support: loads the compaction prompt, renders history as a
 labeled transcript (`[pinned user request]`, `[user]`, `[tool_results]`,
 `[harness_notice]`, `[assistant]`, `[previous summary]`), and builds the
@@ -392,7 +408,7 @@ with the `COMPACTION` sentinel channel and `<harness_notice>` tags
 (`format_compaction_message`) and detected via `is_summary_message` so
 repeated compactions merge rather than duplicate.
 
-### `src/syna/context.py`
+### `src/syna/protocol/context.py`
 Token estimation and elision for context management:
 `estimate_tokens` / `estimate_history_tokens` (characters/4 heuristic, no
 tokenizer dependency), `elide_tool_outputs` — replaces old result
@@ -411,7 +427,7 @@ protocol limits the prompt and tools consume: `load_output_limit_chars()`
 (head-and-tail cut), `load_command_timeout_s()` and
 `load_tool_call_timeout_s()`.
 
-### `src/syna/editor.py`
+### `src/syna/capabilities/editor.py`
 Read/edit primitives used by the `read_file` and `edit_file` tools. Files are
 read and written as UTF-8 (undecodable bytes replaced), so pod files with
 non-ASCII content survive host-side processing. Edit operations are validated
@@ -420,7 +436,7 @@ operations, non-object payloads, missing required keys, unknown operation
 types, out-of-bounds line numbers, invalid ranges and overlapping ranges all
 raise clean `ValueError`s instead of leaking internal TypeErrors.
 
-### `src/syna/image_generation.py`
+### `src/syna/capabilities/image_generation.py`
 Text-to-image generation through OpenRouter's dedicated Image API
 (`POST /api/v1/images`). `ImageSettings` (frozen dataclass) carries the
 model from `.env` (`IMAGE_MODEL`); when unset the caller reports the feature
@@ -431,7 +447,7 @@ the media type to a file extension). The API bills all-or-nothing, so
 failures (non-200, malformed response) raise `ImageGenerationError` with a
 user-safe message carrying the provider detail.
 
-### `src/syna/output.py`
+### `src/syna/protocol/output.py`
 Cleaning and bounded rendering of tool output shown to the model:
 `strip_ansi_escapes`, `collapse_progress_lines` (carriage-return progress
 updates reduce to their last segment), `head_and_tail` (keeps the beginning
@@ -439,7 +455,7 @@ and end of long output with an explicit omission marker pointing at the
 `saved_to` file), and `bounded_output` (cleaning plus cut plus an explicit
 `(no output)` placeholder for empty results).
 
-### `src/syna/imaging.py`
+### `src/syna/capabilities/imaging.py`
 Image processing shared by the vision pipeline and the web server's inline
 image endpoint. `fit_image_to_box` writes a PNG copy of a source image
 downscaled into a 1024x1024 box (CMYK converted to RGB first);
@@ -447,13 +463,13 @@ downscaled into a 1024x1024 box (CMYK converted to RGB first);
 `MAX_SERVE_BYTES` (50 MB) and `RECOMPRESS_BYTES` (5 MB) bound what the
 image endpoint will serve.
 
-### `src/syna/inspect_module.py`
+### `src/syna/protocol/inspect_module.py`
 Extracts function names, docstrings and argument metadata via `ast`; used to
 inject live tool documentation into the system prompt and to validate tool
 call arguments in `parse.py`. Each argument carries its name, type
 annotation, whether it has a default, and the default's source text.
 
-### `src/syna/tool_schemas.py`
+### `src/syna/protocol/tool_schemas.py`
 Generates OpenRouter/OpenAI-compatible tool definitions from `tools.py` via
 `ast` function metadata. Converts Python type annotations to JSON Schema
 properties (`str` -> `string`, `int` -> `integer`, `list` -> `array`, `dict` -> `object`),
@@ -503,7 +519,7 @@ endpoint. `PROVIDERS` holds the preset base URLs, key-page links, and
 default models (OpenRouter, OpenAI, Google Gemini, Ollama), sourced
 from the canonical constants in `config.py`.
 
-### `src/syna/parse.py`
+### `src/syna/protocol/parse.py`
 Tool-call parsing and execution under native OpenRouter tool calling.
 
 - `build_signature(tool_name, tool_arguments)` — one-line python-like
@@ -607,7 +623,7 @@ reach the podman bridge gateway interface of the host (the Syna server
 binds loopback and is unreachable that way) — pod egress policy is a
 separate topic.
 
-### `src/syna/speech.py`
+### `src/syna/capabilities/speech.py`
 Voice transcription and synthesis through OpenRouter's OpenAI-compatible
 audio endpoints. `SpeechSettings` (frozen dataclass) carries the models,
 voice, response format and locale from `.env`; `transcribe_audio` posts a
@@ -624,7 +640,7 @@ explicit `language` hint (None omits the field so the model auto-detects);
 the settings the web client needs for voice mode. Failures raise
 `SpeechError` with a user-safe message.
 
-### `src/syna/session.py`
+### `src/syna/conversation/session.py`
 `AgentSession` — the shared conversation loop for CLI and web.
 
 - Builds the system prompt from `assets/prompt.md`: injects the live tool
@@ -736,7 +752,7 @@ Global Docker client plus per-thread container registry and per-call context.
   lifecycle; `reset_shared_container` destroys the shared pod so the next
   `get_container()` lazily starts a fresh one (CLI `/newchat`).
 
-### `src/syna/tools.py`
+### `src/syna/capabilities/tools.py`
 The tools exposed to the model: `think` (no-op reasoning record; produces a
 `(noted)` tool result), `execute_command` (shell or argv style inside the container),
 `read_file`, `edit_file` (both proxied into the pod through temp copies),
@@ -789,7 +805,7 @@ exit codes 124/137 (timeout killed) map to status `timeout`, other non-zero
 codes to status `error`. When no call output path is set (direct host-side
 use), it falls back to a plain `container.exec`.
 
-### `src/syna/user_messages.py`
+### `src/syna/protocol/user_messages.py`
 Verbatim read-only archives of large user messages inside the pod. When a
 message is at least `user_message_archive_min_chars` long,
 `archive_user_message(text, container, seq)` writes it to
@@ -804,7 +820,7 @@ with a foreign id is a quotation, not an archive, and is left alone. Any
 failure is logged and returns None so a broken archive never blocks the
 turn.
 
-### `src/syna/verification.py`
+### `src/syna/capabilities/verification.py`
 The `review_work` reviewer session. `run_verification(summary)` runs an
 isolated single-turn request — fresh client (`create_model_client`),
 `assets/verifier_prompt.md` as the system prompt, **no tools** — whose
@@ -822,7 +838,7 @@ a thread-local provider (`set_conversation_log_provider` /
 threads by `parse.py` like the container binding; failures follow the
 `describe_image` convention: an `{'error': ...}` dict, never a raise.
 
-### `src/syna/vision.py`
+### `src/syna/capabilities/vision.py`
 `describe_image(file_path, question)` — image understanding through a
 dedicated single-turn vision request. Copies the image from the pod,
 converts it to PNG downscaled into a 1024x1024 box (via `imaging.py`),
@@ -835,7 +851,7 @@ effort: without it the provider default for this model is maximum, which
 burns the completion budget on hidden reasoning and can return no content
 at all.
 
-### `src/syna/web_search.py`
+### `src/syna/capabilities/web_search.py`
 `search(query, delay_s=2)` — URLs are fetched and converted to markdown via
 `web_to_markdown`; everything else is searched through the stealth browser
 (Camoufox) against server-rendered endpoints, trying engines in order
@@ -858,7 +874,7 @@ process-wide lock across the sleep and the request so searches from
 concurrent sessions or detached calls serialize and stay at least
 `delay_s` apart instead of firing together.
 
-### `src/syna/web_to_markdown.py`
+### `src/syna/capabilities/web_to_markdown.py`
 Headless-browser page fetcher (Playwright/DrissionPage) that renders JavaScript
 pages and converts the DOM to markdown.
 
