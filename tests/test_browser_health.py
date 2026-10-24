@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from syna.browser import BrowserSession
+from syna.capabilities.browser import BrowserSession
 
 SOAK_SECONDS = 90
 SOAK_INTERVAL_S = 8

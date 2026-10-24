@@ -7,10 +7,10 @@ from posixpath import basename
 
 from PIL import Image
 
-from .ask_utils import ask_question
-from .config import DEFAULT_MODEL, get_env, get_logger
+from ..ask_utils import ask_question
+from ..config import DEFAULT_MODEL, get_env, get_logger
 from .imaging import fit_image_to_box
-from .state import get_container
+from ..state import get_container
 
 
 def _load_model():
@@ -78,7 +78,7 @@ def describe_image(file_path: str, question: str):
             }
         ]
 
-        from .session import create_model_client  # noqa: PLC0415
+        from ..conversation.session import create_model_client  # noqa: PLC0415
 
         with create_model_client() as client:
             response_msg = ask_question(

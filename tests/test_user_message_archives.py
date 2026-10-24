@@ -9,10 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
 
 from _runner import run_suite
 
-from syna.context import elide_archived_user_messages
-from syna.session import AgentSession
+from syna.protocol.context import elide_archived_user_messages
+from syna.conversation.session import AgentSession
 from syna.state import register_container, unregister_container
-from syna.user_messages import (
+from syna.protocol.user_messages import (
     ARCHIVE_MARKER_PATTERN,
     USER_MESSAGE_MARKER_TEMPLATE,
     archive_user_message,

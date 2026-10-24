@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna.editor import edit_file
+from syna.capabilities.editor import edit_file
 
 SAMPLE = "line one\nline two\nline three\n"
 

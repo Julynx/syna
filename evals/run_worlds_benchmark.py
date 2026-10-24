@@ -65,7 +65,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from syna.config import get_project_root
-from syna.session import AgentSession, shared_file_metadata
+from syna.conversation.session import AgentSession, shared_file_metadata
 from syna.state import (
     close_docker_client,
     create_container,

@@ -9,10 +9,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna.channel import is_channel_message, unwrap_channel
-from syna.context import estimate_tokens
-from syna.session import AgentSession, build_prompt
-from syna.tools import TOOL_REGISTRY
+from syna.protocol.channel import is_channel_message, unwrap_channel
+from syna.protocol.context import estimate_tokens
+from syna.conversation.session import AgentSession, build_prompt
+from syna.capabilities.tools import TOOL_REGISTRY
 
 
 class FakePod:

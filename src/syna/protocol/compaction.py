@@ -1,7 +1,7 @@
 """Transcript rendering and request assembly for history compaction."""
 
 from .channel import harness_notice, is_channel_message, unwrap_channel, wrap_channel
-from .config import read_asset_text
+from ..config import read_asset_text
 
 COMPACTION_CHANNEL_KIND = "COMPACTION"
 COMPACTION_NOTE_PREFIX = "[System]: [Compaction] "

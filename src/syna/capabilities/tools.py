@@ -23,7 +23,7 @@ from typing import Any
 from bollard import DockerException
 
 from .browser import Browser, PWError, ToolError
-from .config import (
+from ..config import (
     get_logger,
     load_command_timeout_s,
     load_output_limit_chars,
@@ -37,8 +37,8 @@ from .image_generation import (
     image_generation_enabled,
     load_image_settings,
 )
-from .interaction import InteractionCancelled, InteractionError
-from .interaction import ask as ask_interactive
+from ..interaction import InteractionCancelled, InteractionError
+from ..interaction import ask as ask_interactive
 from .speech import (
     EXTENSION_BY_MEDIA_TYPE,
     SpeechError,
@@ -48,7 +48,7 @@ from .speech import (
     transcribe_audio,
     voice_enabled,
 )
-from .state import get_call_output_path, get_container, set_last_exit_code
+from ..state import get_call_output_path, get_container, set_last_exit_code
 from .verification import run_verification as v_run_verification
 from .vision import describe_image as v_describe_image
 from .web_search import search

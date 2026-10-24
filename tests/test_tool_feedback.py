@@ -7,14 +7,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna.channel import is_channel_message, unwrap_channel
-from syna.compaction import (
+from syna.protocol.channel import is_channel_message, unwrap_channel
+from syna.protocol.compaction import (
     extract_summary_text,
     format_compaction_message,
     is_summary_message,
 )
-from syna.session import AgentSession
-from syna.tools import TOOL_REGISTRY
+from syna.conversation.session import AgentSession
+from syna.capabilities.tools import TOOL_REGISTRY
 
 
 class FakeMessage:

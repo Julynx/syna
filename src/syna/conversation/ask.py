@@ -2,11 +2,11 @@
 
 import sys
 
-from .ask_utils import show_welcome
+from ..ask_utils import show_welcome
 from .commands import parse_and_execute_command
-from .interaction import InteractionCancelled, register_responder, unregister_responder
+from ..interaction import InteractionCancelled, register_responder, unregister_responder
 from .session import AgentSession
-from .state import reset_shared_container
+from ..state import reset_shared_container
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -127,8 +127,8 @@ def _reset_session(session: AgentSession) -> AgentSession:
 
 def check_setup() -> None:
     """Verify that Syna is configured before starting the CLI session."""
-    from . import setup  # noqa: PLC0415
-    from .config import get_data_home  # noqa: PLC0415
+    from .. import setup  # noqa: PLC0415
+    from ..config import get_data_home  # noqa: PLC0415
 
     if setup.setup_incomplete():
         status = setup.config_status()

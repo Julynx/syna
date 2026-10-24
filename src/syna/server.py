@@ -40,7 +40,8 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from . import interaction, setup, speech
+from . import interaction, setup
+from .capabilities import speech
 from .config import (
     DEFAULT_IMAGE_GENERATION_ENABLED,
     DEFAULT_IMAGE_MODEL,
@@ -55,20 +56,20 @@ from .config import (
     load_config,
     read_asset_text,
 )
-from .imaging import (
+from .capabilities.imaging import (
     MAX_SERVE_BYTES,
     RECOMPRESS_BYTES,
     fit_image_to_box,
     image_exceeds_box,
 )
-from .session import AgentSession, shared_file_metadata
+from .conversation.session import AgentSession, shared_file_metadata
 from .state import (
     create_container,
     destroy_container,
     register_container,
     unregister_container,
 )
-from .tools import _reset_browser
+from .capabilities.tools import _reset_browser
 
 CONTAINER_START_TIMEOUT_S = 120
 EVENT_LOG_MAX_ITEMS = 500

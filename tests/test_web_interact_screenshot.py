@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from _runner import run_suite
 from playwright.async_api import Error as PWError
 
-from syna import tools
+from syna.capabilities import tools
 from syna.state import pop_last_exit_code
 
 FAKE_PNG = b"\x89PNG\r\n\x1a\nfake-png-data"

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from .config import (
+from ..config import (
     DEFAULT_IMAGE_GENERATION_ENABLED,
     DEFAULT_IMAGE_MODEL,
     get_env,
@@ -49,7 +49,7 @@ def load_image_settings() -> ImageSettings:
     """
     env = get_env()
     model = (env.get("IMAGE_MODEL") or "").strip() or DEFAULT_IMAGE_MODEL
-    from .session import is_openrouter  # noqa: PLC0415
+    from ..conversation.session import is_openrouter  # noqa: PLC0415
 
     if not is_openrouter():
         model = None

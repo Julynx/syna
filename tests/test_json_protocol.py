@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna.channel import (
+from syna.protocol.channel import (
     contains_sentinel,
     defang_sentinels,
     escape_channel_text,
@@ -14,9 +14,9 @@ from syna.channel import (
     is_channel_message,
     unwrap_channel,
 )
-from syna.parse import ParseOutcome, parse_and_execute_tools
-from syna.tool_schemas import get_tool_definitions
-from syna.tools import TOOL_REGISTRY
+from syna.protocol.parse import ParseOutcome, parse_and_execute_tools
+from syna.protocol.tool_schemas import get_tool_definitions
+from syna.capabilities.tools import TOOL_REGISTRY
 
 
 def _smoke_tool(label: str = "unlabeled", **kwargs) -> str:

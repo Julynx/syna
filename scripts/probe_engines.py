@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna import web_search
+from syna.capabilities import web_search
 
 QUERY = "debian 13 release notes"
 

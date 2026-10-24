@@ -7,18 +7,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna.channel import (
+from syna.protocol.channel import (
     format_tool_result_content,
     is_channel_message,
     unwrap_channel,
 )
-from syna.context import (
+from syna.protocol.context import (
     elide_tool_outputs,
     estimate_history_tokens,
     estimate_tokens,
 )
 from syna.state import build_pod_host_config, register_container, unregister_container
-from syna.tools import TOOL_REGISTRY
+from syna.capabilities.tools import TOOL_REGISTRY
 
 
 class FakePod:
@@ -156,7 +156,7 @@ def test_session_elides_old_outputs_under_token_budget():
     pod = FakePod()
     register_container(pod)
     try:
-        from syna.session import AgentSession
+        from syna.conversation.session import AgentSession
 
         session = AgentSession(session_id="context-test")
         session.dump_path = Path(tempfile.mkdtemp(prefix="syna-context-")) / "dump.json"
@@ -193,7 +193,7 @@ def test_session_elides_old_outputs_on_message_interval():
     pod = FakePod()
     register_container(pod)
     try:
-        from syna.session import AgentSession
+        from syna.conversation.session import AgentSession
 
         session = AgentSession(session_id="context-interval-test")
         session.dump_path = Path(tempfile.mkdtemp(prefix="syna-context-")) / "dump.json"
@@ -239,7 +239,7 @@ def test_session_elision_is_batched_by_request_interval():
     pod = FakePod()
     register_container(pod)
     try:
-        from syna.session import AgentSession
+        from syna.conversation.session import AgentSession
 
         session = AgentSession(session_id="context-batch-test")
         session.dump_path = Path(tempfile.mkdtemp(prefix="syna-batch-")) / "dump.json"

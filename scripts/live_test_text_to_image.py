@@ -17,7 +17,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from PIL import Image
 
-from syna import tools
+from syna.capabilities import tools
 from syna.state import get_container
 
 

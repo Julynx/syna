@@ -339,7 +339,7 @@ def sanity_check() -> dict:
         results["endpoint"]["detail"] = "Skipped: no container engine."
         return results
     from .config import get_env  # noqa: PLC0415
-    from .session import create_model_client, load_base_url  # noqa: PLC0415
+    from .conversation.session import create_model_client, load_base_url  # noqa: PLC0415
 
     get_env.cache_clear()
     model = (get_env().get("MODEL") or "").strip() or DEFAULT_MODEL

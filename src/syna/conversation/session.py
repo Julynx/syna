@@ -9,10 +9,10 @@ from pathlib import Path
 from openrouter import OpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
 
-import syna.tools as tools
+import syna.capabilities.tools as tools
 
-from .ask_utils import ReplyRejected, ask_question
-from .channel import (
+from ..ask_utils import ReplyRejected, ask_question
+from ..protocol.channel import (
     contains_sentinel,
     defang_sentinels,
     format_tool_result_content,
@@ -20,12 +20,12 @@ from .channel import (
     is_channel_message,
     wrap_channel,
 )
-from .compaction import (
+from ..protocol.compaction import (
     build_compaction_messages,
     format_compaction_message,
     load_compaction_prompt,
 )
-from .config import (
+from ..config import (
     DEFAULT_MODEL,
     get_env,
     get_logger,
@@ -37,16 +37,16 @@ from .config import (
     load_user_message_archive_min_chars,
     read_asset_text,
 )
-from .context import (
+from ..protocol.context import (
     elide_archived_user_messages,
     elide_tool_outputs,
     estimate_history_tokens,
 )
-from .parse import parse_and_execute_tools
-from .state import get_container
-from .tool_schemas import get_tool_definitions
-from .user_messages import USER_MESSAGE_MARKER_TEMPLATE, archive_user_message
-from .verification import (
+from ..protocol.parse import parse_and_execute_tools
+from ..state import get_container
+from ..protocol.tool_schemas import get_tool_definitions
+from ..protocol.user_messages import USER_MESSAGE_MARKER_TEMPLATE, archive_user_message
+from ..capabilities.verification import (
     REVIEW_TOOL_NAME,
     pop_conversation_log_provider,
     set_conversation_log_provider,
@@ -135,7 +135,7 @@ def _tools_path() -> Path:
 
 
 def _get_tool_metadata(tools_path):
-    from .inspect_module import get_function_metadata
+    from ..protocol.inspect_module import get_function_metadata
 
     return get_function_metadata(tools_path)
 

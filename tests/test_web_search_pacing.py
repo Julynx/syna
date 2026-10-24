@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from _runner import run_suite
 
-from syna import web_search
+from syna.capabilities import web_search
 
 WORK_S = 0.05
 DELAY_S = 0.3

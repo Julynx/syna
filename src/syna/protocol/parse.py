@@ -19,14 +19,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-from .config import (
+from ..config import (
     get_logger,
     load_output_limit_chars,
     load_tool_call_timeout_s,
 )
-from .interaction import get_responder, register_responder, unregister_responder
+from ..interaction import get_responder, register_responder, unregister_responder
 from .output import bounded_output
-from .state import (
+from ..state import (
     get_container,
     get_registered_container,
     next_call_index,
@@ -35,8 +35,8 @@ from .state import (
     set_call_output_path,
     unregister_container,
 )
-from .tools import TOOL_REGISTRY
-from .verification import (
+from ..capabilities.tools import TOOL_REGISTRY
+from ..capabilities.verification import (
     REVIEW_TOOL_NAME,
     current_conversation_log_provider,
     pop_conversation_log_provider,
@@ -75,7 +75,7 @@ def _tool_signatures() -> dict[str, dict]:
 
 def _tools_module_path():
     """Return the filesystem path of the tools module."""
-    from . import tools
+    from ..capabilities import tools
 
     return tools.__file__
 

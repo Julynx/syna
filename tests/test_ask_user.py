@@ -10,8 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _runner import run_suite
 
-from syna import interaction, parse, tools
-from syna.tool_schemas import get_tool_definitions
+from syna import interaction
+from syna.protocol import parse
+from syna.capabilities import tools
+from syna.protocol.tool_schemas import get_tool_definitions
 
 QUESTION = "Which database should the project use?"
 CHOICES = ["sqlite", "postgres"]
@@ -198,7 +200,7 @@ def test_pending_question_release_unblocks_waiter():
 
 
 def test_cli_responder_number_picks_a_choice():
-    from syna.ask import _terminal_responder
+    from syna.conversation.ask import _terminal_responder
 
     class StubSession:
         def __init__(self):

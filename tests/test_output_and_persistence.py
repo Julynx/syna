@@ -6,16 +6,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna.output import (
+from syna.protocol.output import (
     NO_OUTPUT_TEXT,
     bounded_output,
     collapse_progress_lines,
     head_and_tail,
     strip_ansi_escapes,
 )
-from syna.parse import parse_and_execute_tools
+from syna.protocol.parse import parse_and_execute_tools
 from syna.state import register_container, unregister_container
-from syna.tools import TOOL_REGISTRY
+from syna.capabilities.tools import TOOL_REGISTRY
 
 
 class FakePod:

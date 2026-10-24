@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from .config import load_config
+from ..config import load_config
 
 DNS_CACHE_TTL_S = 60
 DNS_CACHE_MAX = 4096

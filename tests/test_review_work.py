@@ -10,12 +10,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
 
 from _runner import run_suite
 
-from syna import session as session_module
-from syna import verification
+from syna.conversation import session as session_module
+from syna.capabilities import verification
 from syna.config import read_asset_text
-from syna.parse import parse_and_execute_tools
-from syna.tool_schemas import get_tool_definitions
-from syna.tools import TOOL_REGISTRY
+from syna.protocol.parse import parse_and_execute_tools
+from syna.protocol.tool_schemas import get_tool_definitions
+from syna.capabilities.tools import TOOL_REGISTRY
 
 VERIFIER_PROMPT_TEXT = read_asset_text("verifier_prompt.md")
 
@@ -247,7 +247,7 @@ def test_parse_gives_review_work_no_timeout(monkeypatch):
         captured["timeout_s"] = timeout_s
         return "ok", False, 0
 
-    from syna import parse as parse_module
+    from syna.protocol import parse as parse_module
 
     monkeypatch.setattr(parse_module, "execute_tool_with_timeout", fake_execute)
     parse_and_execute_tools(
@@ -263,7 +263,7 @@ def test_parse_gives_review_work_no_timeout(monkeypatch):
 
 
 def test_reviewer_log_filters_only_the_pending_review_call(monkeypatch):
-    from syna.session import AgentSession
+    from syna.conversation.session import AgentSession
 
     session = AgentSession(session_id="review-log-test")
     session.messages.append({"role": "user", "content": "task"})
@@ -337,7 +337,7 @@ def test_reviewer_log_filters_only_the_pending_review_call(monkeypatch):
 
 def test_run_turn_wires_the_reviewer_end_to_end(monkeypatch):
     """Full run_turn: only the tool call and its result reach history."""
-    from syna.session import AgentSession
+    from syna.conversation.session import AgentSession
 
     reviewed = {}
 

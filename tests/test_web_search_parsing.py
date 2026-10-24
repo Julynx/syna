@@ -8,8 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from _runner import run_suite
 
-from syna import web_search
-from syna.web_search import _format_results, _is_challenge, _unwrap_bing, _unwrap_ddg
+from syna.capabilities import web_search
+from syna.capabilities.web_search import _format_results, _is_challenge, _unwrap_bing, _unwrap_ddg
 
 
 def test_unwrap_ddg_resolves_redirect_wrapper():

@@ -14,7 +14,7 @@ import shlex
 import tempfile
 from pathlib import Path
 
-from .config import (
+from ..config import (
     get_logger,
     load_user_messages_dest,
 )

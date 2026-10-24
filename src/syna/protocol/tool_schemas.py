@@ -109,12 +109,12 @@ def function_metadata_to_tool_schema(metadata: dict[str, Any]) -> dict[str, Any]
 def get_tool_definitions(tools_path=None) -> list[dict[str, Any]]:
     """Return OpenRouter-compatible tool schemas for all tools in tools.py."""
     if tools_path is None:
-        from . import tools
+        from ..capabilities import tools
 
         tools_path = tools.__file__
 
     metadata_list = get_function_metadata(tools_path)
-    from .tools import TOOL_REGISTRY
+    from ..capabilities.tools import TOOL_REGISTRY
 
     allowed_names = set(TOOL_REGISTRY.keys())
 

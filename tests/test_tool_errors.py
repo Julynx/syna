@@ -9,11 +9,11 @@ from bollard import DockerException
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna import tools as tools_module
-from syna.channel import is_channel_message, unwrap_channel
-from syna.session import AgentSession
+from syna.capabilities import tools as tools_module
+from syna.protocol.channel import is_channel_message, unwrap_channel
+from syna.conversation.session import AgentSession
 from syna.state import register_container, unregister_container
-from syna.tools import TOOL_REGISTRY
+from syna.capabilities.tools import TOOL_REGISTRY
 
 MISSING_FILE_404 = (
     'Docker API Error (404): {"cause":"no such file or directory",'

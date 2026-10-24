@@ -47,7 +47,7 @@ from camoufox.async_api import AsyncCamoufox
 from playwright.async_api import Error as PWError
 
 from . import net_guard
-from .config import get_logger
+from ..config import get_logger
 
 ALLOWED_SCHEMES = {"http", "https"}
 

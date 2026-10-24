@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from evals.scoring import false_success_rate, score_task
 from evals.tasks import EvalTask, get_task, task_ids
-from syna.session import AgentSession
+from syna.conversation.session import AgentSession
 from syna.state import (
     close_docker_client,
     create_container,

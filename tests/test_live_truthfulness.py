@@ -31,9 +31,9 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from syna.channel import contains_sentinel, is_channel_message, unwrap_channel
+from syna.protocol.channel import contains_sentinel, is_channel_message, unwrap_channel
 from syna.paths import get_data_home
-from syna.session import AgentSession
+from syna.conversation.session import AgentSession
 from syna.state import (
     get_registered_container,
     register_container,

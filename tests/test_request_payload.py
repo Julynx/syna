@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna.session import build_prompt
+from syna.conversation.session import build_prompt
 
 
 def main():

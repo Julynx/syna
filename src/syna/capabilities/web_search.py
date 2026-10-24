@@ -24,7 +24,7 @@ from base64 import urlsafe_b64decode
 from urllib.parse import parse_qs, quote_plus, urlparse
 
 from .browser import Browser
-from .config import get_logger
+from ..config import get_logger
 from .web_to_markdown import Config, fetch_markdown
 
 _URL_PATTERN = re.compile(r"^https?://\S+$", re.IGNORECASE)

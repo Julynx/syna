@@ -14,7 +14,7 @@ from _runner import run_suite
 from syna import paths
 from syna import setup as setup_module
 from syna.config import read_asset_text
-from syna.session import DEFAULT_MAX_HISTORY_MESSAGES
+from syna.conversation.session import DEFAULT_MAX_HISTORY_MESSAGES
 
 
 def test_bundled_assets_resolve():

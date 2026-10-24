@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna import tools
+from syna.capabilities import tools
 
 BASH = Path("C:/Users/Omega/scoop/apps/git/current/bin/bash.exe")
 

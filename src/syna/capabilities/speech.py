@@ -19,7 +19,7 @@ from pathlib import Path
 
 import httpx
 
-from .config import (
+from ..config import (
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
@@ -122,7 +122,7 @@ def load_speech_settings() -> SpeechSettings:
     report themselves as not configured.
     """
     env = get_env()
-    from .session import is_openrouter  # noqa: PLC0415
+    from ..conversation.session import is_openrouter  # noqa: PLC0415
 
     openrouter_only = is_openrouter()
     stt_model = (env.get("STT_MODEL") or "").strip() or DEFAULT_STT_MODEL

@@ -10,9 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from _runner import run_suite
 from bollard import DockerException
 
-from syna import tools
-from syna.image_generation import GeneratedImage, ImageSettings
-from syna.speech import SynthesizedAudio
+from syna.capabilities import tools
+from syna.capabilities.image_generation import GeneratedImage, ImageSettings
+from syna.capabilities.speech import SynthesizedAudio
 
 FAKE_WAV = b"RIFFfake-wav-data"
 
@@ -252,7 +252,7 @@ def test_speech_to_text_passes_language_through(monkeypatch):
 
 
 def test_transcribe_audio_omits_language_when_auto(monkeypatch):
-    from syna import speech
+    from syna.capabilities import speech
 
     captured_payloads = []
 
@@ -283,7 +283,7 @@ def test_transcribe_audio_omits_language_when_auto(monkeypatch):
 
 
 def test_text_to_image_malformed_response_is_a_clean_error(monkeypatch):
-    from syna import image_generation
+    from syna.capabilities import image_generation
 
     class FakeResponse:
         status_code = 200

@@ -24,7 +24,7 @@ class ReplyRejected(Exception):
 
 def show_welcome():
     """Display the welcome header and available interactive commands."""
-    from .commands import get_command_help
+    from .conversation.commands import get_command_help
 
     print()
     print("Welcome to Syna, the AI agent with a pod.")

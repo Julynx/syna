@@ -8,7 +8,7 @@ from tkinter import filedialog
 
 from bollard import Container
 
-from .state import get_container
+from ..state import get_container
 
 
 def send(dest_path, session=None):

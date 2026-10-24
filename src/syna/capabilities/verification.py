@@ -12,8 +12,8 @@ and its returned report are the only trace, exactly like any other tool.
 import json
 import threading
 
-from .ask_utils import ask_question
-from .config import (
+from ..ask_utils import ask_question
+from ..config import (
     DEFAULT_MODEL,
     get_env,
     get_logger,
@@ -93,7 +93,7 @@ def run_verification(summary: str):
         }
     effort = load_verifier_effort()
 
-    from .session import VALID_THINKING_EFFORTS, create_model_client  # noqa: PLC0415
+    from ..conversation.session import VALID_THINKING_EFFORTS, create_model_client  # noqa: PLC0415
 
     if effort not in VALID_THINKING_EFFORTS:
         return {

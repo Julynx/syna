@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna.browser import Browser
+from syna.capabilities.browser import Browser
 
 COUNT_JS = '() => document.querySelectorAll("ul.results-standard li, li.result").length'
 STATE_JS = (
