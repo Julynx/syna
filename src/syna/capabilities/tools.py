@@ -2,7 +2,8 @@
 
 TOOL_REGISTRY and BROWSER_COMMANDS are explicit whitelists: parse.py
 dispatches through TOOL_REGISTRY instead of getattr on the module, and
-web_interact dispatches through BROWSER_COMMANDS instead of getattr on the
+the browser tool dispatches through BROWSER_COMMANDS instead of getattr on
+the
 Browser object. That keeps internals (editor primitives, path utilities,
 browser internals like run()/page/close()) out of the model's reach.
 
@@ -58,7 +59,7 @@ BROWSER = None
 _artifact_counter = itertools.count(1)
 
 BROWSER_COMMANDS = {
-    "goto": Browser.goto,
+    "visit": Browser.visit,
     "snapshot": Browser.snapshot,
     "click": Browser.click,
     "type": Browser.type,
@@ -183,7 +184,8 @@ def _reader_script(output_path: str, exit_path: str) -> str:
 
 def web_search(query: str):
     """
-    Search the web. Returns the top 10 results with title, description, and URL. Snippets can be outdated or out of context: open the page before relying on a claim.
+    Search the web. Returns the top 10 results with title, description, and URL. Snippets can be outdated or out of context: visit the page before relying on a claim. URLs are not search queries — to open a page, use the `browser` tool with command `visit`.
+
     - `query` (string, required): what to search for.
 
     Example: web_search(query="debian 13 release notes")
@@ -241,14 +243,14 @@ def _capture_screenshot(screenshot_fn, browser, args: dict) -> str:
     )
 
 
-def web_interact(command: str, args: dict[str, Any]):
+def browser(command: str, args: dict[str, Any]):
     """
-    Control a persistent browser that runs JavaScript; the current page, cookies, and logins persist between calls. Use it to read and interact with web pages, since many sites block plain HTTP clients. Use `execute_command` (`curl`, `wget`) to download files and call APIs.
+    Visit a page or control a persistent browser that runs JavaScript; the current page, cookies, and logins persist between calls. Use `visit` to open and read a page (cookie banners are dismissed and lazy-loaded content is triggered automatically); add `read`, `click`, `type`, and the other commands when a page needs interaction. Use `execute_command` (`curl`, `wget`) to download files and call APIs.
 
     - `command` (string, required): browser command to run; see the list below.
     - `args` (object, required): parameters for that command; see the list below.
 
-    * `goto`: `url` (string, required). Opens a page and returns a compact view. Interactive elements appear like `[12] button "Buy"`; pass the number as `ref`.
+    * `visit`: `url` (string, required). Opens a page and returns a compact view; tables come back one line per row with cells separated by ` | `. Interactive elements appear like `[12] button "Buy"`; pass the number as `ref`. Anti-bot challenges are waited out; if one persists, the view shows it and you can retry or report the block.
     * `snapshot`: `viewport_only` (boolean). Re-reads the current page.
     * `click`: `ref` (integer, required). Returns what changed.
     * `type`: `ref` (integer, required), `text` (string, required), `clear` (boolean, default true), `submit` (boolean; presses Enter after typing).
@@ -256,12 +258,12 @@ def web_interact(command: str, args: dict[str, Any]):
     * `press`: `key` (string, required), e.g. `Enter`, `Escape`, `Tab`, `ArrowDown`.
     * `scroll`: `direction` (`down`, `up`, `top`, or `bottom`), `amount` (fraction of viewport height, default 0.8). Returns the visible viewport.
     * `back`: no arguments.
-    * `read`: `ref` (integer; omit for the whole page), `max_chars` (integer). Full plain text, for when a view truncated something you need.
+    * `read`: `ref` (integer; omit for the whole page), `max_chars` (integer). Full plain text, for when a view truncated something you need. Tables come back one line per row with cells separated by ` | `.
     * `screenshot`: no arguments. Takes a screenshot of the current viewport, saves it into the pod, and returns its path. You may inspect it with `describe_image` if you need to, and share it with `share_file` if the user wants to see it. The screenshot is capped to the viewport, scroll and take another one to see further. Use this tool when the user requests a screenshot, or when you are having trouble performing a browser task and a visual description could help.
 
     Refs belong to the page state they came from; after navigation or large page changes, use refs from the newest output. Submitting forms that send, post, or buy something needs approval (see Protecting the user).
 
-    Example: web_interact(command="type", args={"ref": 7, "text": "debian 13 release notes", "submit": True})
+    Example: browser(command="type", args={"ref": 7, "text": "debian 13 release notes", "submit": True})
     """
     global BROWSER
 
@@ -585,7 +587,7 @@ def review_work(summary: str):
 
 
 def _reset_browser():
-    """Close the shared browser so the next web_interact starts a clean one.
+    """Close the shared browser so the next browser call starts a clean one.
 
     Called by the server when a chat is reset: the browser lives on the host
     (outside the pod), so it must be torn down separately from the VM.
@@ -607,7 +609,7 @@ TOOL_REGISTRY = {
     "read_file": read_file,
     "edit_file": edit_file,
     "web_search": web_search,
-    "web_interact": web_interact,
+    "browser": browser,
     "describe_image": describe_image,
     "speech_to_text": speech_to_text,
     "text_to_speech": text_to_speech,

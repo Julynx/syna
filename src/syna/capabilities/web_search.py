@@ -1,4 +1,4 @@
-"""Web search and URL-to-markdown fetching for the agent tools.
+"""Web search for the agent tools.
 
 Queries run through the stealth browser (Camoufox) against server-rendered
 search endpoints. Engines are tried in order until one returns results: a
@@ -25,7 +25,6 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 
 from .browser import Browser
 from ..config import get_logger
-from .web_to_markdown import Config, fetch_markdown
 
 _URL_PATTERN = re.compile(r"^https?://\S+$", re.IGNORECASE)
 
@@ -188,13 +187,12 @@ _engine_blocked_until: dict[str, float] = {}
 
 
 def search(query, delay_s=2):
-    """Return page markdown for URLs, or web search results for queries.
+    """Return web search results for a query.
 
-    Queries starting with http:// or https:// are fetched, rendered in a
-    headless browser and converted to markdown; everything else is searched
-    through the stealth browser, trying DuckDuckGo (html, then lite), Bing,
-    and Mojeek in order until one returns results. Up to 10 title/URL/
-    snippet blocks come back.
+    Everything is searched through the stealth browser, trying DuckDuckGo
+    (html, then lite), Bing, and Mojeek in order until one returns results.
+    Up to 10 title/URL/snippet blocks come back. URLs are not queries: for
+    those, the browser tool's `visit` command opens the page.
 
     Sleeps a randomized duration between 'delay_s' and 1.5x that before
     every search to avoid getting rate-limited; fixed waits would themselves
@@ -210,7 +208,10 @@ def search(query, delay_s=2):
 def _search(query):
     query = query.strip()
     if _URL_PATTERN.match(query):
-        return fetch_markdown(query, Config(headless=True))
+        raise ValueError(
+            "URLs are not search queries. To open a page, use the browser"
+            " tool with command 'visit'."
+        )
 
     results = _browser_search(query)
     if not results:

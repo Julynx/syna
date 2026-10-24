@@ -190,11 +190,11 @@ def test_check_url_scheme_handling():
     assert net_guard.check_url("https://example.com/page").allowed
 
 
-def test_goto_blocks_private_urls_before_touching_the_page():
+def test_visit_blocks_private_urls_before_touching_the_page():
     session = BrowserSession()
 
     async def attempt():
-        return await session.tool_goto("http://127.0.0.1:8000/")
+        return await session.tool_visit("http://127.0.0.1:8000/")
 
     try:
         asyncio.run(attempt())
@@ -202,7 +202,7 @@ def test_goto_blocks_private_urls_before_touching_the_page():
         assert "blocked" in str(exc)
         assert "public internet" in str(exc)
     else:
-        raise AssertionError("goto to loopback must be blocked")
+        raise AssertionError("visit to loopback must be blocked")
 
 
 def test_guard_route_neutralizes_public_script_hosts():
@@ -293,7 +293,7 @@ def main():
             test_allowed_hosts_override,
             test_allow_private_networks_toggle,
             test_check_url_scheme_handling,
-            test_goto_blocks_private_urls_before_touching_the_page,
+            test_visit_blocks_private_urls_before_touching_the_page,
             test_guard_route_neutralizes_public_script_hosts,
             test_guard_route_neutralizes_wildcard_host_and_scoped_path,
             test_guard_route_leaves_lookalike_urls_alone,

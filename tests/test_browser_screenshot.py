@@ -1,4 +1,4 @@
-"""Unit tests for the web_interact screenshot command."""
+"""Unit tests for the browser screenshot command."""
 
 import sys
 from pathlib import Path
@@ -43,7 +43,7 @@ def test_screenshot_saves_image_into_pod(monkeypatch):
     monkeypatch.setattr(tools, "BROWSER", object())
     monkeypatch.setitem(tools.BROWSER_COMMANDS, "screenshot", lambda browser: FAKE_PNG)
 
-    result = tools.web_interact("screenshot", {})
+    result = tools.browser("screenshot", {})
 
     assert result.startswith("Screenshot saved to /workspace/screenshots/")
     assert "describe_image" in result
@@ -65,8 +65,8 @@ def test_screenshot_filenames_are_unique(monkeypatch):
     monkeypatch.setattr(tools, "BROWSER", object())
     monkeypatch.setitem(tools.BROWSER_COMMANDS, "screenshot", lambda browser: FAKE_PNG)
 
-    first = tools.web_interact("screenshot", {})
-    second = tools.web_interact("screenshot", {})
+    first = tools.browser("screenshot", {})
+    second = tools.browser("screenshot", {})
 
     first_name = Path(first.split(" ")[3]).name
     second_name = Path(second.split(" ")[3]).name
@@ -83,7 +83,7 @@ def test_browser_errors_follow_the_error_convention(monkeypatch):
 
     monkeypatch.setitem(tools.BROWSER_COMMANDS, "screenshot", raise_pw_error)
 
-    result = tools.web_interact("screenshot", {})
+    result = tools.browser("screenshot", {})
 
     assert result.startswith("ERROR:")
     assert pop_last_exit_code() == 1
@@ -100,7 +100,7 @@ def test_bad_arguments_follow_the_error_convention(monkeypatch):
 
     monkeypatch.setitem(tools.BROWSER_COMMANDS, "screenshot", reject_args)
 
-    result = tools.web_interact("screenshot", {"format": "png"})
+    result = tools.browser("screenshot", {"format": "png"})
 
     assert result.startswith("ERROR: bad arguments for screenshot")
     assert pop_last_exit_code() == 1
@@ -113,7 +113,7 @@ def test_screenshot_without_container_raises(monkeypatch):
     monkeypatch.setitem(tools.BROWSER_COMMANDS, "screenshot", lambda browser: FAKE_PNG)
 
     try:
-        tools.web_interact("screenshot", {})
+        tools.browser("screenshot", {})
     except AttributeError:
         pass  # None.exec raises; parse.py reports it as a failed call
     else:
@@ -121,7 +121,7 @@ def test_screenshot_without_container_raises(monkeypatch):
 
 
 def main():
-    """Run every screenshot-subtool test and report a summary."""
+    """Run every browser screenshot test and report a summary."""
     run_suite(
         [
             test_screenshot_saves_image_into_pod,

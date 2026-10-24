@@ -2890,7 +2890,7 @@ const TOOL_META = {
     icon: ICONS.terminal,
     key: "command",
   },
-  web_interact: { verb: "Browsed", icon: ICONS.globe },
+  browser: { verb: "Browsed", icon: ICONS.globe },
   web_search: { verb: "Searched", icon: ICONS.search, key: "query" },
   read_file: { verb: "Read file", icon: ICONS.eye, key: "file_path" },
   edit_file: { verb: "Edited file", icon: ICONS.pencil, key: "file_path" },
@@ -3103,16 +3103,14 @@ function toolEventText(event) {
   if (event.parse_error) return "invalid tool call format";
   const meta = TOOL_META[event.name];
   if (!meta) return truncateArg(event.signature);
-  if (event.name === "web_interact") return webInteractText(event);
+  if (event.name === "browser") return browserEventText(event);
   const arg = truncateArg(primaryArg(event));
   let verb = meta.verb;
-  if (event.name === "web_search" && /^https?:\/\//.test(primaryArg(event)))
-    verb = "Visited";
   return verb + (arg ? ' "' + arg + '"' : "");
 }
 
 const WEB_VERBS = {
-  goto: "Visited",
+  visit: "Visited",
   snapshot: "Read page",
   click: "Clicked",
   type: "Typed",
@@ -3124,7 +3122,7 @@ const WEB_VERBS = {
   screenshot: "Captured",
 };
 
-function webInteractText(event) {
+function browserEventText(event) {
   const args = event.arguments || null;
   const signature = String(event.signature);
   const cmd = args ? String(args.command || "") : firstQuotedArg(signature);
@@ -3134,7 +3132,7 @@ function webInteractText(event) {
     const match = signature.match(new RegExp("'" + key + "':\\s*'([^']*)'"));
     return match ? match[1] : null;
   };
-  if (cmd === "goto") return 'Visited "' + truncateArg(arg("url") || "") + '"';
+  if (cmd === "visit") return 'Visited "' + truncateArg(arg("url") || "") + '"';
   if (cmd === "click" || cmd === "read") {
     const ref = args ? args.ref : (signature.match(/'ref':\s*(\d+)/) || [])[1];
     return WEB_VERBS[cmd] + (ref ? " #" + ref : "");

@@ -1,14 +1,13 @@
-"""Live one-shot check of the text_to_image tool: real API, real pod.
+"""Live one-shot check of the text_to_image tool: real API, real pod (manual run).
 
 Run with:
-    uv run python scripts/live_test_text_to_image.py
+    uv run python tests/test_live_text_to_image.py
 """
 
 import re
 import sys
 import tempfile
 from pathlib import Path
-from posixpath import basename
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 

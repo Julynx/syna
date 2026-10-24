@@ -1,7 +1,7 @@
 """Live browser health checks: read-workflow reliability and stealth.
 
 Phase 1 reproduces the exact workflow that failed in the investigate/ session
-(goto a heavy Fandom page, then read the full page text) and soaks the page
+(visit a heavy Fandom page, then read the full page text) and soaks the page
 with periodic reads to catch renderer crashes or popup hijacks.
 
 Phase 2 visits common bot-detection pages and dumps their verdicts, so a
@@ -31,17 +31,17 @@ BLANK_READ_MARKER = "no text returned"
 
 
 async def phase_read_workflow() -> list[str]:
-    """Goto the heavy page and soak it with reads, reporting every anomaly."""
+    """Visit the heavy page and soak it with reads, reporting every anomaly."""
     problems = []
     async with BrowserSession() as session:
-        print("[goto]", LEAGUEPEDIA_URL)
-        view = await session.call("goto", {"url": LEAGUEPEDIA_URL})
+        print("[visit]", LEAGUEPEDIA_URL)
+        view = await session.call("visit", {"url": LEAGUEPEDIA_URL})
         print(view.splitlines()[0] if view else "(empty view)")
 
         print("[read] full page text")
         text = await session.call("read", {"max_chars": 6000})
         if not text.strip():
-            problems.append("read returned empty right after goto")
+            problems.append("read returned empty right after visit")
         elif BLANK_READ_MARKER in text:
             problems.append("read returned the blank-document diagnostic")
         else:
@@ -86,7 +86,7 @@ async def phase_stealth() -> None:
             "https://abrahamjuliot.github.io/creepjs/",
         ):
             print(f"\n=== {url} ===")
-            view = await session.call("goto", {"url": url})
+            view = await session.call("visit", {"url": url})
             await asyncio.sleep(5)
             text = await session.call("read", {"max_chars": 4000})
             print(text if text.strip() else view[:2000])

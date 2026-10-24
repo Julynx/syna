@@ -142,7 +142,7 @@ SCENARIOS = [
         "prompt": (
             "You are tasked with researching the top 3 AI papers from 2024 or 2025 regarding"
             " structured generation, tool use, or agent architectures.\n"
-            "1. Use web_search or web_interact to find their titles, primary authors, and"
+            "1. Use web_search or the browser tool to find their titles, primary authors, and"
             " key contributions.\n"
             "2. Create a clean markdown report in /tmp/research_report.md summarizing these 3"
             " papers with a summary table.\n"

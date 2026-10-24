@@ -59,9 +59,8 @@ workflows keep working unchanged.
 - `python-dotenv` — loads `OPENROUTER_API_KEY` and model settings from `.env`.
 - `httpx` — OpenRouter audio endpoints (speech transcription and synthesis).
 - `bollard` — Docker/Podman container client used for the sandbox.
-- `playwright`, `drissionpage`, `camoufox`, `markdownify` — browser-based web
-  search and page-to-markdown conversion, plus the persistent stealth browser
-  session.
+- `playwright`, `camoufox` — browser-based web search and the persistent
+  stealth browser session.
 - `pillow` — image downscaling for the vision pipeline.
 - `fastapi`, `uvicorn`, `python-multipart` — web server and uploads.
 
@@ -301,7 +300,7 @@ the task.
 Persistent stealth browser session (Camoufox) exposed as LLM-callable actions.
 Renders pages through an accessibility-style walker that emits a compact
 line-based view (URL, title, scroll position and numbered interactables), and
-dispatches commands (`goto`, `click`, `type`, ...) by numeric element ref.
+dispatches commands (`visit`, `click`, `type`, ...) by numeric element ref.
 `screenshot_bytes()` captures the current viewport as PNG
 (`Browser.screenshot` is its sync wrapper); `tools.py` copies the bytes into
 `/workspace/screenshots/` in the pod (unique per-call filenames) so
@@ -325,8 +324,20 @@ is the choke point for every request — ad/identity neutralization and the
 Playwright's route-matching order. WebSocket handshakes cannot be blocked
 by routing, so `_on_websocket` kills sockets to non-public destinations the
 moment they appear (the Syna server's Origin check is the second layer).
-`tool_goto` additionally validates the destination before navigating with a
-model-readable error. WebRTC is disabled via `firefox_user_prefs` (it
+`tool_visit` additionally validates the destination before navigating with a
+model-readable error. The visit pipeline absorbs the behaviors of the retired
+DrissionPage fetcher (`web_to_markdown.py`, deleted): after navigation it
+waits out anti-bot interstitials (`_wait_past_challenge`, `CHALLENGE_MARKERS`;
+returning the view even if one persists, so the model can decide), dismisses
+cookie banners (`_dismiss_cookie_banner`, `COOKIE_BANNER_JS`), scrolls
+gradually to trigger lazy-loading (`_human_scroll`), and waits until the
+visible text stabilizes (`_wait_dom_stable`). Tables render as data on both
+paths: the compact view's walker suppresses flushes inside `<td>`/`<th>`
+(`inCell`) so every `<tr>` emits one line with ` | `-separated cells no
+matter what block elements the cells contain, and `read` extracts text with
+`TABLE_AWARE_TEXT_JS`, an innerText-like walk with the same row convention
+(nested tables flatten into their cell); the extraction never mutates the
+DOM. WebRTC is disabled via `firefox_user_prefs` (it
 bypasses HTTP-layer interception and is a standard IP-leak/fingerprint
 surface). Note: interception in this Camoufox build pins the browser to
 HTTP/2 — HTTP/3 is unavailable in both route and proxy modes (verified
@@ -353,7 +364,7 @@ scheme-less payloads (data:, about:) through. Config:
 
 ### `tests/test_browser_health.py`
 Live browser health checks (run manually): Phase 1 reproduces the
-goto-read-screenshot-soak workflow against a heavy Fandom page and reports
+visit-read-screenshot-soak workflow against a heavy Fandom page and reports
 crashes, popup hijacks, navigations away, blank reads, or non-JPEG captures
 over 90 seconds; Phase 2
 (`--stealth`) visits bot.sannysoft.com and CreepJS and dumps their verdicts
@@ -478,7 +489,7 @@ docstring lines into property descriptions while stripping them from the tool
 description. `get_tool_definitions()` returns the schemas for all registered
 tools. Note: any `- `-prefixed docstring line is treated as an argument
 description, so non-argument bullet lists in tool docstrings must use `* `
-bullets (see `web_interact`) or they are pulled out of the tool description.
+bullets (see `browser`) or they are pulled out of the tool description.
 
 ### `src/syna/interaction.py`
 User-interaction bridge between the `ask_user` tool and the host interfaces.
@@ -538,7 +549,7 @@ Tool-call parsing and execution under native OpenRouter tool calling.
   marks the rest of the batch `skipped`. Every call receives a result row so
   every `tool_call_id` receives a matching result message. `think` produces
   a `(noted)` tool result and reports its signature via `think_signatures`.
-- Browser command failures (`web_interact` views starting with "ERROR:")
+- Browser command failures (`browser` views starting with "ERROR:")
   record exit code 1, so they surface as `error` rows and stop the batch;
   `read_file`/`edit_file` translate Docker 404s into clean "No such file or
   directory" errors with exit code 1, while other Docker errors propagate
@@ -756,7 +767,7 @@ Global Docker client plus per-thread container registry and per-call context.
 The tools exposed to the model: `think` (no-op reasoning record; produces a
 `(noted)` tool result), `execute_command` (shell or argv style inside the container),
 `read_file`, `edit_file` (both proxied into the pod through temp copies),
-`web_search`, `web_interact`, `describe_image`, `speech_to_text` (pod audio →
+`web_search`, `browser`, `describe_image`, `speech_to_text` (pod audio →
 transcript, saved to /workspace/transcripts with a preview in the result;
 optional ISO-639-1 `language` hint, auto-detect when omitted),
 `text_to_speech` (pod text → speech audio in /workspace/audio),
@@ -852,13 +863,14 @@ burns the completion budget on hidden reasoning and can return no content
 at all.
 
 ### `src/syna/capabilities/web_search.py`
-`search(query, delay_s=2)` — URLs are fetched and converted to markdown via
-`web_to_markdown`; everything else is searched through the stealth browser
+`search(query, delay_s=2)` — searches the query through the stealth browser
 (Camoufox) against server-rendered endpoints, trying engines in order
 (DuckDuckGo html, DuckDuckGo lite, Bing, Mojeek) until one returns results,
 with per-engine redirect unwrapping (DuckDuckGo's `uddg=` wrapper, Bing's
 base64 `/ck/a` redirect) and an AD-loaded warm browser kept for the process
-lifetime. A previous ddgs-based implementation was dropped: its plain-HTTP
+lifetime. URLs are not queries: a URL-shaped `query` returns a one-line hint
+pointing at the browser tool's `visit` command. A previous ddgs-based
+implementation was dropped: its plain-HTTP
 engine fleet was blocked or challenged (google 403, brave 429, DuckDuckGo
 202 anomaly pages, startpage bot walls), its only working engine (yahoo)
 failed 60% of the time, and every failed attempt was bot-shaped traffic
@@ -872,11 +884,10 @@ into IP bans. Sleeps a randomized duration in `[delay_s, 1.5*delay_s)` before
 every request (fixed waits are a fingerprint of their own), holding a
 process-wide lock across the sleep and the request so searches from
 concurrent sessions or detached calls serialize and stay at least
-`delay_s` apart instead of firing together.
-
-### `src/syna/capabilities/web_to_markdown.py`
-Headless-browser page fetcher (Playwright/DrissionPage) that renders JavaScript
-pages and converts the DOM to markdown.
+`delay_s` apart instead of firing together. Page visiting and conversion
+live in `browser.py` (`visit`/`read`): there is exactly one website viewer,
+so the model can move from viewing a page to acting on it in the next tool
+call.
 
 ## Concurrency model
 
@@ -986,7 +997,7 @@ All suites are plain scripts runnable with the project venv
   correct ranges, not 0/8 luck), public short forms not blocked, hostname resolution blocked/allowed
   with stubbed `getaddrinfo`, resolution-failure pass-through, cache
   behavior, config overrides, scheme handling (ws/wss guarded, data:
-  passed), `tool_goto` blocking before any page exists, and the route
+  passed), `tool_visit` blocking before any page exists, and the route
   handler's neutralize/continue/abort outcomes plus the WebSocket
   observer.
 - `tests/test_server_auth.py` — the local-origin and token enforcement:

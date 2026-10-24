@@ -9,7 +9,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from _runner import run_suite
 
 from syna.capabilities import web_search
-from syna.capabilities.web_search import _format_results, _is_challenge, _unwrap_bing, _unwrap_ddg
+from syna.capabilities.web_search import (
+    _format_results,
+    _is_challenge,
+    _unwrap_bing,
+    _unwrap_ddg,
+)
 
 
 def test_unwrap_ddg_resolves_redirect_wrapper():
@@ -119,6 +124,15 @@ def test_challenged_engine_gets_a_cooldown():
         assert test_blocked[engine[0]] > time.monotonic(), engine[0]
 
 
+def test_url_queries_raise_a_visit_hint():
+    try:
+        web_search._search("https://example.com/page")
+    except ValueError as exc:
+        assert "visit" in str(exc)
+    else:
+        raise AssertionError("a URL query must be rejected with a hint")
+
+
 def main():
     """Run every parsing test and report a summary."""
     run_suite(
@@ -130,6 +144,7 @@ def main():
             test_unwrap_bing_survives_malformed_payload,
             test_format_results_renders_blocks,
             test_is_challenge_detects_widgets_and_markers,
+            test_url_queries_raise_a_visit_hint,
             test_engines_in_cooldown_are_skipped,
             test_challenged_engine_gets_a_cooldown,
         ]

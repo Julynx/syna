@@ -29,7 +29,7 @@ version: if state does not persist between calls, refs will report
 
 Usage:
     async with BrowserSession() as s:
-        print(await s.call("goto", {"url": "https://example.com"}))
+        print(await s.call("visit", {"url": "https://example.com"}))
         print(await s.call("click", {"ref": 1}))
 """
 
@@ -70,6 +70,87 @@ NEUTRALIZED_SCRIPT_HOSTS = (
 # user-initiated interaction (click/type/submit); anything else is
 # malvertising and gets closed.
 POPUP_ADOPT_WINDOW_S = 10
+
+# Body-text phrases that identify an anti-bot interstitial (Cloudflare and
+# friends). Ported from the retired DrissionPage fetcher: while any marker
+# is present, visit waits instead of snapshotting the challenge page.
+CHALLENGE_MARKERS = (
+    "just a moment",
+    "attention required",
+    "verify you are human",
+    "checking your browser",
+    "access denied",
+    "un momento",
+    "verificando que eres humano",
+    "enable javascript and cookies",
+)
+
+# One-shot click on the first button whose label reads like blanket
+# consent. Ported from the retired fetcher; best-effort and silent on
+# failure (a real interstitial still shows up in the view).
+COOKIE_BANNER_JS = r"""
+() => {
+  const re = /^(accept( all)?|allow all|agree|got it|i agree|aceptar( todo| todas)?|acepto|entendido|de acuerdo|permitir todo)\b/i;
+  const els = [...document.querySelectorAll('button,a[role=button],[role=button],input[type=button]')];
+  const b = els.find(e => re.test(((e.innerText || e.value) || '').trim()));
+  if (b) { b.click(); return true; }
+  return false;
+}
+"""
+
+# innerText-like extraction where every <table> renders as one line per
+# <tr> with cells joined by " | ", mirroring the compact view's row
+# convention. Runs on a root element (or a selector); never mutates the
+# DOM. Whitespace collapses like rendered text; <pre> keeps its literal
+# newlines; hidden subtrees and non-content elements are skipped.
+TABLE_AWARE_TEXT_JS = r"""
+(root) => {
+  if (typeof root === "string") root = document.querySelector(root) || document.body;
+  if (!root) return "";
+  const squash = (s) => (s || "").replace(/\s+/g, " ");
+  const out = [];
+  function rowsOf(table) {
+    const lines = [];
+    for (const tr of table.rows) {
+      const cells = Array.from(tr.cells).map(cellText);
+      if (cells.some((c) => c)) lines.push(cells.join(" | "));
+    }
+    return lines;
+  }
+  function cellText(td) {
+    const nested = td.querySelector("table");
+    if (nested) return rowsOf(nested).join(" / ");
+    return squash(td.innerText || td.textContent || "").trim();
+  }
+  const SKIP = new Set(["script", "style", "noscript", "template", "svg",
+                        "head", "iframe", "canvas", "object", "embed"]);
+  const HIDDEN = (el) => {
+    const cs = getComputedStyle(el);
+    return cs.display === "none" || cs.visibility === "hidden" || el.hidden;
+  };
+  function walk(node, pre) {
+    for (const child of node.childNodes) {
+      if (child.nodeType === 3) {
+        out.push(pre ? child.nodeValue : squash(child.nodeValue));
+        continue;
+      }
+      if (child.nodeType !== 1 || SKIP.has(child.localName) || HIDDEN(child)) continue;
+      const tag = child.localName;
+      if (tag === "br") { out.push("\n"); continue; }
+      if (tag === "table") { out.push("\n" + rowsOf(child).join("\n") + "\n"); continue; }
+      const display = getComputedStyle(child).display;
+      const block = display !== "inline" && display !== "inline-block" && display !== "contents";
+      const isPre = tag === "pre";
+      if (block && !isPre) out.push("\n");
+      walk(child, pre || isPre);
+      if (block && !isPre) out.push("\n");
+    }
+  }
+  if (root.localName === "table") return rowsOf(root).join("\n");
+  walk(root, false);
+  return out.join("");
+}
+"""
 
 SNAPSHOT_JS = r"""
 (opts) => {
@@ -180,20 +261,27 @@ SNAPSHOT_JS = r"""
   const lines = [];
   let buf = [];
   let depth = 0;
+  let inCell = 0;
 
   function flush() {
+    if (inCell) return;                       // cells never flush: a row is one line
     const parts = buf;
     buf = [];
     let out = '', n = 0, clipped = false;
     for (const p of parts) {
       if (typeof p === 'object') { out += p.t; continue; }       // ref tokens are never cut or dropped
+      const s = squash(p);
+      if (!s) {
+        if (n < MAXLINE) { out += ' '; n++; }   // whitespace between inline elements keeps words apart
+        continue;
+      }
       if (n >= MAXLINE) {
-        if (!clipped && p.trim()) { out += '…'; clipped = true; }
+        if (!clipped) { out += '…'; clipped = true; }
         continue;
       }
       const room = MAXLINE - n;
-      if (p.length > room) { out += p.slice(0, room) + '…'; clipped = true; n = MAXLINE; }
-      else { out += p; n += p.length; }
+      if (s.length > room) { out += s.slice(0, room) + '…'; clipped = true; n = MAXLINE; }
+      else { out += p; n += s.length; }         // budget on visible length, not raw source
     }
     const t = squash(out);
     if (!t || /^(-|#+|\|)$/.test(t)) return;
@@ -274,7 +362,9 @@ SNAPSHOT_JS = r"""
       lines.push('  '.repeat(depth) + `<${lm}>`);
       depth++;
     }
+    if (isCell) inCell++;
     for (const c of kids(el)) walk(c);
+    if (isCell) inCell--;
     if (lm) {
       flush();
       depth--;
@@ -317,8 +407,8 @@ class Browser:
         """The live Playwright page (its methods are async: wrap with b.run(...))."""
         return self._s.page
 
-    def goto(self, url: str):
-        return self._tool("goto", url=url)
+    def visit(self, url: str):
+        return self._tool("visit", url=url)
 
     def snapshot(self, viewport_only: bool = False):
         return self._tool("snapshot", viewport_only=viewport_only)
@@ -711,6 +801,82 @@ class BrowserSession:
                 pass
         await asyncio.sleep(0.25)
 
+    async def _wait_past_challenge(self, max_wait: float = 15.0) -> None:
+        """Wait out an anti-bot interstitial until real page text appears.
+
+        Returns as soon as no challenge marker is on the page, so ordinary
+        visits pay no wait. If the interstitial outlasts the budget, the
+        view is returned anyway: the model sees the challenge text and
+        decides (retry, give up, or report the block) instead of getting a
+        bare error. Never treats marker-bearing normal content as a block.
+        """
+        page = self._live_page()
+        deadline = time.monotonic() + max_wait
+        while True:
+            try:
+                body = (await page.inner_text("body")).strip().lower()
+            except PWError:
+                body = ""
+            if not body or not any(marker in body for marker in CHALLENGE_MARKERS):
+                return
+            if time.monotonic() >= deadline:
+                get_logger().warning(
+                    "Page still shows an anti-bot challenge after %.0fs: %.200s",
+                    max_wait,
+                    page.url,
+                )
+                return
+            await asyncio.sleep(1.0)
+
+    async def _dismiss_cookie_banner(self) -> None:
+        """Best-effort click on a consent button, with a humanlike pause."""
+        try:
+            clicked = await self._live_page().evaluate(COOKIE_BANNER_JS)
+            if clicked:
+                get_logger().debug("Cookie banner dismissed.")
+                await asyncio.sleep(random.uniform(0.4, 0.9))
+        except Exception:
+            get_logger().debug("Cookie banner dismissal failed", exc_info=True)
+
+    async def _human_scroll(self, max_steps: int = 10) -> None:
+        """Scroll gradually with random pauses to trigger lazy-loading.
+
+        Shorter than the fetcher's full-page sweep: the compact view only
+        shows the viewport, and the model can scroll further herself.
+        """
+        page = self._live_page()
+        try:
+            pos, steps = 0, 0
+            while steps < max_steps:
+                pos += random.randint(300, 700)
+                await page.evaluate(
+                    f"window.scrollTo({{top: {pos}, behavior: 'smooth'}})"
+                )
+                await asyncio.sleep(random.uniform(0.2, 0.5))
+                steps += 1
+                height = await page.evaluate("document.documentElement.scrollHeight")
+                if pos >= height:
+                    break
+            await asyncio.sleep(random.uniform(0.3, 0.6))
+            await page.evaluate("window.scrollTo({top: 0, behavior: 'smooth'})")
+            await asyncio.sleep(random.uniform(0.3, 0.5))
+        except Exception:
+            get_logger().debug("Lazy-load scroll interrupted", exc_info=True)
+
+    async def _wait_dom_stable(self, max_wait: float = 4.0) -> None:
+        """Wait until the visible text stops changing (dynamic content)."""
+        page = self._live_page()
+        deadline = time.monotonic() + max_wait
+        last, stable = -1, 0
+        while time.monotonic() < deadline and stable < 2:
+            try:
+                size = len((await page.inner_text("body")).strip())
+            except PWError:
+                size = -1
+            stable = stable + 1 if size == last else 0
+            last = size
+            await asyncio.sleep(0.4)
+
     async def _el(self, ref: int):
         page = self._live_page()
         h = await page.evaluate_handle(
@@ -724,7 +890,7 @@ class BrowserSession:
             )
         return el
 
-    async def tool_goto(self, url: str) -> str:
+    async def tool_visit(self, url: str) -> str:
         parsed = urlparse(url)
         if parsed.scheme.lower() not in ALLOWED_SCHEMES:
             raise ToolError(
@@ -742,6 +908,10 @@ class BrowserSession:
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         self._last_nav_url = url
         await self._settle()
+        await self._wait_past_challenge()
+        await self._dismiss_cookie_banner()
+        await self._human_scroll()
+        await self._wait_dom_stable()
         self._last = None
         return await self._observe()
 
@@ -825,18 +995,19 @@ class BrowserSession:
 
         Form controls report their current value instead of text: inputs and
         textareas return their value, selects return the chosen option plus
-        the full option list. Password fields stay masked.
+        the full option list. Password fields stay masked. Tables render one
+        line per row with cells separated by " | ", so rows survive as data.
         """
         if ref is None:
             page = self._live_page()
-            text = await page.inner_text("body")
+            text = await page.evaluate(TABLE_AWARE_TEXT_JS, "body")
             if not text.strip():
                 await asyncio.sleep(0.4)
-                text = await page.inner_text("body")
+                text = await page.evaluate(TABLE_AWARE_TEXT_JS, "body")
             if not text.strip():
                 return (
                     "(no text returned — the document is blank. It may have been"
-                    " replaced by an overlay or crashed; call goto to reload it.)"
+                    " replaced by an overlay or crashed; call visit to reload it.)"
                 )
         else:
             el = await self._el(ref)
@@ -858,7 +1029,7 @@ class BrowserSession:
                 else:
                     text = await el.input_value()
             else:
-                text = await el.inner_text()
+                text = await el.evaluate(TABLE_AWARE_TEXT_JS)
         text = "\n".join(line.strip() for line in text.splitlines() if line.strip())
         return text[:max_chars] + ("\n... [truncated]" if len(text) > max_chars else "")
 
@@ -871,7 +1042,7 @@ if __name__ == "__main__":
 
     async def demo():
         async with BrowserSession(headless=False) as s:
-            print(await s.call("goto", {"url": "https://news.ycombinator.com"}))
+            print(await s.call("visit", {"url": "https://news.ycombinator.com"}))
             print(await s.call("click", {"ref": 5}))
 
     asyncio.run(demo())

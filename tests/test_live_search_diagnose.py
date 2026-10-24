@@ -1,15 +1,17 @@
-"""Live diagnostic for the stealth-browser web search chain.
+"""Live diagnostic for the stealth-browser web search chain (manual run).
 
 Runs the real `web_search.search()` path (pacing included) over a fixed
 query set several times, records outcome and latency per attempt, and
 prints a summary. Use it after touching web_search.py or the engines,
 or whenever search reliability is in question.
 
-Usage: python scripts/diagnose_web_search.py [rounds]
+Run with:
+    uv run python tests/test_live_search_diagnose.py [rounds]
 """
 
 import json
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -30,7 +32,7 @@ QUERIES = [
     "cpu transistor size timeline",
 ]
 
-REPORT_PATH = Path(__file__).resolve().parent / "web_search_diagnosis.jsonl"
+REPORT_PATH = Path(tempfile.gettempdir()) / "syna_web_search_diagnosis.jsonl"
 
 
 def classify(results, error):

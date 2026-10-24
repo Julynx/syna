@@ -123,15 +123,15 @@ def _tool_result_bodies(session) -> list[str]:
     return results
 
 
-def test_web_interact_failure_marks_error_and_skips_siblings():
-    def fake_goto(browser, url):
+def test_browser_failure_marks_error_and_skips_siblings():
+    def fake_visit(browser, url):
         return "ERROR: Page.goto: NS_ERROR_UNKNOWN_HOST"
 
     def fake_click(browser, ref):
         raise AssertionError("sibling call must be skipped after the failure")
 
     original = tools_module.BROWSER_COMMANDS
-    tools_module.BROWSER_COMMANDS = {"goto": fake_goto, "click": fake_click}
+    tools_module.BROWSER_COMMANDS = {"visit": fake_visit, "click": fake_click}
     try:
         session = _make_session()
         reply = FakeMessage(
@@ -140,9 +140,9 @@ def test_web_interact_failure_marks_error_and_skips_siblings():
                     "id": "call_1",
                     "type": "function",
                     "function": {
-                        "name": "web_interact",
+                        "name": "browser",
                         "arguments": json.dumps(
-                            {"command": "goto", "args": {"url": "http://x.example"}}
+                            {"command": "visit", "args": {"url": "http://x.example"}}
                         ),
                     },
                 },
@@ -150,7 +150,7 @@ def test_web_interact_failure_marks_error_and_skips_siblings():
                     "id": "call_2",
                     "type": "function",
                     "function": {
-                        "name": "web_interact",
+                        "name": "browser",
                         "arguments": json.dumps(
                             {"command": "click", "args": {"ref": 1}}
                         ),
@@ -171,7 +171,7 @@ def test_web_interact_failure_marks_error_and_skips_siblings():
     print("PASS failed browser command becomes an error row and stops the batch")
 
 
-def test_web_interact_success_has_no_exit_code():
+def test_browser_success_has_no_exit_code():
     def fake_snapshot(browser, viewport_only=None):
         return '[1] heading "Page"'
 
@@ -179,7 +179,7 @@ def test_web_interact_success_has_no_exit_code():
     tools_module.BROWSER_COMMANDS = {"snapshot": fake_snapshot}
     try:
         session = _make_session()
-        reply = _tool_call_reply("web_interact", {"command": "snapshot", "args": {}})
+        reply = _tool_call_reply("browser", {"command": "snapshot", "args": {}})
         session.client = FakeChat([reply, REPLY_FINAL])
         session.run_turn("probe")
     finally:
@@ -278,8 +278,8 @@ def test_share_file_missing_path_reports_error():
 
 def main():
     assert "read_file" in TOOL_REGISTRY and "edit_file" in TOOL_REGISTRY
-    test_web_interact_failure_marks_error_and_skips_siblings()
-    test_web_interact_success_has_no_exit_code()
+    test_browser_failure_marks_error_and_skips_siblings()
+    test_browser_success_has_no_exit_code()
     test_read_file_missing_path_clean_error()
     test_edit_file_missing_path_clean_error()
     test_read_file_other_docker_errors_propagate()

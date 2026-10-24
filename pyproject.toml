@@ -1,6 +1,6 @@
 [project]
 name = "syna-agent"
-version = "0.10.6"
+version = "0.11.0"
 description = "Terminal and web AI agent that answers requests by driving an LLM in a tool-call loop inside a sandboxed container pod."
 readme = "docs/README.md"
 license = "MIT"
@@ -31,8 +31,6 @@ dependencies = [
     "httpx>=0.27",
     "bollard>=0.1.3",
     "playwright==1.62.0",
-    "drissionpage>=4.1.1.4",
-    "markdownify>=1.2.3",
     "pillow>=11.0.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
