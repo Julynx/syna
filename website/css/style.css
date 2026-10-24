@@ -369,7 +369,7 @@ ul {
   text-align: center;
   font-size: 2.5em;
   font-weight: 400;
-  margin-bottom: var(--spacing-xxl);
+  margin-bottom: var(--spacing-lg);
   color: var(--text-inverse);
 }
 
@@ -426,7 +426,7 @@ ul {
 
 /* CTA Section */
 .cta-section {
-  padding: 80px 0;
+  padding: 56px 0 80px;
   text-align: center;
   background: linear-gradient(
     to bottom,
@@ -534,6 +534,10 @@ footer {
     display: flex;
   }
 
+  .hero {
+    padding-top: 60px;
+  }
+
   .hero-logo {
     height: 80px;
   }
@@ -559,12 +563,15 @@ footer {
   }
 
   .install-cmd {
-    font-size: 1.1em;
     max-width: 100%;
   }
 
   .section-title {
     font-size: 1.75em;
+  }
+
+  .features {
+    padding-top: 48px;
   }
 
   .feature-row {
@@ -666,5 +673,26 @@ footer {
 }
 
 .cta-cmd {
-  margin-top: var(--spacing-lg);
+  margin-top: 0;
 }
+
+/* Mobile install command — must come after the base .install-cmd rule
+   so the overrides win the cascade. */
+@media (max-width: 768px) {
+  .install-cmd {
+    font-size: 1.05em;
+    padding: 8px 12px;
+    gap: 6px;
+    max-width: 100%;
+  }
+
+  .install-cmd code {
+    white-space: nowrap;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .install-cmd .copy-cmd {
+    font-size: 1.1em;
+    flex-shrink: 0;
+  }}
