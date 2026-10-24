@@ -2,7 +2,7 @@
 name = "syna-agent"
 version = "0.10.5"
 description = "Terminal and web AI agent that answers requests by driving an LLM in a tool-call loop inside a sandboxed container pod."
-readme = "README.md"
+readme = "docs/README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
