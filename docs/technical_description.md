@@ -252,9 +252,12 @@ Client behavior notes:
 `website/` holds the static landing page deployed to
 `julynx.github.io/syna` by `.github/workflows/deploy.yml` (GitHub Pages
 from `./website` on every push to main). Plain HTML/CSS: navbar, hero
-with the `uv tool install syna-agent` command, a six-card feature grid,
-CTA, and footer; SEO metadata (OpenGraph, Twitter, JSON-LD
-`SoftwareApplication` pointing at PyPI), `robots.txt` and
+with the `uv tool install syna-agent` command (copy button with a
+checkmark feedback animation and a legacy clipboard fallback), a feature
+section rendering the README bullets verbatim as centered rows with
+accent italic openers (justified body text on desktop, balanced centered
+text on mobile), CTA, and footer; SEO metadata (OpenGraph, Twitter,
+JSON-LD `SoftwareApplication` pointing at PyPI), `robots.txt` and
 `sitemap.xml`. Brand assets: the transparent logo composited onto a dark
 rounded square (`syna-logo-pill.png` for large sizes, `syna-mark-pill.png`
 for small marks, `syna-favicon.png` as favicon). Screenshots are

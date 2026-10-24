@@ -102,32 +102,21 @@
         </p>
 
         <div class="hero-actions">
-          <a
-            href="https://pypi.org/project/syna-agent/"
-            class="btn btn-primary btn-lg"
-          >
-            <i class="bi bi-box"></i> Install from PyPI
-          </a>
           <div class="install-cmd">
             <code id="install-command">uv tool install syna-agent</code>
-            <button
-              class="copy-cmd"
-              aria-label="Copy install command"
-              onclick="
-                navigator.clipboard.writeText('uv tool install syna-agent')
-              "
-            >
+            <button class="copy-cmd" aria-label="Copy install command">
               <i class="bi bi-copy"></i>
             </button>
           </div>
-          <div class="inline-links small-text">
-            <a
-              href="https://github.com/Julynx/syna"
-              target="_blank"
-              style="color: inherit"
-              ><u>Source code</u></a
-            >
-          </div>
+          <a
+            href="https://docs.astral.sh/uv/getting-started/installation/"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="uv-hint"
+          >
+            Don't have uv? Get it here
+            <i class="bi bi-box-arrow-up-right"></i>
+          </a>
         </div>
 
         <div class="hero-image">
@@ -253,23 +242,21 @@
         <h2>Ready to start?</h2>
         <p>Two minutes of setup, then give Syna something hard.</p>
         <div class="cta-buttons">
+          <div class="install-cmd cta-cmd">
+            <code>uv tool install syna-agent</code>
+            <button class="copy-cmd" aria-label="Copy install command">
+              <i class="bi bi-copy"></i>
+            </button>
+          </div>
           <a
-            href="https://pypi.org/project/syna-agent/"
-            class="btn btn-primary btn-lg"
-            >Install from PyPI</a
+            href="https://docs.astral.sh/uv/getting-started/installation/"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="uv-hint"
           >
-        </div>
-        <div class="install-cmd cta-cmd">
-          <code>uv tool install syna-agent</code>
-          <button
-            class="copy-cmd"
-            aria-label="Copy install command"
-            onclick="
-              navigator.clipboard.writeText('uv tool install syna-agent')
-            "
-          >
-            <i class="bi bi-copy"></i>
-          </button>
+            Don't have uv? Get it here
+            <i class="bi bi-box-arrow-up-right"></i>
+          </a>
         </div>
       </div>
     </section>
@@ -324,6 +311,47 @@
           heroVideo.play().catch(showHeroFallback);
         });
       }
+
+      // Copy buttons: copy the sibling command and flash a checkmark.
+      const COPY_RESET_MS = 2000;
+
+      function legacyCopy(text) {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        const succeeded = document.execCommand("copy");
+        textarea.remove();
+        return succeeded;
+      }
+
+      document.querySelectorAll(".copy-cmd").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const command = button.parentElement.querySelector("code").innerText;
+          let copied = false;
+          try {
+            await navigator.clipboard.writeText(command);
+            copied = true;
+          } catch {
+            copied = legacyCopy(command);
+          }
+          if (!copied) {
+            console.error(
+              "Clipboard write failed: no clipboard permission and legacy fallback unavailable."
+            );
+            return;
+          }
+          const icon = button.querySelector("i");
+          icon.className = "bi bi-check-lg";
+          button.classList.add("copied");
+          setTimeout(() => {
+            icon.className = "bi bi-copy";
+            button.classList.remove("copied");
+          }, COPY_RESET_MS);
+        });
+      });
     </script>
   </body>
 </html>
