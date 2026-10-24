@@ -36,8 +36,11 @@ def unwrap_channel(content: str) -> tuple[str, str] | None:
 
     Returns:
         A tuple of (kind, body) if the content is a valid channel message,
-        or None if it does not use the sentinel framing.
+        or None if it does not use the sentinel framing. None content
+        (tool-call-only assistant replies) is never a channel message.
     """
+    if not content:
+        return None
     match = CHANNEL_HEADER_PATTERN.match(content)
     if not match:
         return None
@@ -61,13 +64,21 @@ def is_channel_message(content: str, kind: str | None = None) -> bool:
     return unwrapped[0] == kind.strip().upper()
 
 
-def contains_sentinel(text: str) -> bool:
-    """Return True if text contains raw or escaped Private Use Area sentinels."""
+def contains_sentinel(text: str | None) -> bool:
+    """Return True if text contains raw or escaped Private Use Area sentinels.
+
+    Assistant messages may legitimately carry None content (tool-call-only
+    replies), which simply contain no sentinels.
+    """
+    if not text:
+        return False
     return bool(SENTINEL_PATTERN.search(text))
 
 
-def defang_sentinels(text: str) -> str:
+def defang_sentinels(text: str | None) -> str:
     """Replace raw and escaped sentinel characters with safe placeholder text."""
+    if not text:
+        return ""
     return SENTINEL_PATTERN.sub("[FORBIDDEN_SENTINEL]", text)
 
 

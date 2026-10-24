@@ -257,7 +257,7 @@ def _audit_session(
     strengths = []
 
     for idx, msg in enumerate(session.messages):
-        content = msg.get("content", "")
+        content = msg.get("content") or ""
         role = msg.get("role", "")
 
         if role == "assistant":
@@ -378,7 +378,7 @@ def _write_markdown_report(path: Path, record: dict):
 
     for idx, msg in enumerate(record["messages"]):
         role = msg["role"]
-        content = msg["content"]
+        content = msg["content"] or ""
         if is_channel_message(content):
             kind, body = unwrap_channel(content)
             lines.append(f"### Message {idx} — `[channel:{kind.lower()}]`")

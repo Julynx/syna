@@ -12,7 +12,7 @@ from _runner import run_suite
 
 from syna.conversation import session as session_module
 from syna.capabilities import verification
-from syna.config import read_asset_text
+from syna.config import DEFAULT_MODEL, read_asset_text
 from syna.protocol.parse import parse_and_execute_tools
 from syna.protocol.tool_schemas import get_tool_definitions
 from syna.capabilities.tools import TOOL_REGISTRY
@@ -185,14 +185,15 @@ def test_review_work_requires_a_conversation_provider(monkeypatch):
     assert isinstance(result, dict) and "error" in result
 
 
-def test_review_work_without_model_reports_error(monkeypatch):
-    _capture_review_request(monkeypatch)
+def test_review_work_without_model_falls_back_to_default(monkeypatch):
+    calls = _capture_review_request(monkeypatch)
     monkeypatch.setattr(verification, "get_env", lambda: {"MODEL": ""})
-    result = _with_provider(
+    _with_provider(
         lambda: [{"role": "user", "content": "task"}],
         lambda: TOOL_REGISTRY["review_work"](summary="s"),
     )
-    assert isinstance(result, dict) and "MODEL" in result["error"]
+    assert calls["model"] == DEFAULT_MODEL
+    assert calls["effort"] == "high"
 
 
 def test_review_work_rejects_invalid_effort(monkeypatch):
@@ -398,7 +399,7 @@ def main():
             test_review_log_tail_is_truncated_to_configured_chars,
             test_review_work_defaults_to_agent_model_and_high_effort,
             test_review_work_requires_a_conversation_provider,
-            test_review_work_without_model_reports_error,
+            test_review_work_without_model_falls_back_to_default,
             test_review_work_rejects_invalid_effort,
             test_review_work_survives_reviewer_failure,
             test_review_work_rejects_empty_summary,
