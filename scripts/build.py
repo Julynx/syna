@@ -1,11 +1,11 @@
-"""Assemble src/syna/assets/chat.html from the sources in build/.
+"""Assemble src/syna/assets/chat.html from the sources in webui/.
 
-chat.html is a GENERATED file — edit the css/ and js/ sources in build/,
+chat.html is a GENERATED file — edit the css/ and js/ sources in webui/,
 then rebuild with: python scripts/build.py
 
-build/index.html is the page skeleton; every {{CSS}} marker is replaced in
-order with a <style> block from build/css/, and every {{JS}} marker with an
-inline <script> block from build/js/. The block order is fixed below.
+webui/index.html is the page skeleton; every {{CSS}} marker is replaced in
+order with a <style> block from webui/css/, and every {{JS}} marker with an
+inline <script> block from webui/js/. The block order is fixed below.
 """
 
 from pathlib import Path
@@ -52,7 +52,7 @@ def _fill(build_dir: Path, html: str, css_files: list[str], js_files: list[str])
 
 def build() -> None:
     root = Path(__file__).resolve().parent.parent
-    build_dir = root / "build"
+    build_dir = root / "webui"
     for skeleton, css_files, js_files, target_name in TARGETS:
         html = _fill(
             build_dir,

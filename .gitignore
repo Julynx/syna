@@ -17,9 +17,11 @@ message-session-log*
 TODO.md
 investigate/
 logs/
-PLAN.md
 tmp/
 evals/results/
 
 # Regenerated diagnostic output
 scripts/web_search_diagnosis.jsonl
+
+# Linter cache
+.ruff_cache/
