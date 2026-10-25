@@ -20,6 +20,8 @@
 
 ![Syna chat interface](https://raw.githubusercontent.com/Julynx/syna/main/website/assets/screenshot.png)
 
+![Syna researching butterfly species, rendering a research answer with an inline chart](https://raw.githubusercontent.com/Julynx/syna/main/website/assets/screenshot2.png)
+
 ## You're getting the full kit
 
 > **Syna has a pod,** a Debian container, and her commands run inside of it. They cannot touch your actual system. She can only see what you decide to share with her. She respects your boundaries.
@@ -119,10 +121,56 @@
    syna-cli
    ```
 
-## Privacy
+## FAQ
 
-Syna does not collect your personal information or send your messages anywhere except to the provider you specified.
-Their _Terms of Service_ and _Privacy Policy_ apply.
+<details>
+<summary><b>When I closed Syna, my conversation disappeared. Why isn't there a chat history?</b></summary>
+
+You can click on a message to copy or download it. We believe the decision to save a message is yours to make, and hoarding should not be the default.
+
+</details>
+
+<details>
+<summary><b>What does Syna cost?</b></summary>
+
+You pay only for what you use, at the rates of the provider you choose. Syna performs elision and compaction to keep the cache hit rate high and the context under control, so you get the most out of each token.
+
+</details>
+
+<details>
+<summary><b>Does web search need a key?</b></summary>
+
+No. Syna searches the web with her own browser, which is hardened to run safely on your machine, so you don't have to trust anyone else with your network traffic.
+
+</details>
+
+<details>
+<summary><b>Which models can I use?</b></summary>
+
+Any modern model with native tool calling from a supported provider: OpenRouter (recommended, most tested), OpenAI, Google Gemini, Ollama (local), or any OpenAI-compatible endpoint. We picked `~z-ai/glm-flash-latest` as the default because it's reasonably priced and has performed well in our testing.
+
+</details>
+
+<details>
+<summary><b>Can Syna damage my machine?</b></summary>
+
+Syna runs her commands in an isolated container. She has no direct access to your computer and can only see the files you decide to share with her. The few tools that run on your machine are hardened so they cannot access your files or execute code.
+
+</details>
+
+<details>
+<summary><b>Does Syna remember me?</b></summary>
+
+Each conversation is independent, for accuracy and safety. To carry information into the next conversation, share it with her explicitly.
+
+</details>
+
+<details>
+<summary><b>Is my data private?</b></summary>
+
+Syna only shares your messages with the provider you choose. Her container and the entire chat are deleted from your device whenever you exit the app or start a new chat.
+
+</details>
 
 ## Links
 

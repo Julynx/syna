@@ -261,6 +261,13 @@
   opacity: 0;
   transform: scale(0.6) rotate(12deg);
 }
+.copy-btn.download-btn {
+  right: 39px;
+}
+.copy-btn.copied .i-download {
+  opacity: 0;
+  transform: scale(0.6) rotate(12deg);
+}
 @media (hover: none) {
   .bubble.model .copy-btn {
     opacity: 1;

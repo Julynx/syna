@@ -121,6 +121,7 @@ const ICONS = {
   warn: GLYPH("warning"),
   copy: GLYPH("content_copy", "i-copy"),
   check: GLYPH("check", "i-check"),
+  download: GLYPH("download", "i-download"),
   history: GLYPH("history"),
   mic: GLYPH("mic"),
   think: GLYPH("psychology"),
@@ -249,7 +250,10 @@ function addBubble(content, side, queued) {
   } else {
     bubble.textContent = content;
   }
-  if (side === "model") addCopyButton(bubble, content);
+  if (side === "model") {
+    addDownloadButton(bubble, content);
+    addCopyButton(bubble, content);
+  }
   append(bubble);
   if (queued) {
     const tag = document.createElement("div");
@@ -343,6 +347,38 @@ function addCopyButton(bubble, source) {
         );
       })
       .catch(() => {});
+  });
+  bubble.appendChild(btn);
+}
+
+function downloadMarkdown(text) {
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const blob = new Blob([text], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "syna-message-" + stamp + ".md";
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function addDownloadButton(bubble, source) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "copy-btn download-btn glass";
+  btn.title = "Download markdown";
+  btn.setAttribute("aria-label", "Download message as markdown file");
+  btn.innerHTML = ICONS.download + ICONS.check;
+  btn.addEventListener("click", () => {
+    try {
+      downloadMarkdown(source);
+      btn.classList.add("copied");
+      clearTimeout(btn._t);
+      btn._t = setTimeout(
+        () => btn.classList.remove("copied"),
+        COPY_FEEDBACK_MS,
+      );
+    } catch (err) {}
   });
   bubble.appendChild(btn);
 }

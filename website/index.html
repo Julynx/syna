@@ -143,6 +143,13 @@
             style="display: none"
           />
         </div>
+
+        <div class="hero-image">
+          <img
+            src="assets/screenshot2.png"
+            alt="Syna researching butterfly species, rendering a research answer with an inline chart"
+          />
+        </div>
       </div>
     </header>
 
@@ -237,6 +244,95 @@
             </p>
           </li>
         </ul>
+      </div>
+    </section>
+
+    <section class="faq">
+      <div class="container">
+        <h2 class="section-title">FAQ</h2>
+        <div class="faq-rows">
+          <details class="faq-item">
+            <summary>
+              <span>When I closed Syna, my conversation disappeared. Why isn't there a chat history?</span>
+              <i class="bi bi-chevron-down"></i>
+            </summary>
+            <p class="faq-answer">
+              You can click on a message to copy or download it. We believe the
+              decision to save a message is yours to make, and hoarding should
+              not be the default.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>
+              <span>What does Syna cost?</span>
+              <i class="bi bi-chevron-down"></i>
+            </summary>
+            <p class="faq-answer">
+              You pay only for what you use, at the rates of the provider you
+              choose. Syna performs elision and compaction to keep the cache
+              hit rate high and the context under control, so you get the most
+              out of each token.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>
+              <span>Does web search need a key?</span>
+              <i class="bi bi-chevron-down"></i>
+            </summary>
+            <p class="faq-answer">
+              No. Syna searches the web with her own browser, which is hardened
+              to run safely on your machine, so you don't have to trust anyone
+              else with your network traffic.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>
+              <span>Which models can I use?</span>
+              <i class="bi bi-chevron-down"></i>
+            </summary>
+            <p class="faq-answer">
+              Any modern model with native tool calling from a supported
+              provider: OpenRouter (recommended, most tested), OpenAI, Google
+              Gemini, Ollama (local), or any OpenAI-compatible endpoint. We
+              picked <code>~z-ai/glm-flash-latest</code> as the default because
+              it's reasonably priced and has performed well in our testing.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>
+              <span>Can Syna damage my machine?</span>
+              <i class="bi bi-chevron-down"></i>
+            </summary>
+            <p class="faq-answer">
+              Syna runs her commands in an isolated container. She has no
+              direct access to your computer and can only see the files you
+              decide to share with her. The few tools that run on your machine
+              are hardened so they cannot access your files or execute code.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>
+              <span>Does Syna remember me?</span>
+              <i class="bi bi-chevron-down"></i>
+            </summary>
+            <p class="faq-answer">
+              Each conversation is independent, for accuracy and safety. To
+              carry information into the next conversation, share it with her
+              explicitly.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>
+              <span>Is my data private?</span>
+              <i class="bi bi-chevron-down"></i>
+            </summary>
+            <p class="faq-answer">
+              Syna only shares your messages with the provider you choose. Her
+              container and the entire chat are deleted from your device
+              whenever you exit the app or start a new chat.
+            </p>
+          </details>
+        </div>
       </div>
     </section>
 
