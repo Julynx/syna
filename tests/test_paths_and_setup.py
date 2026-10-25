@@ -4,6 +4,8 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -429,6 +431,110 @@ def test_ensure_engine_ready_delegates_to_bollard(monkeypatch):
     assert calls == ["constructed", "closed"]
 
 
+def test_init_docker_client_recovers_from_failure(monkeypatch):
+    """A failed client construction must not brick initialization.
+
+    This is the regression behind "Docker client is already
+    initialized.": the init state was marked before the constructor
+    finished, so a failure left every later call erroring forever.
+    """
+    import syna.state as state_module
+
+    saved = (
+        state_module._exit_stack,
+        state_module.client,
+        state_module._global_container,
+    )
+    state_module._exit_stack = None
+    state_module.client = None
+    state_module._global_container = None
+
+    class _FakeEngine:
+        def __init__(self):
+            state["attempts"] += 1
+            if state["attempts"] == 1:
+                raise FileNotFoundError("no endpoint yet")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    state = {"attempts": 0}
+    monkeypatch.setattr(state_module, "DockerClient", _FakeEngine)
+    try:
+        raised = False
+        try:
+            state_module.init_docker_client()
+        except FileNotFoundError:
+            raised = True
+        assert raised, "the constructor's failure surfaces"
+        assert state_module.client is None, "failure leaves nothing behind"
+        assert state_module._exit_stack is None
+
+        state_module.init_docker_client()
+        assert state_module.client is not None, "the next call retries cleanly"
+        assert state["attempts"] == 2
+    finally:
+        if state_module._exit_stack is not None:
+            state_module._exit_stack.close()
+        (
+            state_module._exit_stack,
+            state_module.client,
+            state_module._global_container,
+        ) = saved
+
+
+def test_init_docker_client_serializes_concurrent_calls(monkeypatch):
+    """Concurrent sessions wait for one bring-up instead of racing it."""
+    import syna.state as state_module
+
+    saved = (
+        state_module._exit_stack,
+        state_module.client,
+        state_module._global_container,
+    )
+    state_module._exit_stack = None
+    state_module.client = None
+    state_module._global_container = None
+
+    constructed = []
+
+    class _SlowEngine:
+        def __init__(self):
+            constructed.append(True)
+            time.sleep(0.4)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(state_module, "DockerClient", _SlowEngine)
+
+    def _init():
+        state_module.init_docker_client()
+
+    threads = [threading.Thread(target=_init) for _ in range(3)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        assert len(constructed) == 1, "exactly one bring-up runs"
+        assert state_module.client is not None
+    finally:
+        if state_module._exit_stack is not None:
+            state_module._exit_stack.close()
+        (
+            state_module._exit_stack,
+            state_module.client,
+            state_module._global_container,
+        ) = saved
+
+
 def main():
     run_suite(
         [
@@ -446,6 +552,8 @@ def main():
             test_windows_engine_install_verdict,
             test_sanity_check_requires_a_reachable_engine,
             test_ensure_engine_ready_delegates_to_bollard,
+            test_init_docker_client_recovers_from_failure,
+            test_init_docker_client_serializes_concurrent_calls,
             test_setup_wizard_page_served_when_incomplete,
             test_setup_api_endpoints,
         ]

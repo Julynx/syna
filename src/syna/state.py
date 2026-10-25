@@ -28,6 +28,7 @@ _call_counter = itertools.count(1)
 _exit_stack: ExitStack | None = None
 client: DockerClient | None = None
 _global_container: Container | None = None
+_init_lock = threading.Lock()
 
 
 def next_call_index() -> int:
@@ -158,32 +159,44 @@ def ensure_engine_ready() -> None:
 def init_docker_client(*args, **kwargs):
     """Initialize the global Docker client context.
 
-    The client's constructor resolves the engine endpoint and brings the
-    Podman machine up when needed. Only bollard's wire-level logger is
-    quieted here: its per-request debug output would flood the syna log
-    file, while bollard's operational messages (machine bring-up,
-    container creation, image pulls) are worth keeping.
+    Serialized: a concurrent caller waits for an in-flight engine
+    bring-up instead of failing. A failed constructor rolls the state
+    back so the next call retries bringing the engine up instead of
+    finding the half-initialized leftovers forever. Only bollard's
+    wire-level logger is quieted here: its per-request debug output
+    would flood the syna log file, while bollard's operational messages
+    (machine bring-up, container creation, image pulls) are worth
+    keeping.
     """
     global _exit_stack, client
 
-    if _exit_stack is not None:
-        raise RuntimeError("Docker client is already initialized.")
-
-    logging.getLogger("bollard.wire").setLevel(logging.WARNING)
-    _exit_stack = ExitStack()
-    client = _exit_stack.enter_context(DockerClient(*args, **kwargs))
+    with _init_lock:
+        if _exit_stack is not None:
+            if client is not None:
+                return
+            stack, _exit_stack = _exit_stack, None
+            stack.close()
+        logging.getLogger("bollard.wire").setLevel(logging.WARNING)
+        stack = ExitStack()
+        try:
+            client = stack.enter_context(DockerClient(*args, **kwargs))
+        except BaseException:
+            stack.close()
+            raise
+        _exit_stack = stack
 
 
 def close_docker_client():
     """Manually closes the context manager."""
     global _exit_stack, client, _global_container
 
-    if _global_container is not None:
-        _global_container.stop()
-        _global_container.remove(force=True)
-        _global_container = None
+    with _init_lock:
+        if _global_container is not None:
+            _global_container.stop()
+            _global_container.remove(force=True)
+            _global_container = None
 
-    if _exit_stack is not None:
-        stack, _exit_stack = _exit_stack, None
-        client = None
-        stack.close()
+        if _exit_stack is not None:
+            stack, _exit_stack = _exit_stack, None
+            client = None
+            stack.close()

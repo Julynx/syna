@@ -241,6 +241,53 @@ class SessionRecord:
 
     def _run_worker(self):
         """Own this session's container and process the inbox sequentially."""
+        self._start_container()
+        try:
+            while not self.shutdown.is_set():
+                try:
+                    item = self.inbox.get(timeout=1.0)
+                except queue.Empty:
+                    continue
+                if item.get("kind") != "message":
+                    continue
+                if self.container is None:
+                    self._start_container()
+                if self.container is None:
+                    continue
+                self.session.clear_cancel()
+                self._run_turn(item["content"])
+        finally:
+            unregister_container()
+            if self.container is not None:
+                try:
+                    destroy_container(self.container)
+                except Exception:
+                    logger.exception(
+                        "Container cleanup failed for session %s", self.client_id
+                    )
+            try:
+                self.session.close()
+            except Exception:
+                logger.exception(
+                    "Model client cleanup failed for session %s", self.client_id
+                )
+            shutil.rmtree(self.tmp_dir, ignore_errors=True)
+            logger.info("Session %s torn down", self.client_id)
+
+    def _start_container(self):
+        """Create the session container, reporting failures as an event.
+
+        The worker stays alive when creation fails, so the user's next
+        message retries bringing the engine up instead of the session
+        going silent forever.
+        """
+        self.push(
+            {
+                "type": "status",
+                "text": "Starting the container engine...",
+            },
+            persistent=False,
+        )
         try:
             self.container = create_container()
         except Exception as exc:
@@ -250,32 +297,6 @@ class SessionRecord:
         register_container(self.container)
         self.container_ready.set()
         logger.info("Container ready for session %s", self.client_id)
-
-        try:
-            while not self.shutdown.is_set():
-                try:
-                    item = self.inbox.get(timeout=1.0)
-                except queue.Empty:
-                    continue
-                if item.get("kind") == "message":
-                    self.session.clear_cancel()
-                    self._run_turn(item["content"])
-        finally:
-            unregister_container()
-            try:
-                destroy_container(self.container)
-            except Exception:
-                logger.exception(
-                    "Container cleanup failed for session %s", self.client_id
-                )
-            try:
-                self.session.close()
-            except Exception:
-                logger.exception(
-                    "Model client cleanup failed for session %s", self.client_id
-                )
-            shutil.rmtree(self.tmp_dir, ignore_errors=True)
-            logger.info("Session %s torn down", self.client_id)
 
     def _run_turn(self, user_text: str):
         self.busy.set()

@@ -773,12 +773,21 @@ Global Docker client plus per-thread container registry and per-call context.
   `get_container()` lazily starts a fresh one (CLI `/newchat`).
 - `ensure_engine_ready()` verifies the engine endpoint end to end by
   constructing a bollard client, whose discovery brings the Podman machine
-  up (starting, and initializing it first when it does not exist) whenever
+  up (starting it, initializing it first when it does not exist, and
+  restarting a registered machine whose endpoint never came up) whenever
   no pipe/socket is reachable. The wizard's sanity check uses it, so a
   machine that was installed but never initialized fails (and self-heals)
   during setup instead of at the first tool call. Only bollard's wire
   logger (`bollard.wire`) is quieted; operational bollard messages stay
   visible in the syna log.
+- `init_docker_client` is serialized with a lock: concurrent sessions wait
+  for one in-flight bring-up instead of racing it, and a failed
+  constructor rolls the init state back so the next call retries instead
+  of finding the half-initialized leftovers forever.
+- Session workers survive container-creation failure (`_start_container`
+  pushes the error and retries on the user's next message) and push a
+  "Starting the container engine..." status while bring-up runs, so the
+  window without a container is visible in the UI.
 
 ### `src/syna/capabilities/tools.py`
 The tools exposed to the model: `think` (no-op reasoning record; produces a
