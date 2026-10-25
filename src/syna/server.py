@@ -297,6 +297,7 @@ class SessionRecord:
         register_container(self.container)
         self.container_ready.set()
         logger.info("Container ready for session %s", self.client_id)
+        self.push({"type": "ready"}, persistent=False)
 
     def _run_turn(self, user_text: str):
         self.busy.set()

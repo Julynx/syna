@@ -1231,7 +1231,7 @@ function render(event) {
       addCompactionRow(event);
       break;
     case "status":
-      if (!event.quiet) setStatus(busy ? "working" : "ready", event.text);
+      if (!event.quiet) setStatus("working", event.text);
       break;
     case "busy":
       busy = true;
