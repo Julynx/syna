@@ -6,47 +6,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Syna</title>
     <link rel="icon" type="image/png" href="vendor/syna-favicon.png" />
-    <meta
-      name="theme-color"
-      media="(prefers-color-scheme: light)"
-      content="#f4f5f7"
-    />
-    <meta
-      name="theme-color"
-      media="(prefers-color-scheme: dark)"
-      content="#0f1114"
-    />
+    <meta name="theme-color" content="#0f1114" />
     <link rel="stylesheet" href="vendor/katex.min.css" />
     <style>
 :root {
-  color-scheme: light dark;
-  --bg: #f4f5f7;
-  --surface: rgba(239, 241, 245, 0.8);
-  --surface-strong: rgba(235, 238, 243, 0.92);
-  --surface-soft: rgba(24, 28, 38, 0.075);
-  --surface-detail: rgba(24, 28, 38, 0.13);
-  --text: #1b1e22;
-  --muted: #6b7280;
-  --accent: #4f46e5;
-  --accent-soft: rgba(79, 70, 229, 0.12);
-  --accent-line: rgba(79, 70, 229, 0.45);
-  --on-accent: #ffffff;
-  --border: rgba(24, 28, 38, 0.1);
-  --glass-line: rgba(255, 255, 255, 0.62);
+  color-scheme: dark;
+  --bg: #0f1114;
+  --surface: rgba(19, 23, 29, 0.75);
+  --surface-strong: rgba(13, 16, 21, 0.9);
+  --surface-soft: rgba(255, 255, 255, 0.085);
+  --surface-detail: rgba(0, 0, 0, 0.25);
+  --text: #e6e8eb;
+  --muted: #9aa1ab;
+  --accent: #818cf8;
+  --accent-soft: rgba(129, 140, 248, 0.16);
+  --accent-line: rgba(129, 140, 248, 0.5);
+  --on-accent: #0f1114;
+  --border: rgba(255, 255, 255, 0.09);
+  --glass-line: rgba(255, 255, 255, 0.1);
   --glass-shadow:
-    0 14px 34px -16px rgba(18, 22, 33, 0.25),
-    0 2px 10px -4px rgba(18, 22, 33, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    0 14px 34px -16px rgba(0, 0, 0, 0.6), 0 2px 10px -4px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
   --glass-shadow-soft:
-    0 8px 22px -14px rgba(18, 22, 33, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.4);
-  --danger: #b3261e;
-  --danger-tint: rgba(179, 38, 30, 0.1);
-  --danger-line: rgba(179, 38, 30, 0.32);
-  --warn: #d97706;
-  --warn-tint: rgba(217, 119, 6, 0.12);
-  --warn-line: rgba(217, 119, 6, 0.35);
-  --ok: #16a34a;
+    0 8px 22px -14px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --danger: #f2b8b5;
+  --danger-tint: rgba(242, 184, 181, 0.12);
+  --danger-line: rgba(242, 184, 181, 0.35);
+  --warn: #f5a623;
+  --warn-tint: rgba(245, 166, 35, 0.12);
+  --warn-line: rgba(245, 166, 35, 0.4);
+  --ok: #4ade80;
   --radius: 16px;
   --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
   --serif: "Lora", Charter, Georgia, "Times New Roman", serif;
@@ -56,36 +46,6 @@
   --dur-in: 0.5s;
   --dur-out: 0.32s;
   --frost: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='1' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.07'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23g)'/%3E%3C/svg%3E");
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f1114;
-    --surface: rgba(19, 23, 29, 0.75);
-    --surface-strong: rgba(13, 16, 21, 0.9);
-    --surface-soft: rgba(255, 255, 255, 0.085);
-    --surface-detail: rgba(0, 0, 0, 0.25);
-    --text: #e6e8eb;
-    --muted: #9aa1ab;
-    --accent: #818cf8;
-    --accent-soft: rgba(129, 140, 248, 0.16);
-    --accent-line: rgba(129, 140, 248, 0.5);
-    --on-accent: #0f1114;
-    --border: rgba(255, 255, 255, 0.09);
-    --glass-line: rgba(255, 255, 255, 0.1);
-    --glass-shadow:
-      0 14px 34px -16px rgba(0, 0, 0, 0.6), 0 2px 10px -4px rgba(0, 0, 0, 0.4),
-      inset 0 1px 0 rgba(255, 255, 255, 0.07);
-    --glass-shadow-soft:
-      0 8px 22px -14px rgba(0, 0, 0, 0.55),
-      inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    --danger: #f2b8b5;
-    --danger-tint: rgba(242, 184, 181, 0.12);
-    --danger-line: rgba(242, 184, 181, 0.35);
-    --warn: #f5a623;
-    --warn-tint: rgba(245, 166, 35, 0.12);
-    --warn-line: rgba(245, 166, 35, 0.4);
-    --ok: #4ade80;
-  }
 }
 
 * {
@@ -247,7 +207,7 @@ body {
 
 body {
   --glow: 99 102 241;
-  --tp: 24%;
+  --tp: 17%;
   transition:
     --bgA 2.4s ease,
     --bgB 2.4s ease,
@@ -264,11 +224,6 @@ body[data-ambient="tool"] {
   --bgA: #5b9bff;
   --bgB: #7fd0ff;
   --c3: #7a7cff;
-}
-@media (prefers-color-scheme: dark) {
-  body {
-    --tp: 17%;
-  }
 }
 
 .ambient {
@@ -335,16 +290,10 @@ body[data-ambient="tool"] {
 .grain {
   position: absolute;
   inset: 0;
-  opacity: 0.025;
-  mix-blend-mode: overlay;
+  opacity: 0.035;
+  mix-blend-mode: soft-light;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='1' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
   background-size: 160px 160px;
-}
-@media (prefers-color-scheme: dark) {
-  .grain {
-    opacity: 0.035;
-    mix-blend-mode: soft-light;
-  }
 }
 
 </style> <style>
@@ -384,11 +333,6 @@ header {
   height: 28px;
   margin-left: 4px;
   width: auto;
-}
-@media (prefers-color-scheme: light) {
-  .brand-logo {
-    filter: invert(1);
-  }
 }
 
 .inline-status {
@@ -594,20 +538,18 @@ body.dragging #drop-overlay {
   font-size: 15.5px;
   line-height: 1.65;
 }
-@media (prefers-color-scheme: dark) {
-  .bubble.user {
-    background-image:
-      var(--frost),
-      linear-gradient(
-        135deg,
-        rgba(129, 140, 248, 0.92),
-        rgba(113, 124, 245, 0.85)
-      );
-    border-color: rgba(255, 255, 255, 0.2);
-    box-shadow:
-      0 14px 30px -14px rgba(0, 0, 0, 0.6),
-      inset 0 1px 0 rgba(255, 255, 255, 0.22);
-  }
+.bubble.user {
+  background-image:
+    var(--frost),
+    linear-gradient(
+      135deg,
+      rgba(129, 140, 248, 0.92),
+      rgba(113, 124, 245, 0.85)
+    );
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow:
+    0 14px 30px -14px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
 .bubble.model.markdown {
@@ -1471,11 +1413,9 @@ footer {
 #send-btn.pop .material-symbols-outlined {
   animation: icon-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-@media (prefers-color-scheme: dark) {
-  #send-btn {
-    background: linear-gradient(135deg, #a5b4fc, #818cf8);
-    box-shadow: 0 8px 18px -8px rgba(129, 140, 248, 0.4);
-  }
+#send-btn {
+  background: linear-gradient(135deg, #a5b4fc, #818cf8);
+  box-shadow: 0 8px 18px -8px rgba(129, 140, 248, 0.4);
 }
 
 #file-input {
@@ -2048,7 +1988,6 @@ function updateAmbient() {
   field.appendChild(cv);
   const c = cv.getContext("2d");
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const dark = matchMedia("(prefers-color-scheme: dark)");
   const TAU = Math.PI * 2,
     N = 180,
     L = 22;
@@ -2149,12 +2088,11 @@ function updateAmbient() {
       cy = H_ / 2;
     const R = Math.min(W_, H_) * 0.2;
     const sp = cur.spread * (1 + 0.13 * pulse + 0.2 * ks);
-    const isDark = dark.matches;
-    const alpha = (isDark ? 0.05 : 0.09) * (0.85 + 0.3 * pulse + 0.4 * ks);
+    const alpha = 0.05 * (0.85 + 0.3 * pulse + 0.4 * ks);
     const rgb = (x) =>
       "rgb(" + (x[0] | 0) + "," + (x[1] | 0) + "," + (x[2] | 0) + ")";
     c.clearRect(0, 0, W_, H_);
-    c.globalCompositeOperation = isDark ? "lighter" : "source-over";
+    c.globalCompositeOperation = "lighter";
     c.globalAlpha = alpha;
     for (let i = 0; i < 3; i++) {
       const tau = (i - 1) * 1.1,
@@ -2203,7 +2141,7 @@ function updateAmbient() {
     c.beginPath();
     c.arc(cx, cy, R * 1.3, 0, TAU);
     c.fill();
-    const coreA = (isDark ? 0.95 : 0.85) * (0.86 + 0.14 * pulse);
+    const coreA = 0.95 * (0.86 + 0.14 * pulse);
     const coreHi = col[0].map((v) => v + (255 - v) * 0.85);
     const coreLo = col[0].map((v) => v + (255 - v) * 0.4);
     const coreG = c.createRadialGradient(cx, cy, 0, cx, cy, R);

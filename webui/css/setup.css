@@ -318,10 +318,6 @@ body {
   color: #fbbf24;
 }
 
-.checklist .row.missing .material-symbols-outlined {
-  color: rgba(232, 234, 240, 0.45);
-}
-
 .engine-pill-select {
   background: transparent;
   border: none;
@@ -506,9 +502,12 @@ body {
 .inline-status {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  align-self: center;
   gap: 8px;
   font-size: 13px;
   color: rgba(232, 234, 240, 0.75);
+  padding: 8px 0;
 }
 
 .spin {

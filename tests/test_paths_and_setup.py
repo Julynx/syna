@@ -271,6 +271,86 @@ def test_setup_api_endpoints(monkeypatch):
         get_env.cache_clear()
 
 
+class _FakeRegistryKey:
+    """Context-manager stand-in for a winreg key handle."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def test_refresh_path_merges_registry_entries(monkeypatch):
+    """Entries an installer writes to the registry PATH become visible.
+
+    This is the regression lock for the wizard's install flow: a
+    winget-driven install updates the registry, not the running process,
+    so detection must re-read the registry to see the new engine.
+    """
+    if sys.platform != "win32":
+        return
+    user_dir = tempfile.mkdtemp(prefix="syna-path-user-")
+    machine_dir = tempfile.mkdtemp(prefix="syna-path-machine-")
+    values = {
+        ("HKCU", "Environment"): "%SYNA_TEST_NEW%",
+        (
+            "HKLM",
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ): machine_dir,
+    }
+    fake = type(sys)("winreg")
+    fake.HKEY_CURRENT_USER = "HKCU"
+    fake.HKEY_LOCAL_MACHINE = "HKLM"
+    fake.OpenKey = lambda root, subkey: _FakeRegistryKey(values[(root, subkey)])
+    fake.QueryValueEx = lambda key, name: (key._value, None)
+    fake.ExpandEnvironmentStrings = lambda raw: raw.replace("%SYNA_TEST_NEW%", user_dir)
+    monkeypatch.setitem(sys.modules, "winreg", fake)
+
+    previous = os.environ["PATH"]
+    try:
+        setup_module._refresh_path()
+        entries = os.environ["PATH"].split(os.pathsep)
+        assert user_dir in entries, "user PATH entry merged and expanded"
+        assert machine_dir in entries, "machine PATH entry merged"
+        assert "%SYNA_TEST_NEW%" not in entries
+
+        setup_module._refresh_path()
+        refreshed = os.environ["PATH"].split(os.pathsep)
+        assert refreshed.count(user_dir) == 1, "refresh is idempotent"
+        assert refreshed == entries, "second refresh adds nothing"
+    finally:
+        os.environ["PATH"] = previous
+
+
+def test_windows_engine_install_verdict(monkeypatch):
+    """The install verdict comes from detection, not winget's exit code.
+
+    winget exits non-zero for the localized "already installed, no
+    update" case, which must not surface as a failed installation.
+    """
+    if sys.platform != "win32":
+        return
+    localized_no_update = "Se encontró un paquete existente ya instalado."
+    monkeypatch.setattr(
+        setup_module, "_winget", lambda package_id: (False, localized_no_update)
+    )
+    installed = setup_module.DetectResult("podman", True, "podman version 5.4.0")
+    ok, detail = setup_module._windows_engine_install(
+        "RedHat.Podman", lambda: installed
+    )
+    assert ok, "an engine present after the run is a success"
+    assert detail == "podman version 5.4.0"
+
+    missing = setup_module.DetectResult("podman", False, "not found on PATH")
+    ok, tail = setup_module._windows_engine_install("RedHat.Podman", lambda: missing)
+    assert not ok, "no engine and a failed winget is a failure"
+    assert tail == localized_no_update, "the winget log reaches the wizard"
+
+
 def main():
     run_suite(
         [
@@ -284,6 +364,8 @@ def main():
             test_provider_presets_are_complete,
             test_detection_reports_data_not_exceptions,
             test_install_failure_is_returned_not_raised,
+            test_refresh_path_merges_registry_entries,
+            test_windows_engine_install_verdict,
             test_setup_wizard_page_served_when_incomplete,
             test_setup_api_endpoints,
         ]

@@ -347,12 +347,11 @@ ul {
 .hero-video {
   display: block;
   width: 100%;
+  height: auto;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   border: 1px solid var(--border-color);
   background: var(--bg-secondary);
-  aspect-ratio: 16 / 10;
-  object-fit: cover;
 }
 
 /* Features Section */

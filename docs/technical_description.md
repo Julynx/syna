@@ -140,7 +140,9 @@ sources live in `webui/`:
   `webui/index-setup.html` + `webui/css/setup.css` + `webui/js/setup.js` are
   the first-run setup wizard.
 - `webui/css/` — style blocks (`base`, `ambient`, `chrome`, `chat`,
-  `composer`, `voice`), inlined in that order.
+  `composer`, `voice`), inlined in that order. The UI is dark-only:
+  `base.css` defines a single dark palette (`color-scheme: dark`), and
+  no `prefers-color-scheme` branches remain anywhere in `webui/`.
 - `webui/js/` — script blocks (`ambient`, `sfx`, `markdown`, `chat`,
   `voice`), inlined in that order. The background light field (`ambient.js`)
   blends three states — `idle`, `thinking`, `tool` — through per-frame
@@ -515,11 +517,16 @@ installs).
 First-run setup, shared by `syna-server` (which redirects `/` to the
 wizard while setup is incomplete) and the `syna-setup` entry point.
 Detection returns data, never raises: `detect_wsl` / `detect_podman` /
-`detect_docker` / `detect_engine` (PATH probes plus `--version`), and
-`detect_all()` for the wizard's dependency step. Installation is
+`detect_docker` / `detect_engine` (PATH probes plus `--version`). On
+Windows the engine probes call `_refresh_path()` first, which merges the
+registry PATH (user + machine) into the running process so an engine
+installed mid-session is detected without an app restart. Installation is
 best-effort per platform (`winget` on Windows, package managers
 elsewhere) with the log tail returned for the wizard's error box; WSL
-reports `reboot_required`. `write_env_file` merges keys into the data
+reports `reboot_required`. On Windows the engine installers verify the
+outcome with a fresh detection (`_windows_engine_install`) instead of
+trusting winget's exit code, which is non-zero for the localized
+"already installed, no update" case. `write_env_file` merges keys into the data
 home `.env` and clears the env cache; `endpoint_needs_key` exempts
 local endpoints; `setup_incomplete()` (checked live on every request,
 so finishing the wizard flips the server in-process) requires a key
@@ -980,10 +987,10 @@ All suites are plain scripts runnable with the project venv
   seeding, repo-root fallback, the endpoint-needs-key matrix, the
   `setup_incomplete` matrix (model/key/engine), `.env` merging with
   cache clearing, provider preset integrity, detection returning data
-  instead of raising, install failures returned as data, the wizard
-  page served (and left) based on live setup state, and the setup API
-  endpoints (token-gated detect, unknown dependency, key/validation
-  errors on config).
+  instead of raising (including the registry PATH refresh on Windows),
+  install failures returned as data, the wizard page served (and left)
+  based on live setup state, and the setup API endpoints (token-gated
+  detect, unknown dependency, key/validation errors on config).
 - `tests/test_image_endpoint.py` — the inline image endpoint against a
   fake pod: path validation (outside `/workspace`, traversal, non-image
   extensions), pass-through for small in-box images (animated GIF bytes

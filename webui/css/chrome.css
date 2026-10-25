@@ -35,11 +35,6 @@ header {
   margin-left: 4px;
   width: auto;
 }
-@media (prefers-color-scheme: light) {
-  .brand-logo {
-    filter: invert(1);
-  }
-}
 
 .inline-status {
   display: flex;

@@ -10,6 +10,7 @@ returned as data (never raised) so the wizard can show a friendly,
 actionable explanation instead of a traceback.
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -112,6 +113,43 @@ def _run_quiet(command: list[str], timeout: float = 10.0) -> tuple[bool, str]:
     return completed.returncode == 0, tail
 
 
+def _refresh_path() -> None:
+    """Merge PATH entries written by installers into the running process.
+
+    Windows installers (winget included) update the registry PATH, but a
+    long-running process keeps the PATH it was started with, so a freshly
+    installed engine stays invisible to shutil.which forever. Re-reading
+    the user and machine PATH values and appending the missing entries
+    lets the wizard detect an engine right after installing it.
+    """
+    if sys.platform != "win32":
+        return
+    import winreg
+
+    current = os.environ["PATH"].split(os.pathsep)
+    seen = {entry.casefold() for entry in current}
+    registry_paths = (
+        (winreg.HKEY_CURRENT_USER, "Environment"),
+        (
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ),
+    )
+    for root, subkey in registry_paths:
+        try:
+            with winreg.OpenKey(root, subkey) as key:
+                raw, _ = winreg.QueryValueEx(key, "Path")
+        except OSError:
+            continue
+        expanded = winreg.ExpandEnvironmentStrings(raw)
+        for entry in expanded.split(os.pathsep):
+            entry = entry.strip()
+            if entry and entry.casefold() not in seen:
+                seen.add(entry.casefold())
+                current.append(entry)
+    os.environ["PATH"] = os.pathsep.join(current)
+
+
 def detect_wsl() -> DetectResult:
     """Whether the Windows Subsystem for Linux is installed."""
     if sys.platform != "win32":
@@ -122,6 +160,7 @@ def detect_wsl() -> DetectResult:
 
 def detect_podman() -> DetectResult:
     """Whether Podman is on PATH and runnable."""
+    _refresh_path()
     binary = shutil.which("podman")
     if not binary:
         return DetectResult("podman", False, "not found on PATH")
@@ -131,6 +170,7 @@ def detect_podman() -> DetectResult:
 
 def detect_docker() -> DetectResult:
     """Whether Docker is on PATH and runnable."""
+    _refresh_path()
     binary = shutil.which("docker")
     if not binary:
         return DetectResult("docker", False, "not found on PATH")
@@ -185,6 +225,21 @@ def _winget(package_id: str) -> tuple[bool, str]:
     )
 
 
+def _windows_engine_install(package_id: str, probe) -> tuple[bool, str]:
+    """Install an engine with winget, then verify by detecting it.
+
+    winget exits non-zero when the package is already installed and no
+    update exists (with a localized message), so the verdict comes from
+    a fresh detection — which also picks up the registry PATH the
+    installer just wrote — instead of from the exit code.
+    """
+    found, tail = _winget(package_id)
+    detected = probe()
+    if detected.found:
+        return True, detected.detail or tail
+    return found, tail
+
+
 def _linux_install(package: str) -> tuple[bool, str]:
     """Best-effort install through the system package manager."""
     if shutil.which("apt-get"):
@@ -213,7 +268,7 @@ def install_wsl() -> tuple[bool, str, bool]:
 def install_podman() -> tuple[bool, str]:
     """Install Podman, best-effort, per platform."""
     if sys.platform == "win32":
-        return _winget("RedHat.Podman")
+        return _windows_engine_install("RedHat.Podman", detect_podman)
     if sys.platform == "darwin":
         if shutil.which("brew"):
             return _run_quiet(["brew", "install", "podman"])
@@ -224,7 +279,7 @@ def install_podman() -> tuple[bool, str]:
 def install_docker() -> tuple[bool, str]:
     """Install Docker Desktop / Engine, best-effort, per platform."""
     if sys.platform == "win32":
-        return _winget("Docker.DockerDesktop")
+        return _windows_engine_install("Docker.DockerDesktop", detect_docker)
     if sys.platform == "darwin":
         if shutil.which("brew"):
             return _run_quiet(["brew", "install", "--cask", "docker"])

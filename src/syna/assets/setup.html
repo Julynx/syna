@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Syna — Setup</title>
+    <meta name="theme-color" content="#0f1114" />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Lora:ital@0;1&display=swap"
       rel="stylesheet"
@@ -15,34 +16,33 @@
     <link rel="icon" type="image/png" href="/vendor/syna-favicon.png" />
     <style>
 :root {
-  color-scheme: light dark;
-  --bg: #f4f5f7;
-  --surface: rgba(239, 241, 245, 0.8);
-  --surface-strong: rgba(235, 238, 243, 0.92);
-  --surface-soft: rgba(24, 28, 38, 0.075);
-  --surface-detail: rgba(24, 28, 38, 0.13);
-  --text: #1b1e22;
-  --muted: #6b7280;
-  --accent: #4f46e5;
-  --accent-soft: rgba(79, 70, 229, 0.12);
-  --accent-line: rgba(79, 70, 229, 0.45);
-  --on-accent: #ffffff;
-  --border: rgba(24, 28, 38, 0.1);
-  --glass-line: rgba(255, 255, 255, 0.62);
+  color-scheme: dark;
+  --bg: #0f1114;
+  --surface: rgba(19, 23, 29, 0.75);
+  --surface-strong: rgba(13, 16, 21, 0.9);
+  --surface-soft: rgba(255, 255, 255, 0.085);
+  --surface-detail: rgba(0, 0, 0, 0.25);
+  --text: #e6e8eb;
+  --muted: #9aa1ab;
+  --accent: #818cf8;
+  --accent-soft: rgba(129, 140, 248, 0.16);
+  --accent-line: rgba(129, 140, 248, 0.5);
+  --on-accent: #0f1114;
+  --border: rgba(255, 255, 255, 0.09);
+  --glass-line: rgba(255, 255, 255, 0.1);
   --glass-shadow:
-    0 14px 34px -16px rgba(18, 22, 33, 0.25),
-    0 2px 10px -4px rgba(18, 22, 33, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    0 14px 34px -16px rgba(0, 0, 0, 0.6), 0 2px 10px -4px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
   --glass-shadow-soft:
-    0 8px 22px -14px rgba(18, 22, 33, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.4);
-  --danger: #b3261e;
-  --danger-tint: rgba(179, 38, 30, 0.1);
-  --danger-line: rgba(179, 38, 30, 0.32);
-  --warn: #d97706;
-  --warn-tint: rgba(217, 119, 6, 0.12);
-  --warn-line: rgba(217, 119, 6, 0.35);
-  --ok: #16a34a;
+    0 8px 22px -14px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --danger: #f2b8b5;
+  --danger-tint: rgba(242, 184, 181, 0.12);
+  --danger-line: rgba(242, 184, 181, 0.35);
+  --warn: #f5a623;
+  --warn-tint: rgba(245, 166, 35, 0.12);
+  --warn-line: rgba(245, 166, 35, 0.4);
+  --ok: #4ade80;
   --radius: 16px;
   --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
   --serif: "Lora", Charter, Georgia, "Times New Roman", serif;
@@ -52,36 +52,6 @@
   --dur-in: 0.5s;
   --dur-out: 0.32s;
   --frost: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='1' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.07'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23g)'/%3E%3C/svg%3E");
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f1114;
-    --surface: rgba(19, 23, 29, 0.75);
-    --surface-strong: rgba(13, 16, 21, 0.9);
-    --surface-soft: rgba(255, 255, 255, 0.085);
-    --surface-detail: rgba(0, 0, 0, 0.25);
-    --text: #e6e8eb;
-    --muted: #9aa1ab;
-    --accent: #818cf8;
-    --accent-soft: rgba(129, 140, 248, 0.16);
-    --accent-line: rgba(129, 140, 248, 0.5);
-    --on-accent: #0f1114;
-    --border: rgba(255, 255, 255, 0.09);
-    --glass-line: rgba(255, 255, 255, 0.1);
-    --glass-shadow:
-      0 14px 34px -16px rgba(0, 0, 0, 0.6), 0 2px 10px -4px rgba(0, 0, 0, 0.4),
-      inset 0 1px 0 rgba(255, 255, 255, 0.07);
-    --glass-shadow-soft:
-      0 8px 22px -14px rgba(0, 0, 0, 0.55),
-      inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    --danger: #f2b8b5;
-    --danger-tint: rgba(242, 184, 181, 0.12);
-    --danger-line: rgba(242, 184, 181, 0.35);
-    --warn: #f5a623;
-    --warn-tint: rgba(245, 166, 35, 0.12);
-    --warn-line: rgba(245, 166, 35, 0.4);
-    --ok: #4ade80;
-  }
 }
 
 * {
@@ -545,10 +515,6 @@ body {
   color: #fbbf24;
 }
 
-.checklist .row.missing .material-symbols-outlined {
-  color: rgba(232, 234, 240, 0.45);
-}
-
 .engine-pill-select {
   background: transparent;
   border: none;
@@ -733,9 +699,12 @@ body {
 .inline-status {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  align-self: center;
   gap: 8px;
   font-size: 13px;
   color: rgba(232, 234, 240, 0.75);
+  padding: 8px 0;
 }
 
 .spin {
@@ -875,7 +844,7 @@ function copyButton(text) {
   return btn;
 }
 
-function showModal(title, textHtml, errorDetails) {
+function showModal(title, textHtml, errorDetails, reportable = true) {
   const existing = document.querySelector(".setup-modal-backdrop");
   if (existing) existing.remove();
 
@@ -904,13 +873,15 @@ function showModal(title, textHtml, errorDetails) {
     modal.appendChild(pre);
   }
 
-  const issue = document.createElement("p");
-  issue.className = "fineprint";
-  issue.innerHTML =
-    'If this looks like a bug, please <a href="' +
-    ISSUES_URL +
-    '" target="_blank">open a GitHub issue</a> so we can fix it. Thank you!';
-  modal.appendChild(issue);
+  if (reportable) {
+    const issue = document.createElement("p");
+    issue.className = "fineprint";
+    issue.innerHTML =
+      'If this looks like a bug, please <a href="' +
+      ISSUES_URL +
+      '" target="_blank">open a GitHub issue</a> so we can fix it. Thank you!';
+    modal.appendChild(issue);
+  }
 
   const footer = document.createElement("div");
   footer.className = "setup-modal-footer";
@@ -1324,9 +1295,9 @@ const STEPS = [
   },
 ];
 
-function actionButton(label, onClick) {
+function actionButton(label, onClick, variant = "ghost") {
   const btn = document.createElement("button");
-  btn.className = "setup-btn ghost";
+  btn.className = "setup-btn " + variant;
   btn.textContent = label;
   btn.addEventListener("click", onClick);
   return btn;
@@ -1353,14 +1324,16 @@ function renderDependencies(result) {
 
   const addRow = (icon, found, label, detail, install) => {
     const row = document.createElement("div");
-    row.className = "row " + (found ? "ok" : "missing");
+    row.className = "row " + (found ? "ok" : "warn");
     row.innerHTML =
       GLYPH(found ? "check_circle" : icon) +
       "<span>" +
       esc(label) +
       "</span>" +
       (detail ? '<span class="detail">' + esc(detail) + "</span>" : "");
-    if (!found && install) row.appendChild(actionButton("Install", install));
+    if (!found && install) {
+      row.appendChild(actionButton("Install", install, "success"));
+    }
     rows.appendChild(row);
   };
 
@@ -1445,14 +1418,16 @@ function renderDependencies(result) {
 
   bodyEl.appendChild(rows);
 
+  const staleNote = document.getElementById("engine-note");
+  if (staleNote) staleNote.remove();
   if (!result.podman.found && !result.docker.found) {
-    bodyEl.appendChild(
-      para(
-        "Syna executes commands inside an isolated container, but" +
-          " no container engine was found on your system. Podman is" +
-          " suggested because it runs rootless by default.",
-      ),
+    const note = para(
+      "Syna executes commands inside an isolated container, but" +
+        " no container engine was found on your system. Podman is" +
+        " suggested because it runs rootless by default.",
     );
+    note.id = "engine-note";
+    bodyEl.appendChild(note);
   }
 }
 
@@ -1472,6 +1447,8 @@ function installDependency(name, container) {
           "Restart Required",
           esc(name.toUpperCase()) +
             " was installed. Please restart your computer, then launch Syna again to continue.",
+          null,
+          false,
         );
         nextBtn.disabled = true;
         return;
@@ -1481,6 +1458,21 @@ function installDependency(name, container) {
           detection = fresh;
           container.remove();
           renderDependencies(fresh);
+          const probe = fresh[name];
+          if (probe && !probe.found) {
+            const installBtn = document
+              .getElementById("engine-pill-row")
+              ?.querySelector("button");
+            if (installBtn) installBtn.disabled = true;
+            showModal(
+              "Almost There",
+              esc(name) +
+                " was installed, but Syna cannot see it yet. Close and" +
+                " reopen Syna, then continue the setup.",
+              null,
+              false,
+            );
+          }
         });
       }
       showInstallFailure(name, result.log || "");

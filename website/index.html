@@ -125,12 +125,16 @@
         <div class="hero-image">
           <!-- The demo video is the first thing visitors see; the
                screenshot only shows if the video is missing or autoplay
-               is blocked. Drop real files into website/assets/. -->
+               is blocked. Drop real files into website/assets/, and keep
+               the video's width/height attributes in sync with it so the
+               page reserves the right shape before it loads. -->
           <video
             id="hero-video"
             class="hero-video"
             src="assets/demo.mp4"
             poster="assets/screenshot.png"
+            width="1920"
+            height="1080"
             autoplay
             muted
             loop

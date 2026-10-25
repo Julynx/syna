@@ -24,7 +24,6 @@ function updateAmbient() {
   field.appendChild(cv);
   const c = cv.getContext("2d");
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const dark = matchMedia("(prefers-color-scheme: dark)");
   const TAU = Math.PI * 2,
     N = 180,
     L = 22;
@@ -125,12 +124,11 @@ function updateAmbient() {
       cy = H_ / 2;
     const R = Math.min(W_, H_) * 0.2;
     const sp = cur.spread * (1 + 0.13 * pulse + 0.2 * ks);
-    const isDark = dark.matches;
-    const alpha = (isDark ? 0.05 : 0.09) * (0.85 + 0.3 * pulse + 0.4 * ks);
+    const alpha = 0.05 * (0.85 + 0.3 * pulse + 0.4 * ks);
     const rgb = (x) =>
       "rgb(" + (x[0] | 0) + "," + (x[1] | 0) + "," + (x[2] | 0) + ")";
     c.clearRect(0, 0, W_, H_);
-    c.globalCompositeOperation = isDark ? "lighter" : "source-over";
+    c.globalCompositeOperation = "lighter";
     c.globalAlpha = alpha;
     for (let i = 0; i < 3; i++) {
       const tau = (i - 1) * 1.1,
@@ -179,7 +177,7 @@ function updateAmbient() {
     c.beginPath();
     c.arc(cx, cy, R * 1.3, 0, TAU);
     c.fill();
-    const coreA = (isDark ? 0.95 : 0.85) * (0.86 + 0.14 * pulse);
+    const coreA = 0.95 * (0.86 + 0.14 * pulse);
     const coreHi = col[0].map((v) => v + (255 - v) * 0.85);
     const coreLo = col[0].map((v) => v + (255 - v) * 0.4);
     const coreG = c.createRadialGradient(cx, cy, 0, cx, cy, R);

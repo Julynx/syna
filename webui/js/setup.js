@@ -103,7 +103,7 @@ function copyButton(text) {
   return btn;
 }
 
-function showModal(title, textHtml, errorDetails) {
+function showModal(title, textHtml, errorDetails, reportable = true) {
   const existing = document.querySelector(".setup-modal-backdrop");
   if (existing) existing.remove();
 
@@ -132,13 +132,15 @@ function showModal(title, textHtml, errorDetails) {
     modal.appendChild(pre);
   }
 
-  const issue = document.createElement("p");
-  issue.className = "fineprint";
-  issue.innerHTML =
-    'If this looks like a bug, please <a href="' +
-    ISSUES_URL +
-    '" target="_blank">open a GitHub issue</a> so we can fix it. Thank you!';
-  modal.appendChild(issue);
+  if (reportable) {
+    const issue = document.createElement("p");
+    issue.className = "fineprint";
+    issue.innerHTML =
+      'If this looks like a bug, please <a href="' +
+      ISSUES_URL +
+      '" target="_blank">open a GitHub issue</a> so we can fix it. Thank you!';
+    modal.appendChild(issue);
+  }
 
   const footer = document.createElement("div");
   footer.className = "setup-modal-footer";
@@ -552,9 +554,9 @@ const STEPS = [
   },
 ];
 
-function actionButton(label, onClick) {
+function actionButton(label, onClick, variant = "ghost") {
   const btn = document.createElement("button");
-  btn.className = "setup-btn ghost";
+  btn.className = "setup-btn " + variant;
   btn.textContent = label;
   btn.addEventListener("click", onClick);
   return btn;
@@ -581,14 +583,16 @@ function renderDependencies(result) {
 
   const addRow = (icon, found, label, detail, install) => {
     const row = document.createElement("div");
-    row.className = "row " + (found ? "ok" : "missing");
+    row.className = "row " + (found ? "ok" : "warn");
     row.innerHTML =
       GLYPH(found ? "check_circle" : icon) +
       "<span>" +
       esc(label) +
       "</span>" +
       (detail ? '<span class="detail">' + esc(detail) + "</span>" : "");
-    if (!found && install) row.appendChild(actionButton("Install", install));
+    if (!found && install) {
+      row.appendChild(actionButton("Install", install, "success"));
+    }
     rows.appendChild(row);
   };
 
@@ -673,14 +677,16 @@ function renderDependencies(result) {
 
   bodyEl.appendChild(rows);
 
+  const staleNote = document.getElementById("engine-note");
+  if (staleNote) staleNote.remove();
   if (!result.podman.found && !result.docker.found) {
-    bodyEl.appendChild(
-      para(
-        "Syna executes commands inside an isolated container, but" +
-          " no container engine was found on your system. Podman is" +
-          " suggested because it runs rootless by default.",
-      ),
+    const note = para(
+      "Syna executes commands inside an isolated container, but" +
+        " no container engine was found on your system. Podman is" +
+        " suggested because it runs rootless by default.",
     );
+    note.id = "engine-note";
+    bodyEl.appendChild(note);
   }
 }
 
@@ -700,6 +706,8 @@ function installDependency(name, container) {
           "Restart Required",
           esc(name.toUpperCase()) +
             " was installed. Please restart your computer, then launch Syna again to continue.",
+          null,
+          false,
         );
         nextBtn.disabled = true;
         return;
@@ -709,6 +717,21 @@ function installDependency(name, container) {
           detection = fresh;
           container.remove();
           renderDependencies(fresh);
+          const probe = fresh[name];
+          if (probe && !probe.found) {
+            const installBtn = document
+              .getElementById("engine-pill-row")
+              ?.querySelector("button");
+            if (installBtn) installBtn.disabled = true;
+            showModal(
+              "Almost There",
+              esc(name) +
+                " was installed, but Syna cannot see it yet. Close and" +
+                " reopen Syna, then continue the setup.",
+              null,
+              false,
+            );
+          }
         });
       }
       showInstallFailure(name, result.log || "");

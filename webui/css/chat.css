@@ -77,20 +77,18 @@
   font-size: 15.5px;
   line-height: 1.65;
 }
-@media (prefers-color-scheme: dark) {
-  .bubble.user {
-    background-image:
-      var(--frost),
-      linear-gradient(
-        135deg,
-        rgba(129, 140, 248, 0.92),
-        rgba(113, 124, 245, 0.85)
-      );
-    border-color: rgba(255, 255, 255, 0.2);
-    box-shadow:
-      0 14px 30px -14px rgba(0, 0, 0, 0.6),
-      inset 0 1px 0 rgba(255, 255, 255, 0.22);
-  }
+.bubble.user {
+  background-image:
+    var(--frost),
+    linear-gradient(
+      135deg,
+      rgba(129, 140, 248, 0.92),
+      rgba(113, 124, 245, 0.85)
+    );
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow:
+    0 14px 30px -14px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
 .bubble.model.markdown {
