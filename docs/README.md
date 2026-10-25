@@ -30,7 +30,7 @@
 
 > **Syna has a voice;** enable voice mode to talk to Syna and listen to her. She can transcribe an audio file into text, and the other way around, powered by the models of your choice.
 
-> **Syna has sight;** she can understand images and ensure the documents, graphs and websites she creates look amazing before sharing them with you. Say goodbye to troubleshooting broken layouts.
+> **Syna has sight;** she can understand images and ensure the documents, graphs and websites she creates look just right before sharing them with you. Say goodbye to troubleshooting broken layouts.
 
 > **Syna has a canvas,** and your favorite model is the brush. Ask her to paint something for you, and she will take care of the rest.
 
