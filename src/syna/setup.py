@@ -378,7 +378,8 @@ def setup_incomplete() -> bool:
 def sanity_check() -> dict:
     """Verify the engine and the configured endpoint actually work.
 
-    Returns per-check results with human-readable details; the endpoint
+    Returns per-check results with human-readable details; the engine
+    check brings the Podman machine up when needed, and the endpoint
     check is a one-token chat completion against the configured base
     URL, so a wrong key or URL fails here rather than mid-task.
     """
@@ -392,6 +393,17 @@ def sanity_check() -> dict:
     }
     if not engine.found:
         results["endpoint"]["detail"] = "Skipped: no container engine."
+        return results
+    try:
+        from .state import ensure_engine_ready  # noqa: PLC0415
+
+        ensure_engine_ready()
+    except Exception as exc:
+        results["engine"] = {
+            "ok": False,
+            "detail": f"{exc}",
+        }
+        results["endpoint"]["detail"] = "Skipped: the engine is not reachable."
         return results
     from .config import get_env  # noqa: PLC0415
     from .conversation.session import create_model_client, load_base_url  # noqa: PLC0415

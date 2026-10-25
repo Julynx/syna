@@ -351,6 +351,84 @@ def test_windows_engine_install_verdict(monkeypatch):
     assert tail == localized_no_update, "the winget log reaches the wizard"
 
 
+def test_sanity_check_requires_a_reachable_engine(monkeypatch):
+    """A runnable engine binary is not enough: the endpoint must answer.
+
+    `podman --version` succeeds even with no machine initialized, which
+    once let users into the chat only to fail their first tool call.
+    """
+    monkeypatch.setattr(
+        setup_module, "detect_engine", lambda: setup_module.DetectResult("podman", True)
+    )
+
+    class _FakeChat:
+        def send(self, model, messages, max_tokens):
+            pass
+
+    class _FakeClient:
+        chat = _FakeChat()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    from syna import state as state_module
+    from syna.conversation import session as session_module
+
+    class _FakeChat:
+        def send(self, model, messages, max_tokens):
+            pass
+
+    class _FakeClient:
+        chat = _FakeChat()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(session_module, "create_model_client", lambda: _FakeClient())
+    monkeypatch.setattr(session_module, "load_base_url", lambda: "http://test")
+
+    ready = []
+    monkeypatch.setattr(state_module, "ensure_engine_ready", lambda: ready.append(True))
+    results = setup_module.sanity_check()
+    assert results["engine"]["ok"]
+    assert ready, "the sanity check verifies the engine endpoint"
+    assert results["endpoint"]["ok"]
+
+    def _broken():
+        raise RuntimeError("no pipe available")
+
+    monkeypatch.setattr(state_module, "ensure_engine_ready", _broken)
+    failed = setup_module.sanity_check()
+    assert not failed["engine"]["ok"]
+    assert "no pipe available" in failed["engine"]["detail"]
+    assert failed["endpoint"]["detail"] == "Skipped: the engine is not reachable."
+    assert not failed["endpoint"]["ok"]
+
+
+def test_ensure_engine_ready_delegates_to_bollard(monkeypatch):
+    """Readiness is bollard's discovery running end to end."""
+    calls = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            calls.append("constructed")
+
+        def close(self):
+            calls.append("closed")
+
+    import syna.state
+
+    monkeypatch.setattr(syna.state, "DockerClient", FakeClient)
+    syna.state.ensure_engine_ready()
+    assert calls == ["constructed", "closed"]
+
+
 def main():
     run_suite(
         [
@@ -366,6 +444,8 @@ def main():
             test_install_failure_is_returned_not_raised,
             test_refresh_path_merges_registry_entries,
             test_windows_engine_install_verdict,
+            test_sanity_check_requires_a_reachable_engine,
+            test_ensure_engine_ready_delegates_to_bollard,
             test_setup_wizard_page_served_when_incomplete,
             test_setup_api_endpoints,
         ]

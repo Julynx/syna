@@ -532,8 +532,10 @@ local endpoints; `setup_incomplete()` (checked live on every request,
 so finishing the wizard flips the server in-process) requires a key
 unless local, an engine, and treats a missing MODEL as satisfied since
 the runtime falls back to `config.DEFAULT_MODEL`; `sanity_check()` runs
-the engine probe and a one-token chat completion against the configured
-endpoint. `PROVIDERS` holds the preset base URLs, key-page links, and
+the engine probe, brings the engine endpoint up through
+`state.ensure_engine_ready()` (reporting a failure as data instead of
+letting the user into the chat), and a one-token chat completion against
+the configured endpoint. `PROVIDERS` holds the preset base URLs, key-page links, and
 default models (OpenRouter, OpenAI, Google Gemini, Ollama), sourced
 from the canonical constants in `config.py`.
 
@@ -769,6 +771,14 @@ Global Docker client plus per-thread container registry and per-call context.
 - `init_docker_client` / `close_docker_client` manage the global client
   lifecycle; `reset_shared_container` destroys the shared pod so the next
   `get_container()` lazily starts a fresh one (CLI `/newchat`).
+- `ensure_engine_ready()` verifies the engine endpoint end to end by
+  constructing a bollard client, whose discovery brings the Podman machine
+  up (starting, and initializing it first when it does not exist) whenever
+  no pipe/socket is reachable. The wizard's sanity check uses it, so a
+  machine that was installed but never initialized fails (and self-heals)
+  during setup instead of at the first tool call. Only bollard's wire
+  logger (`bollard.wire`) is quieted; operational bollard messages stay
+  visible in the syna log.
 
 ### `src/syna/capabilities/tools.py`
 The tools exposed to the model: `think` (no-op reasoning record; produces a
@@ -988,7 +998,9 @@ All suites are plain scripts runnable with the project venv
   `setup_incomplete` matrix (model/key/engine), `.env` merging with
   cache clearing, provider preset integrity, detection returning data
   instead of raising (including the registry PATH refresh on Windows),
-  install failures returned as data, the wizard page served (and left)
+  install failures returned as data, the sanity check requiring a
+  reachable engine endpoint (not just a runnable binary), the wizard
+  page served (and left)
   based on live setup state, and the setup API endpoints (token-gated
   detect, unknown dependency, key/validation errors on config).
 - `tests/test_image_endpoint.py` — the inline image endpoint against a

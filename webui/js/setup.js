@@ -779,11 +779,7 @@ async function runSanity(button) {
     }
     const done = para("Everything checks out. Welcome aboard!");
     bodyEl.appendChild(done);
-    button.disabled = false;
-    button.textContent = "Start chatting";
-    button.onclick = () => {
-      window.location.href = "/";
-    };
+    window.location.href = "/";
   } catch (error) {
     button.disabled = false;
     button.textContent = "Let's Go!";

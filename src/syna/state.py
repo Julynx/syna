@@ -10,11 +10,12 @@ full output must be saved (`/tool_outputs/`), and the exit code reported by
 import itertools
 import logging
 import threading
+import time
 from contextlib import ExitStack
 
 from bollard import Container, DockerClient
 
-from .config import load_config
+from .config import get_logger, load_config
 
 CONTAINER_IMAGE = "python:3.14-trixie"
 
@@ -139,18 +140,36 @@ def reset_shared_container() -> None:
         _global_container = None
 
 
+def ensure_engine_ready() -> None:
+    """Verify a container engine endpoint is reachable, bringing it up.
+
+    Delegates to bollard's endpoint discovery, which starts (and
+    initializes, when it does not exist yet) the Podman machine when no
+    Docker/Podman pipe or socket is available. Raises an exception with
+    an actionable message when no endpoint can be reached.
+    """
+    log = get_logger()
+    log.info("Checking the container engine endpoint...")
+    started = time.monotonic()
+    DockerClient().close()
+    log.info("Container engine endpoint ready in %.1fs.", time.monotonic() - started)
+
+
 def init_docker_client(*args, **kwargs):
     """Initialize the global Docker client context.
 
-    Also quiets the bollard logger, whose per-request debug output would
-    otherwise flood the syna log file.
+    The client's constructor resolves the engine endpoint and brings the
+    Podman machine up when needed. Only bollard's wire-level logger is
+    quieted here: its per-request debug output would flood the syna log
+    file, while bollard's operational messages (machine bring-up,
+    container creation, image pulls) are worth keeping.
     """
     global _exit_stack, client
 
     if _exit_stack is not None:
         raise RuntimeError("Docker client is already initialized.")
 
-    logging.getLogger("bollard").setLevel(logging.WARNING)
+    logging.getLogger("bollard.wire").setLevel(logging.WARNING)
     _exit_stack = ExitStack()
     client = _exit_stack.enter_context(DockerClient(*args, **kwargs))
 
