@@ -7,9 +7,10 @@ the
 Browser object. That keeps internals (editor primitives, path utilities,
 browser internals like run()/page/close()) out of the model's reach.
 
-Every tool docstring is injected verbatim into the system prompt
-(`build_prompt`), so the docstrings below are the model-facing tool
-documentation and must stay in sync with actual behavior.
+Every tool docstring becomes the model-facing tool documentation through
+the request's tool schemas (`get_tool_definitions` in
+protocol/tool_schemas.py), so the docstrings below must stay in sync
+with actual behavior.
 """
 
 import itertools

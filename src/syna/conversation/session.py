@@ -4,26 +4,15 @@ import json
 import secrets
 import threading
 from datetime import date
-from pathlib import Path
 
 from openrouter import OpenRouter
 from openrouter.utils import BackoffStrategy, RetryConfig
 
-import syna.capabilities.tools as tools
-
 from ..ask_utils import ReplyRejected, ask_question
-from ..protocol.channel import (
-    contains_sentinel,
-    defang_sentinels,
-    format_tool_result_content,
-    harness_notice,
-    is_channel_message,
-    wrap_channel,
-)
-from ..protocol.compaction import (
-    build_compaction_messages,
-    format_compaction_message,
-    load_compaction_prompt,
+from ..capabilities.verification import (
+    REVIEW_TOOL_NAME,
+    pop_conversation_log_provider,
+    set_conversation_log_provider,
 )
 from ..config import (
     DEFAULT_MODEL,
@@ -39,20 +28,28 @@ from ..config import (
     normalize_base_url,
     read_asset_text,
 )
+from ..protocol.channel import (
+    contains_sentinel,
+    defang_sentinels,
+    format_tool_result_content,
+    harness_notice,
+    is_channel_message,
+    wrap_channel,
+)
+from ..protocol.compaction import (
+    build_compaction_messages,
+    format_compaction_message,
+    load_compaction_prompt,
+)
 from ..protocol.context import (
     elide_archived_user_messages,
     elide_tool_outputs,
     estimate_history_tokens,
 )
 from ..protocol.parse import parse_and_execute_tools
-from ..state import get_container
 from ..protocol.tool_schemas import get_tool_definitions
 from ..protocol.user_messages import USER_MESSAGE_MARKER_TEMPLATE, archive_user_message
-from ..capabilities.verification import (
-    REVIEW_TOOL_NAME,
-    pop_conversation_log_provider,
-    set_conversation_log_provider,
-)
+from ..state import get_container
 
 OUTPUT_PREVIEW_CHARS = 512
 DETAIL_CAP_CHARS = 6000
@@ -134,27 +131,16 @@ class TurnCancelled(Exception):
 
 
 def build_prompt():
-    """Build the system prompt with tool docs, date, and limits filled in."""
-    template = read_asset_text("prompt.md")
-    tools = _get_tool_metadata(_tools_path())
+    """Build the system prompt with date and limits filled in.
 
-    tool_blocks = [f"### {tool['name']}\n{tool['docstring']}" for tool in tools]
-    prompt = template.replace("{tools}", "\n\n".join(tool_blocks))  # noqa: RUF027
+    Tool documentation lives only in the request's tool schemas
+    (get_tool_definitions); it is deliberately not duplicated here.
+    """
+    prompt = read_asset_text("prompt.md")
     prompt = prompt.replace("{{CURRENT_DATE}}", date.today().isoformat())
     prompt = prompt.replace("{{COMMAND_TIMEOUT}}", str(load_command_timeout_s()))
     prompt = prompt.replace("{{OUTPUT_LIMIT}}", str(load_output_limit_chars()))
     return prompt
-
-
-def _tools_path() -> Path:
-    """Return the path of the tools module for metadata extraction."""
-    return Path(tools.__file__)
-
-
-def _get_tool_metadata(tools_path):
-    from ..protocol.inspect_module import get_function_metadata
-
-    return get_function_metadata(tools_path)
 
 
 def load_base_url() -> str:

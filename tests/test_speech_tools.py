@@ -2,6 +2,7 @@
 
 import re
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,12 +19,21 @@ FAKE_WAV = b"RIFFfake-wav-data"
 
 
 class FakeContainer:
-    """Records pod I/O and materializes copied files instead of using a pod."""
+    """Records pod I/O and materializes copied files instead of using a pod.
+
+    Pod paths are translated under a private temp directory, so tests
+    never touch the real filesystem root (`/workspace` is root-owned on
+    Linux CI runners).
+    """
 
     def __init__(self):
         self.exec_calls = []
         self.copied = []
         self.pod_files = {}
+        self.root = tempfile.mkdtemp(prefix="syna-fake-pod-")
+
+    def _sandbox(self, pod_path):
+        return self.root + pod_path
 
     def exec(self, argv):
         self.exec_calls.append(argv)
@@ -38,6 +48,7 @@ class FakeContainer:
         Path(destination, name).write_bytes(self.pod_files[name])
 
     def copy_to(self, source, destination):
+        destination = self._sandbox(destination)
         self.copied.append((source, destination))
         Path(destination).mkdir(parents=True, exist_ok=True)
         Path(destination, Path(source).name).write_bytes(Path(source).read_bytes())
@@ -143,7 +154,10 @@ def test_text_to_speech_saves_audio(monkeypatch):
     pod_path = _pod_path(result)
     assert pod_path.startswith("/workspace/audio/speech-")
     assert pod_path.endswith(".wav")
-    assert "share_file" in result
+    assert pod_path in result
+    assert "share_file" not in result, (
+        "the result must stay lean; the docstring teaches delivery"
+    )
     assert _copied_bytes(container) == FAKE_WAV
 
 

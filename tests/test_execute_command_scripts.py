@@ -1,10 +1,11 @@
 """Smoke test for the pod-side shell scripts built by execute_command.
 
-Runs the exact runner/reader scripts through a local bash (Git Bash) to
-validate quoting, exit-code capture, truncation, and the marker protocol
-without a running container.
+Runs the exact runner/reader scripts through a local bash to validate
+quoting, exit-code capture, truncation, and the marker protocol without
+a running container.
 """
 
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,7 +15,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from syna.capabilities import tools
 
-BASH = Path("C:/Users/Omega/scoop/apps/git/current/bin/bash.exe")
+WINDOWS_GIT_BASH = Path("C:/Program Files/Git/bin/bash.exe")
+
+
+def find_bash() -> str | None:
+    """Locate a real bash for the runner scripts.
+
+    On Windows, `shutil.which("bash")` resolves to WSL's
+    system32\\bash.exe, a Linux interop launcher that cannot run these
+    scripts reliably; the scripts need Git Bash's userland. The git
+    executable may be a shim (scoop) whose parent is not the git root,
+    so the standard install locations are also probed.
+    """
+    if sys.platform != "win32":
+        return shutil.which("bash")
+    candidates = [Path.home() / "scoop/apps/git/current/bin/bash.exe", WINDOWS_GIT_BASH]
+    git_exe = shutil.which("git")
+    if git_exe:
+        candidates.insert(0, Path(git_exe).parent.parent / "bin" / "bash.exe")
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+BASH = find_bash()
 
 
 def run_scripts(
@@ -57,6 +82,10 @@ def run_scripts(
 
 
 def main():
+    if BASH is None:
+        print("SKIP: no bash executable found")
+        return
+
     view = run_scripts("echo hello world; echo root; exit 3", 3)
     assert "hello world" in view and "root" in view, view
 

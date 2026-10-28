@@ -172,10 +172,10 @@ does not change any value in an existing install: a changed default (for
 example a recalibrated `max_history_messages`) must be applied by hand to
 `~/.syna/config.json` (repo root in a checkout).
 
-Static assets are bundled in `src/syna/assets/`: `prompt.md` (system prompt template with a
-`{tools}` placeholder where live tool documentation is injected, plus the
-`{{CURRENT_DATE}}`, `{{COMMAND_TIMEOUT}}` and `{{OUTPUT_LIMIT}}` placeholders
-filled at build time), `verifier_prompt.md` (system prompt for the isolated
+Static assets are bundled in `src/syna/assets/`: `prompt.md` (system prompt template
+with the `{{CURRENT_DATE}}`, `{{COMMAND_TIMEOUT}}` and `{{OUTPUT_LIMIT}}`
+placeholders filled at build time; tool documentation is not duplicated
+into the prompt — the request's tool schemas carry it), `verifier_prompt.md` (system prompt for the isolated
 `review_work` reviewer), `compaction_prompt.md`, `chat.html` and `setup.html`
 (web UIs), and `vendor/` (markdown-it, KaTeX, fonts, icons, logo).
 
@@ -756,9 +756,9 @@ the settings the web client needs for voice mode. Failures raise
 ### `src/syna/conversation/session.py`
 `AgentSession` — the shared conversation loop for CLI and web.
 
-- Builds the system prompt from `assets/prompt.md`: injects the live tool
-  documentation (docstrings from `tools.py`) at `{tools}` and fills
-  `{{CURRENT_DATE}}`, `{{COMMAND_TIMEOUT}}` and `{{OUTPUT_LIMIT}}`.
+- Builds the system prompt from `assets/prompt.md`: fills `{{CURRENT_DATE}}`,
+  `{{COMMAND_TIMEOUT}}` and `{{OUTPUT_LIMIT}}`. Tool documentation is not
+  injected into the prompt; the request's tool schemas are the single copy.
 - Loads dynamic tool schemas via `get_tool_definitions()` from `tool_schemas.py`.
 - `run_turn(query)` requests model responses via `ask_question` with native `tools`
   and `tool_choice="auto"`. When the model returns a plain text response without
@@ -936,9 +936,10 @@ chmods its `/tool_outputs/` capture file, and `_persist_tool_output` in
 dumps are deliberately not read-only: their writers rewrite them in place
 (os.replace over a read-only target fails on Windows).
 
-Every docstring is injected verbatim into the system prompt (`build_prompt`),
-so the docstrings are the model-facing tool documentation and must stay in
-sync with actual behavior.
+Every docstring becomes the model-facing tool documentation through the
+request's tool schemas (`get_tool_definitions` in `tool_schemas.py`
+splits it into the tool description and per-argument descriptions), so
+the docstrings must stay in sync with actual behavior.
 
 `execute_command` hardening (reliability inside the pod, not restriction —
 the model keeps full root and can cd, edit system files, and install

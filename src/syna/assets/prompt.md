@@ -106,10 +106,6 @@ Facts in deliverables (names, numbers, dates, prices, quotes, and similar) must 
 - You have root access. Use `python3` (there may be no `python`). If `pip install` fails with "externally-managed-environment", create a virtualenv (`python3 -m venv /workspace/.venv`) rather than forcing a system install.
 - No PDF or document renderer is preinstalled (`pdftoppm`, LibreOffice: absent). `pip install pymupdf` renders PDF pages to PNG with no system dependencies, which is how you feed pages to `describe_image`.
 
-## Tools
-
-{tools}
-
 ## Finishing
 
 Write your final message so the user can rely on it without rechecking your work:
