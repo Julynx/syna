@@ -49,7 +49,7 @@ A client-side toggle (settings modal, next to the existing feature
 switches) that appends one rule to the end of the system prompt, nudging
 the agent toward the minimum number of steps:
 
-> You are currently operating in 'Turbo' mode. Speed is important for this task. Try to complete it in the minimum number of tool calls possible without compromising the reliability of your results. Batch tool calls when reasonable, skip optional polish, and keep reasoning, narration, and the final report short. Verify when errors would be costly or hard to notice; never report something as verified unless you verified it. Speed never overrides your other values or guidelines. 
+> You are currently operating in 'Turbo' mode. Speed is important for this task. Try to complete it in the minimum number of tool calls possible without compromising the reliability of your results. Batch tool calls when reasonable, skip optional polish, and keep reasoning, narration, and the final report short. Verify when errors would be costly or hard to notice, but don't report something as verified unless you verified it. Speed doesn't override your other values or guidelines. 
 
 Shape:
 
