@@ -62,10 +62,18 @@ Mechanism as built:
   the server captures it at enqueue time; the worker applies it when the
   turn starts, never mid-turn. The pill is disabled while busy, matching
   the server-side guarantee.
-- `build_prompt(allegro=True)` appends the rule after the base prompt;
-  `AgentSession.set_allegro` rewrites the system message only on an
-  actual change. Cost: one prompt-cache invalidation per real mode
-  change, none for a no-op toggle. No new tools, no harness logic.
+- `build_prompt(allegro=True)` appends the rule under its own
+  `## Allegro mode` h2 section; `AgentSession.set_allegro` rewrites the
+  system message only on an actual change. Cost: one prompt-cache
+  invalidation per real mode change, none for a no-op toggle.
+- The mode also runs a lighter runtime profile, applied with the same
+  turn-start swap: thinking effort becomes the faster of (user setting,
+  low; OpenRouter only — custom endpoints and faster settings win), the
+  per-request pause halves (2s → 1s), the step budget halves with its
+  wrap-up warning clamped along, and command/tool-call timeouts halve
+  through a thread-local scale that lives exactly one turn on the
+  worker thread. The settings modal documents the profile read-only
+  with live numbers.
 - Toggle feedback follows project conventions: an ascending pentatonic
   figure on enable, its inversion on disable (Sfx catalog, `ui`
   category), and the shared `icon-pop` keyframes on the icon.

@@ -280,6 +280,12 @@ Client behavior notes:
   shared `icon-pop` animation; both the sound and the animation respect
   the existing conventions (sound-button click exclusion, reduced-motion
   opt-out).
+- The settings modal closes with a read-only collapsed "Allegro Mode"
+  section (same `settings-details`/`settings-group` styling as Advanced
+  Runtime Settings, one `.settings-note` paragraph): it states the
+  Allegro runtime profile with live numbers computed from the loaded
+  config. Nothing in it is editable; the mode is toggled from the
+  composer.
 - The composer area ends with a small centered cursive disclaimer:
   "Syna is an AI agent; it can make mistakes. Review its outputs and
   files before acting on them."
@@ -772,10 +778,20 @@ the settings the web client needs for voice mode. Failures raise
   `{{COMMAND_TIMEOUT}}` and `{{OUTPUT_LIMIT}}`. Tool documentation is not
   injected into the prompt; the request's tool schemas are the single copy.
   With `build_prompt(allegro=True)` the Allegro speed rule is appended
-  after the base prompt.
-- `set_allegro(enabled)` rewrites the system message in place only on an
-  actual change: a no-op leaves the provider prompt cache untouched, a
-  real mode change invalidates it once. Sessions start in normal mode.
+  under its own `## Allegro mode` h2 section, and `{{COMMAND_TIMEOUT}}`
+  is reported halved — the value enforcement actually uses.
+- `set_allegro(enabled)` applies the Allegro profile and rewrites the
+  system message in place, only on an actual change: a no-op leaves the
+  provider prompt cache untouched, a real mode change invalidates it
+  once. The profile: thinking effort becomes the faster of (user
+  setting, `'low'`, OpenRouter only — custom endpoints and faster user
+  settings are left alone), `request_delay` halves, `max_steps_per_turn`
+  halves with `step_warning_remaining` clamped to half the halved
+  budget. Sessions start in normal mode.
+- `run_turn` wraps the turn in the thread-local timeout scale
+  (`config.set_timeout_scale`): in Allegro, `load_command_timeout_s` and
+  `load_tool_call_timeout_s` halve at enforcement time for exactly the
+  turn's duration on the worker thread, with no cross-session leakage.
 - Loads dynamic tool schemas via `get_tool_definitions()` from `tool_schemas.py`.
 - `run_turn(query)` requests model responses via `ask_question` with native `tools`
   and `tool_choice="auto"`. When the model returns a plain text response without

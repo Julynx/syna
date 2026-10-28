@@ -2,7 +2,9 @@
 
 import json
 import logging
+import math
 import re
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -179,13 +181,63 @@ def get_session_dump_path(session_id: str | None = None) -> Path:
 
 
 def load_command_timeout_s() -> int:
-    """Return the per-command timeout in seconds from the configuration."""
-    return load_config().get("command_timeout_s", DEFAULT_COMMAND_TIMEOUT_S)
+    """Return the per-command timeout in seconds from the configuration.
+
+    The active thread's Allegro scale (set_timeout_scale) applies: the
+    session worker runs a whole turn on one thread, so the halved value
+    is enforced exactly for the duration of an Allegro turn and never
+    leaks into concurrent sessions on other threads.
+    """
+    return _apply_timeout_scale(
+        load_config().get("command_timeout_s", DEFAULT_COMMAND_TIMEOUT_S)
+    )
 
 
 def load_tool_call_timeout_s() -> float:
-    """Return the per-tool-call timeout in seconds from the configuration."""
-    return load_config().get("tool_call_timeout_s", DEFAULT_TOOL_CALL_TIMEOUT_S)
+    """Return the per-tool-call timeout in seconds from the configuration.
+
+    Subject to the calling thread's Allegro scale, like
+    load_command_timeout_s.
+    """
+    return _apply_timeout_scale(
+        load_config().get("tool_call_timeout_s", DEFAULT_TOOL_CALL_TIMEOUT_S)
+    )
+
+
+_timeout_scale = threading.local()
+
+ALLEGRO_TIMEOUT_SCALE = 0.5
+MIN_SCALED_TIMEOUT_S = 1
+
+
+def set_timeout_scale(scale: float | None) -> None:
+    """Set the calling thread's multiplicative timeout scale.
+
+    Called by the session around a turn: 0.5 halves the command and
+    tool-call timeouts for Allegro mode. None clears the override. The
+    scale is thread-local by design; other sessions on other threads
+    keep their configured timeouts.
+    """
+    _timeout_scale.scale = scale
+
+
+def scale_seconds(seconds: float, scale: float) -> float:
+    """Scale a timeout, floored at one second.
+
+    Half-up rounding for whole-second timeouts, matching the web UI's
+    Math.round so the settings note and the enforcement layer agree on
+    odd configured values. Integer inputs return integers.
+    """
+    scaled = max(MIN_SCALED_TIMEOUT_S, seconds * scale)
+    return math.floor(scaled + 0.5) if isinstance(seconds, int) else scaled
+
+
+def _apply_timeout_scale(seconds):
+    """Apply the calling thread's timeout scale, floored at one second."""
+    scale = getattr(_timeout_scale, "scale", None)
+    if not scale or scale == 1:
+        return seconds
+    return scale_seconds(seconds, scale)
 
 
 DEFAULT_USER_MESSAGE_ARCHIVE_MIN_CHARS = 2000
@@ -226,4 +278,6 @@ __all__ = [
     "load_output_limit_chars",
     "load_tool_call_timeout_s",
     "read_asset_text",
+    "scale_seconds",
+    "set_timeout_scale",
 ]

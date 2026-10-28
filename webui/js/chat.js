@@ -2004,6 +2004,40 @@ async function openSettingsModal() {
   cat5.appendChild(cat5Body);
   body.appendChild(cat5);
 
+  // --- Allegro mode note (read-only) ---
+  const cat6 = document.createElement("details");
+  cat6.className = "settings-details";
+  const cat6Summary = document.createElement("summary");
+  cat6Summary.textContent = "Allegro Mode";
+  cat6.appendChild(cat6Summary);
+
+  const cat6Body = document.createElement("div");
+  cat6Body.className = "settings-group";
+  cat6Body.style.marginTop = "14px";
+
+  const allegroNote = document.createElement("p");
+  allegroNote.className = "settings-note";
+  const numberOf = (value, fallback) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const steps = numberOf(config.max_steps_per_turn, defaults.max_steps_per_turn);
+  const command = numberOf(config.command_timeout_s, defaults.command_timeout_s);
+  const toolCall = numberOf(config.tool_call_timeout_s, defaults.tool_call_timeout_s);
+  const half = (value) => Math.max(1, Math.round(value / 2));
+  allegroNote.innerHTML =
+    "<b>Allegro mode.</b> When the pill in the composer is on, Syna runs" +
+    " a faster, lighter profile: thinking effort is capped at low, the" +
+    " pause before each model request is 1s instead of 2s, and these" +
+    ` values are halved: Max Steps Per Turn (${steps} → ${half(steps)}), ` +
+    `Command Timeout (${command} → ${half(command)}s), ` +
+    `Tool Call Timeout (${toolCall} → ${half(toolCall)}s). ` +
+    "Faster user settings always win, and nothing here is editable —" +
+    " toggle Allegro from the composer.";
+  cat6Body.appendChild(allegroNote);
+  cat6.appendChild(cat6Body);
+  body.appendChild(cat6);
+
   modal.appendChild(body);
 
   // Footer with Save and Restart

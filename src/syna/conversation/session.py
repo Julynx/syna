@@ -15,6 +15,7 @@ from ..capabilities.verification import (
     set_conversation_log_provider,
 )
 from ..config import (
+    ALLEGRO_TIMEOUT_SCALE,
     DEFAULT_MODEL,
     get_env,
     get_logger,
@@ -27,6 +28,8 @@ from ..config import (
     load_user_message_archive_min_chars,
     normalize_base_url,
     read_asset_text,
+    scale_seconds,
+    set_timeout_scale,
 )
 from ..protocol.channel import (
     contains_sentinel,
@@ -72,7 +75,8 @@ STEP_BUDGET_OUT_NOTICE = (
 )
 
 ALLEGRO_PROMPT_SUFFIX = (
-    "\n\nYou are currently operating in 'Allegro' mode. Speed is important"
+    "\n\n## Allegro mode\n\n"
+    "You are currently operating in 'Allegro' mode. Speed is important"
     " for this task. Try to complete it in the minimum number of tool calls"
     " possible without compromising the reliability of your results. Batch"
     " tool calls when reasonable, skip optional polish, and keep reasoning,"
@@ -84,7 +88,25 @@ ALLEGRO_PROMPT_SUFFIX = (
 
 VALID_THINKING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
+_EFFORT_ORDER = {effort: index for index, effort in enumerate(VALID_THINKING_EFFORTS)}
+
 DEFAULT_THINKING_EFFORT = "medium"
+
+
+def allegro_thinking_effort(base: str | None) -> str | None:
+    """Return the Allegro thinking effort for a user's base setting.
+
+    Allegro wants 'low', but never at the cost of slowness or breakage:
+    a user who set none/minimal keeps it (those are faster), and custom
+    endpoints with no explicit effort keep None — the reasoning object
+    must not be injected where the user never opted into it. The choice
+    only applies on OpenRouter.
+    """
+    if not is_openrouter() or base is None:
+        return base
+    if _EFFORT_ORDER[base] <= _EFFORT_ORDER["low"]:
+        return base
+    return "low"
 
 
 def load_thinking_effort():
@@ -146,12 +168,17 @@ def build_prompt(allegro: bool = False):
 
     Tool documentation lives only in the request's tool schemas
     (get_tool_definitions); it is deliberately not duplicated here.
-    With allegro, the speed-priority rule is appended after the base
-    prompt so the model can act on it from the turn's first request.
+    With allegro, the speed-priority rule is appended under its own
+    `## Allegro mode` h2 section, and the command timeout is reported
+    halved — the same value the enforcement layer uses while the
+    Allegro scale is active.
     """
     prompt = read_asset_text("prompt.md")
+    command_timeout_s = load_command_timeout_s()
+    if allegro:
+        command_timeout_s = scale_seconds(command_timeout_s, ALLEGRO_TIMEOUT_SCALE)
     prompt = prompt.replace("{{CURRENT_DATE}}", date.today().isoformat())
-    prompt = prompt.replace("{{COMMAND_TIMEOUT}}", str(load_command_timeout_s()))
+    prompt = prompt.replace("{{COMMAND_TIMEOUT}}", str(command_timeout_s))
     prompt = prompt.replace("{{OUTPUT_LIMIT}}", str(load_output_limit_chars()))
     if allegro:
         prompt += ALLEGRO_PROMPT_SUFFIX
@@ -296,6 +323,7 @@ class AgentSession:
     ):
         self.on_event = on_event or (lambda event: None)
         self.request_delay = request_delay
+        self._base_request_delay = request_delay
         self.emit_tool_errors = emit_tool_errors
         self.persist_outputs = persist_outputs
         self._turn_shared_files: list[str] = []
@@ -308,9 +336,11 @@ class AgentSession:
         self.max_steps_per_turn = load_config().get(
             "max_steps_per_turn", DEFAULT_MAX_STEPS_PER_TURN
         )
+        self._base_max_steps_per_turn = self.max_steps_per_turn
         self.step_warning_remaining = load_config().get(
             "step_warning_remaining", DEFAULT_STEP_WARNING_REMAINING
         )
+        self._base_step_warning_remaining = self.step_warning_remaining
         self.context_budget_tokens = load_config().get(
             "context_budget_tokens", DEFAULT_CONTEXT_BUDGET_TOKENS
         )
@@ -342,6 +372,7 @@ class AgentSession:
         self.model = self._require_model()
         self.tool_definitions = get_tool_definitions()
         self.allegro = False
+        self._base_thinking_effort = self.thinking_effort
         msg = {"role": "system", "content": build_prompt(self.allegro)}
         self.messages.append(msg)
         get_logger().info(str(msg))
@@ -349,16 +380,33 @@ class AgentSession:
     def set_allegro(self, enabled: bool):
         """Apply the Allegro speed mode for the next turn.
 
-        Rewrites the system message only on an actual change: a no-op
-        leaves the provider prompt cache untouched. A deliberate mode
-        change invalidates the cache once, the documented acceptable
-        cost. Mid-turn changes are impossible by construction: the web
-        worker samples the flag when it dequeues a message, never during
-        the turn it starts.
+        Beyond the system-prompt rule, the mode runs a lighter runtime
+        profile: thinking effort drops to the faster of (user setting,
+        'low'), the per-request pause halves, and the step budget halves
+        with its wrap-up warning clamped along. Command and tool-call
+        timeouts halve too, through the thread-local scale run_turn
+        applies for the duration of the turn. Rewrites happen only on an
+        actual change: a no-op leaves the provider prompt cache
+        untouched, a real mode change invalidates it once. Mid-turn
+        changes are impossible by construction: the web worker samples
+        the flag when it dequeues a message, never during the turn it
+        starts.
         """
         if enabled == self.allegro:
             return
         self.allegro = enabled
+        if enabled:
+            self.thinking_effort = allegro_thinking_effort(self._base_thinking_effort)
+            self.request_delay = self._base_request_delay / 2
+            self.max_steps_per_turn = self._base_max_steps_per_turn // 2
+            self.step_warning_remaining = min(
+                self._base_step_warning_remaining, self.max_steps_per_turn // 2
+            )
+        else:
+            self.thinking_effort = self._base_thinking_effort
+            self.request_delay = self._base_request_delay
+            self.max_steps_per_turn = self._base_max_steps_per_turn
+            self.step_warning_remaining = self._base_step_warning_remaining
         self.messages[0]["content"] = build_prompt(enabled)
         get_logger().info(
             "Allegro mode %s for the next turn",
@@ -568,7 +616,20 @@ class AgentSession:
         return appended
 
     def run_turn(self, user_text: str):
-        """Run one full think/act cycle for a user message."""
+        """Run one full think/act cycle for a user message.
+
+        In Allegro mode the command and tool-call timeout loaders halve
+        for exactly the duration of the turn: the scale is thread-local
+        and the whole turn executes on the calling thread, so concurrent
+        sessions keep their configured timeouts.
+        """
+        set_timeout_scale(ALLEGRO_TIMEOUT_SCALE if self.allegro else None)
+        try:
+            self._run_turn_loop(user_text)
+        finally:
+            set_timeout_scale(None)
+
+    def _run_turn_loop(self, user_text: str):
         logger = get_logger()
         msg = {"role": "user", "content": self._prepare_user_message(user_text)}
         self.messages.append(msg)
