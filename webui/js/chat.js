@@ -276,7 +276,7 @@ function applyImagePolicy(bubble) {
       } catch (err) {
         podPath = src;
       }
-      img.src = withToken(
+      const url = withToken(
         API_BASE +
           "/api/image/" +
           clientId +
@@ -290,8 +290,11 @@ function applyImagePolicy(bubble) {
         const chip = document.createElement("span");
         chip.className = "image-fallback";
         chip.textContent = podPath;
-        img.replaceWith(chip);
+        const frame = img.closest(".inline-image-frame");
+        (frame || img).replaceWith(chip);
       });
+      addImageDownloadButton(img, url);
+      img.src = url;
       return;
     }
     if (!src.startsWith("data:")) {
@@ -303,6 +306,32 @@ function applyImagePolicy(bubble) {
       img.replaceWith(link);
     }
   });
+}
+
+function addImageDownloadButton(img, url) {
+  const frame = document.createElement("div");
+  frame.className = "inline-image-frame";
+  img.replaceWith(frame);
+  frame.appendChild(img);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "copy-btn glass image-download";
+  btn.title = "Download image";
+  btn.setAttribute("aria-label", "Download image");
+  btn.innerHTML = ICONS.download + ICONS.check;
+  btn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const anchor = document.createElement("a");
+    anchor.href = url + "&download=1";
+    anchor.download = "";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    btn.classList.add("copied");
+    clearTimeout(btn._t);
+    btn._t = setTimeout(() => btn.classList.remove("copied"), COPY_FEEDBACK_MS);
+  });
+  frame.appendChild(btn);
 }
 
 const COPY_FEEDBACK_MS = 1400;

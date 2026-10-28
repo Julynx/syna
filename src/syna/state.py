@@ -95,20 +95,84 @@ def build_pod_host_config(
     return host_config
 
 
+def _is_connection_error(exc: BaseException) -> bool:
+    """Whether an exception looks like a dead engine endpoint."""
+    if isinstance(exc, OSError):
+        return True
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in ("pipe", "socket", "connection", "endpoint", "unreachable")
+    )
+
+
+def _reset_dead_client(*, strict: bool = False) -> None:
+    """Drop a Docker client whose engine endpoint went stale.
+
+    The single reset path for the global client, used by
+    `create_container`'s self-heal and by `close_docker_client`: the
+    client can outlive the engine (Docker Desktop quit, Podman machine
+    stopped, host resumed from sleep), leaving every request failing on
+    a dead pipe or socket until a restart. The shared pod, if any, is
+    destroyed first. With `strict` a failed destroy propagates (shutdown
+    path); otherwise it is logged and dropped (self-heal path — with the
+    engine gone the pod is unreachable anyway, and the next
+    `get_container()` call lazily starts a replacement).
+    """
+    global _exit_stack, client, _global_container
+    log = get_logger()
+    with _init_lock:
+        if _global_container is not None:
+            if strict:
+                destroy_container(_global_container)
+            else:
+                try:
+                    destroy_container(_global_container)
+                except Exception:
+                    log.info(
+                        "Could not destroy the shared pod during engine reset.",
+                        exc_info=True,
+                    )
+            _global_container = None
+        if _exit_stack is not None:
+            stack, _exit_stack = _exit_stack, None
+            client = None
+            stack.close()
+
+
 def create_container() -> Container:
     """Initialize the shared Docker client if needed and run a new container.
 
     HostConfig Init runs the container's init process (tini equivalent) so
     orphaned background processes started by model commands are reaped.
+
+    A connection-level failure triggers one client reset and retry: a
+    mid-session engine death (endpoint gone stale) self-heals through
+    bollard's discovery instead of failing every call until restart.
     """
-    global client
     if client is None:
         init_docker_client()
-    return client.run_container(
-        CONTAINER_IMAGE,
-        command="sleep infinity",
-        HostConfig=build_pod_host_config(),
-    )
+    try:
+        return client.run_container(
+            CONTAINER_IMAGE,
+            command="sleep infinity",
+            HostConfig=build_pod_host_config(),
+        )
+    except Exception as exc:
+        if not _is_connection_error(exc):
+            raise
+        get_logger().warning(
+            "The container engine endpoint appears to have gone stale (%s);"
+            " re-initializing the client and retrying once.",
+            exc,
+        )
+        _reset_dead_client()
+        init_docker_client()
+        return client.run_container(
+            CONTAINER_IMAGE,
+            command="sleep infinity",
+            HostConfig=build_pod_host_config(),
+        )
 
 
 def get_container() -> Container:
@@ -187,16 +251,9 @@ def init_docker_client(*args, **kwargs):
 
 
 def close_docker_client():
-    """Manually closes the context manager."""
-    global _exit_stack, client, _global_container
+    """Manually closes the context manager.
 
-    with _init_lock:
-        if _global_container is not None:
-            _global_container.stop()
-            _global_container.remove(force=True)
-            _global_container = None
-
-        if _exit_stack is not None:
-            stack, _exit_stack = _exit_stack, None
-            client = None
-            stack.close()
+    Delegates to the shared reset path with strict semantics: a failed
+    shared-pod destroy propagates, so shutdown errors stay visible.
+    """
+    _reset_dead_client(strict=True)

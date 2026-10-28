@@ -24,6 +24,28 @@ DEFAULT_TTS_MODEL = "google/gemini-3.8-flash-lite-tts"
 DEFAULT_TTS_VOICE = "Kore"
 DEFAULT_IMAGE_MODEL = "google/gemini-3.1-flash-image"
 
+DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def normalize_base_url(base_url: str | None) -> str:
+    """Return a BASE_URL value stripped, defaulted, and slash-trimmed.
+
+    Unset or empty falls back to OpenRouter; the trailing slash is
+    stripped so URL joins never produce double slashes.
+    """
+    return ((base_url or "").strip() or DEFAULT_OPENROUTER_BASE_URL).rstrip("/")
+
+
+def is_openrouter_base_url(base_url: str | None) -> bool:
+    """Whether a BASE_URL value points at OpenRouter itself.
+
+    OpenRouter accepts its own top-level `reasoning` object; other
+    OpenAI-compatible endpoints may reject it as an unknown parameter,
+    so OpenRouter-only request fields are gated on this check.
+    """
+    return normalize_base_url(base_url) == DEFAULT_OPENROUTER_BASE_URL
+
+
 # Feature toggles edited in the settings modal. Voice stays available with
 # default models but voice mode itself starts off; image generation is
 # opt-in because it is expensive and model-initiated.

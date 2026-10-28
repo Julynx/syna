@@ -308,6 +308,42 @@ def _persist_tool_output(
         return None
 
 
+DOUBLE_ESCAPED_QUOTE = '\\\\"'
+SINGLE_ESCAPED_QUOTE = '\\"'
+JSON_ERROR_SNIPPET_CHARS = 60
+
+
+def _repair_double_escaped_json(raw_args: str, tool_name: str) -> dict | None:
+    """Parse arguments whose quotes the model double-escaped, or None.
+
+    Some models (observed with GLM Flash) serialize JSON arguments with
+    '\\\\"' where '\\"' belongs, so strict parsing fails on the first
+    escaped quote inside a string value. Only tried after a strict parse
+    already failed, so valid payloads are never rewritten; the repair is
+    logged when it fires.
+    """
+    if DOUBLE_ESCAPED_QUOTE not in raw_args:
+        return None
+    repaired = raw_args.replace(DOUBLE_ESCAPED_QUOTE, SINGLE_ESCAPED_QUOTE)
+    try:
+        decoded = json.loads(repaired)
+    except json.JSONDecodeError:
+        return None
+    get_logger().info(
+        "Repaired double-escaped JSON arguments for tool '%s'.", tool_name
+    )
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _json_error_snippet(raw_args: str, position: int) -> str:
+    """Quote the raw arguments around a JSON parse error position."""
+    start = max(0, position - JSON_ERROR_SNIPPET_CHARS)
+    end = min(len(raw_args), position + JSON_ERROR_SNIPPET_CHARS)
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(raw_args) else ""
+    return prefix + raw_args[start:end] + suffix
+
+
 def _unpack_tool_call(raw_call: object) -> tuple[str, str, dict, str, str | None]:
     """Extract (call_id, tool_name, arguments_dict, raw_str, error) from a raw tool call."""
     if isinstance(raw_call, dict):
@@ -342,13 +378,19 @@ def _unpack_tool_call(raw_call: object) -> tuple[str, str, dict, str, str | None
         try:
             decoded = json.loads(clean_args)
         except json.JSONDecodeError as exc:
-            return (
-                call_id,
-                tool_name,
-                {},
-                raw_str,
-                f"The arguments for tool '{tool_name}' could not be parsed as JSON: {exc}.",
-            )
+            decoded = _repair_double_escaped_json(clean_args, tool_name)
+            if decoded is None:
+                snippet = _json_error_snippet(clean_args, exc.pos)
+                return (
+                    call_id,
+                    tool_name,
+                    {},
+                    raw_str,
+                    (
+                        f"The arguments for tool '{tool_name}' could not be parsed"
+                        f" as JSON: {exc}. Arguments near the error: {snippet}"
+                    ),
+                )
         if not isinstance(decoded, dict):
             return (
                 call_id,

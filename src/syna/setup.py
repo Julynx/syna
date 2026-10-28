@@ -22,6 +22,7 @@ from dotenv import dotenv_values
 from .config import (
     DEFAULT_IMAGE_MODEL,
     DEFAULT_MODEL,
+    DEFAULT_OPENROUTER_BASE_URL,
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
@@ -51,7 +52,7 @@ PROVIDERS = {
     "openrouter": {
         "name": "OpenRouter",
         "label": "OpenRouter (Recommended \u00b7 Most tested)",
-        "base_url": "https://openrouter.ai/api/v1",
+        "base_url": DEFAULT_OPENROUTER_BASE_URL,
         "keys_url": "https://openrouter.ai/settings/keys",
         "model": DEFAULT_MODEL,
         "stt_model": DEFAULT_STT_MODEL,

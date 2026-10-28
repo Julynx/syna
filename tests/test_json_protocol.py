@@ -265,6 +265,55 @@ def test_malformed_json_in_arguments():
     assert outcome.outputs[0]["status"] == "error"
     assert outcome.outputs[0]["error"] is True
     assert "could not be parsed as JSON" in outcome.outputs[0]["output"]
+    assert "Arguments near the error" in outcome.outputs[0]["output"]
+
+
+def test_double_escaped_quotes_are_repaired():
+    args = '{"label": "color=\\\\"#333333\\\\"", "note": "plain"}'
+    calls = [
+        {
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "smoke_tool", "arguments": args},
+        }
+    ]
+    outcome, _ = _parse(calls)
+    assert len(outcome.outputs) == 1
+    assert outcome.outputs[0]["status"] == "ok", outcome.outputs[0]["output"]
+    assert 'color="#333333"' in outcome.outputs[0]["output"]
+
+
+def test_valid_escaped_backslash_payload_is_never_rewritten():
+    # A payload that parses strictly must be used as-is even when it
+    # contains sequences the repair pass would otherwise touch.
+    args = '{"label": "trailing backslash\\\\"}'
+    calls = [
+        {
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "smoke_tool", "arguments": args},
+        }
+    ]
+    outcome, _ = _parse(calls)
+    assert outcome.outputs[0]["status"] == "ok"
+    assert "trailing backslash\\" in outcome.outputs[0]["output"]
+
+
+def test_unrepairable_double_escaped_payload_reports_snippet():
+    # Double-escaped quotes AND an unrelated syntax error: the repair
+    # cannot fix it, and the error quotes the offending region.
+    args = '{"label": "\\\\"broken\\\\", more'
+    calls = [
+        {
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "smoke_tool", "arguments": args},
+        }
+    ]
+    outcome, _ = _parse(calls)
+    assert len(outcome.outputs) == 1
+    assert outcome.outputs[0]["status"] == "error"
+    assert "could not be parsed as JSON" in outcome.outputs[0]["output"]
 
 
 def test_arguments_not_an_object():
@@ -424,6 +473,9 @@ def main():
         test_batch_stops_after_unregistered_call()
         test_missing_tool_call_id_is_synthesized()
         test_malformed_json_in_arguments()
+        test_double_escaped_quotes_are_repaired()
+        test_valid_escaped_backslash_payload_is_never_rewritten()
+        test_unrepairable_double_escaped_payload_reports_snippet()
         test_arguments_not_an_object()
         test_signature_missing_required_argument()
         test_signature_unexpected_argument()

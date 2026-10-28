@@ -8,7 +8,12 @@ from posixpath import basename
 from PIL import Image
 
 from ..ask_utils import ask_question
-from ..config import DEFAULT_MODEL, get_env, get_logger
+from ..config import (
+    DEFAULT_MODEL,
+    get_env,
+    get_logger,
+    is_openrouter_base_url,
+)
 from .imaging import fit_image_to_box
 from ..state import get_container
 
@@ -16,6 +21,21 @@ from ..state import get_container
 def _load_model():
     """Return the vision model, falling back to the default main model."""
     return get_env().get("MODEL") or DEFAULT_MODEL
+
+
+def _vision_effort() -> str | None:
+    """Return the vision request's reasoning effort.
+
+    'medium' on OpenRouter only: the effort was calibrated against
+    OpenRouter's provider default there (maximum, which burns the
+    completion budget on hidden reasoning and can return no content at
+    all). The OpenRouter-style `reasoning` object is forwarded verbatim
+    to custom BASE_URLs and strict OpenAI-compatible endpoints reject it
+    as an unknown parameter, so it is omitted elsewhere.
+    """
+    if not is_openrouter_base_url(get_env().get("BASE_URL")):
+        return None
+    return "medium"
 
 
 def describe_image(file_path: str, question: str):
@@ -26,9 +46,12 @@ def describe_image(file_path: str, question: str):
     downscaled with Pillow's 'thumbnail' so it fits inside a 1024x1024
     box, base64-encoded and sent to the model as a separate session: a
     fresh client and a throwaway single-turn conversation. The request
-    runs at 'medium' reasoning effort: without it the provider default is
-    maximum, which burns the completion budget on hidden reasoning and
-    can return no content at all.
+    runs at 'medium' reasoning effort on OpenRouter (without it the
+    provider default there is maximum, which burns the completion budget
+    on hidden reasoning and can return no content at all). Other
+    endpoints omit the field entirely: the OpenRouter-style `reasoning`
+    object is forwarded verbatim to custom BASE_URLs and strict
+    OpenAI-compatible endpoints reject it as an unknown parameter.
 
     Once the image has been described, its base64 payload is replaced in
     the request's messages array by a compact text placeholder carrying
@@ -82,7 +105,12 @@ def describe_image(file_path: str, question: str):
 
         with create_model_client() as client:
             response_msg = ask_question(
-                client, model, messages, delay=0, response_format=None, effort="medium"
+                client,
+                model,
+                messages,
+                delay=0,
+                response_format=None,
+                effort=_vision_effort(),
             )
             description = response_msg.get("content") or ""
 

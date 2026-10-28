@@ -17,6 +17,7 @@ from ..config import (
     DEFAULT_MODEL,
     get_env,
     get_logger,
+    is_openrouter_base_url,
     load_verify_log_tail_chars,
     read_asset_text,
 )
@@ -48,10 +49,21 @@ def load_verifier_model() -> str | None:
     return env.get("VERIFIER_MODEL") or env.get("MODEL") or DEFAULT_MODEL
 
 
-def load_verifier_effort() -> str:
-    """Return the reviewer's reasoning effort (VERIFIER_MODEL_EFFORT)."""
+def load_verifier_effort() -> str | None:
+    """Return the reviewer's reasoning effort (VERIFIER_MODEL_EFFORT).
+
+    An explicit value is always sent. Unset, the default 'high' applies
+    on OpenRouter only: the OpenRouter-style `reasoning` object is
+    forwarded verbatim to custom BASE_URLs and strict OpenAI-compatible
+    endpoints reject it as an unknown parameter, so unset omits the field
+    there and the provider's own default applies.
+    """
     value = (get_env().get("VERIFIER_MODEL_EFFORT") or "").strip().lower()
-    return value or DEFAULT_VERIFIER_EFFORT
+    if value:
+        return value
+    if not is_openrouter_base_url(get_env().get("BASE_URL")):
+        return None
+    return DEFAULT_VERIFIER_EFFORT
 
 
 def build_verifier_messages(log_tail: str, summary: str) -> list[dict]:
@@ -95,7 +107,7 @@ def run_verification(summary: str):
 
     from ..conversation.session import VALID_THINKING_EFFORTS, create_model_client  # noqa: PLC0415
 
-    if effort not in VALID_THINKING_EFFORTS:
+    if effort is not None and effort not in VALID_THINKING_EFFORTS:
         return {
             "error": (
                 f"VERIFIER_MODEL_EFFORT '{effort}' is invalid. Use one of:"

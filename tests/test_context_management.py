@@ -131,6 +131,96 @@ def test_pod_host_config_allows_unset_limits():
     assert host_config == {"Init": True}
 
 
+def test_create_container_self_heals_stale_endpoint():
+    from _runner import MonkeyPatch
+
+    from syna import state
+
+    class FlakyClient:
+        """Fails its first container run on a dead pipe, then works."""
+
+        def __init__(self):
+            self.runs = 0
+
+        def run_container(self, image, **kwargs):
+            self.runs += 1
+            if self.runs == 1:
+                raise FileNotFoundError(
+                    2, "No such file or directory", "\\\\.\\pipe\\docker_engine"
+                )
+            return f"container-{self.runs}"
+
+        def close(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    patch = MonkeyPatch()
+    flaky = FlakyClient()
+    fake_stack = type(
+        "FakeStack",
+        (),
+        {"closed": False, "close": lambda self: setattr(self, "closed", True)},
+    )()
+    patch.setattr(state, "client", flaky)
+    patch.setattr(state, "_exit_stack", fake_stack)
+    patch.setattr(state, "_global_container", None)
+    patch.setattr(state, "build_pod_host_config", lambda **k: {"Init": True})
+    patch.setattr(state, "init_docker_client", lambda: setattr(state, "client", flaky))
+    try:
+        container = state.create_container()
+        assert container == "container-2", "the retry after the reset must succeed"
+        assert state.client is flaky
+    finally:
+        patch.undo()
+
+
+def test_create_container_non_connection_error_propagates():
+    from _runner import MonkeyPatch
+
+    from syna import state
+
+    class HostileClient:
+        def run_container(self, image, **kwargs):
+            raise RuntimeError(
+                "Docker API Error (500): OCI runtime attempted to invoke a"
+                " command that was not found"
+            )
+
+    patch = MonkeyPatch()
+    patch.setattr(state, "client", HostileClient())
+    init_calls = []
+    patch.setattr(state, "init_docker_client", lambda: init_calls.append(1))
+    try:
+        try:
+            state.create_container()
+        except RuntimeError as exc:
+            assert "500" in str(exc)
+        else:
+            raise AssertionError("a non-connection error must propagate")
+        assert not init_calls, "no client reset for a non-connection error"
+    finally:
+        patch.undo()
+
+
+def test_connection_error_classification():
+    from syna import state
+
+    assert state._is_connection_error(
+        FileNotFoundError(2, "No such file or directory", "\\\\.\\pipe\\docker_engine")
+    )
+    assert state._is_connection_error(ConnectionError("refused"))
+    assert state._is_connection_error(
+        RuntimeError("No Docker or Podman API endpoint is reachable.")
+    )
+    assert not state._is_connection_error(RuntimeError("Docker API Error (500): boom"))
+    assert not state._is_connection_error(ValueError("bad arguments"))
+
+
 def _make_tool_call_reply(name, args, call_id="call_1"):
     return FakeMessage(
         content=None,
@@ -320,6 +410,9 @@ def main():
     test_elide_is_idempotent()
     test_pod_host_config_assembles_limits()
     test_pod_host_config_allows_unset_limits()
+    test_create_container_self_heals_stale_endpoint()
+    test_create_container_non_connection_error_propagates()
+    test_connection_error_classification()
     test_session_elides_old_outputs_under_token_budget()
     test_session_elides_old_outputs_on_message_interval()
     test_session_elision_is_batched_by_request_interval()

@@ -30,11 +30,13 @@ from ..config import (
     get_env,
     get_logger,
     get_session_dump_path,
+    is_openrouter_base_url,
     load_command_timeout_s,
     load_config,
     load_elide_user_message_head_chars,
     load_output_limit_chars,
     load_user_message_archive_min_chars,
+    normalize_base_url,
     read_asset_text,
 )
 from ..protocol.context import (
@@ -74,13 +76,28 @@ STEP_BUDGET_OUT_NOTICE = (
 
 VALID_THINKING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
+DEFAULT_THINKING_EFFORT = "medium"
+
 
 def load_thinking_effort():
-    """Return the THINKING_EFFORT value from .env, or None when unset."""
-    value = get_env().get("THINKING_EFFORT")
+    """Return the THINKING_EFFORT value from .env, defaulting to 'medium'.
+
+    The default is applied at request time, not just shown in the settings
+    UI: without an explicit effort the provider's own default applies, and
+    for reasoning models that can burn large completion budgets on hidden
+    reasoning (observed: single replies spending 10k+ tokens reasoning).
+
+    The default applies on OpenRouter only. The OpenRouter-style
+    `reasoning` object is forwarded verbatim to custom BASE_URLs, and
+    strict OpenAI-compatible endpoints reject it as an unknown parameter
+    — it would break endpoints that work without the field — so an unset
+    value omits it there. An explicit THINKING_EFFORT is always sent (the
+    user opted in), and non-reasoning models ignore the field.
+    """
+    value = (get_env().get("THINKING_EFFORT") or "").strip()
     if not value:
-        return None
-    effort = value.strip().lower()
+        return DEFAULT_THINKING_EFFORT if is_openrouter() else None
+    effort = value.lower()
     if effort not in VALID_THINKING_EFFORTS:
         raise ValueError(
             f"THINKING_EFFORT '{value}' is invalid. Use one of:"
@@ -140,29 +157,25 @@ def _get_tool_metadata(tools_path):
     return get_function_metadata(tools_path)
 
 
-DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
-
 def load_base_url() -> str:
     """Return the OpenAI-like endpoint URL the model client talks to.
 
     Defaults to OpenRouter; any OpenAI-compatible endpoint works (OpenAI,
     Gemini's compatibility layer, a local Ollama), set via BASE_URL in
-    the .env file. A trailing slash is stripped so URL joins never
-    produce double slashes.
+    the .env file.
     """
-    return (
-        (get_env().get("BASE_URL") or "").strip() or DEFAULT_OPENROUTER_BASE_URL
-    ).rstrip("/")
+    return normalize_base_url(get_env().get("BASE_URL"))
 
 
 def is_openrouter() -> bool:
     """Whether the configured endpoint is OpenRouter itself.
 
     OpenRouter-only features (image generation, speech transcription and
-    synthesis) report themselves as not configured on other endpoints.
+    synthesis) report themselves as not configured on other endpoints,
+    and OpenRouter-only request fields (the `reasoning` object) are sent
+    only there.
     """
-    return load_base_url() == DEFAULT_OPENROUTER_BASE_URL
+    return is_openrouter_base_url(load_base_url())
 
 
 def create_model_client():
@@ -222,6 +235,42 @@ def shared_file_metadata(event: dict) -> dict | None:
     return None
 
 
+def format_shared_files_ledger(shared_files: list[str]) -> str:
+    """Render the per-turn share_file ledger for step-budget notices.
+
+    The ledger is ground truth the model cannot forge: it keeps the final
+    report from claiming a deliverable was shared when share_file never
+    ran (observed at step-budget exhaustion, where the tool-choice='none'
+    final request makes the claim possible and the action impossible).
+    """
+    if not shared_files:
+        return "Files shared with share_file so far in this turn: none."
+    listed = "".join(f"\n- {path}" for path in shared_files)
+    return "Files shared with share_file so far in this turn:" + listed
+
+
+def build_step_warning_notice(remaining_steps: int, shared_files: list[str]) -> str:
+    """Compose the wrap-up warning sent when the step budget runs low."""
+    return (
+        f"You have {remaining_steps} steps left. Finish up:"
+        " save your notes, verify your results,"
+        " share every deliverable the user still needs,"
+        " and deliver your final answer."
+        f" {format_shared_files_ledger(shared_files)}"
+    )
+
+
+def build_budget_out_notice(shared_files: list[str]) -> str:
+    """Compose the notice sent when the step budget is exhausted."""
+    return (
+        STEP_BUDGET_OUT_NOTICE
+        + f" {format_shared_files_ledger(shared_files)}"
+        + " Only claim a file is shared if it appears in this list;"
+        + " any other file is still inside the pod and invisible to the"
+        + " user. Only report checks and verifications you actually ran."
+    )
+
+
 def _detail_text(text) -> str:
     """Bound a call-detail string for front-end transport."""
     text = str(text or "")
@@ -248,6 +297,7 @@ class AgentSession:
         self.request_delay = request_delay
         self.emit_tool_errors = emit_tool_errors
         self.persist_outputs = persist_outputs
+        self._turn_shared_files: list[str] = []
         self.max_history_messages = load_config().get(
             "max_history_messages", DEFAULT_MAX_HISTORY_MESSAGES
         )
@@ -473,6 +523,7 @@ class AgentSession:
         no_tool_streak = 0
         steps_used = 0
         step_warning_sent = False
+        self._turn_shared_files = []
         repeated_calls: dict[str, int] = {}
         repeated_thinks: dict[str, int] = {}
         while True:
@@ -489,9 +540,9 @@ class AgentSession:
                 ):
                     step_warning_sent = True
                     self._append_harness_notice(
-                        f"You have {remaining_steps} steps left. Finish up:"
-                        " save your notes, verify your results, and deliver"
-                        " your final answer.",
+                        build_step_warning_notice(
+                            remaining_steps, list(self._turn_shared_files)
+                        ),
                         "Step budget warning sent.",
                     )
                 self._requests_since_elide += 1
@@ -854,7 +905,7 @@ class AgentSession:
         """
         logger.info("Step budget exhausted; requesting final status report.")
         self._append_harness_notice(
-            STEP_BUDGET_OUT_NOTICE,
+            build_budget_out_notice(list(self._turn_shared_files)),
             "Step budget exhausted; requesting final status report.",
         )
         try:
@@ -993,6 +1044,9 @@ class AgentSession:
             event["failed"] = True
         if structured_output is not None:
             event["structured_output"] = structured_output
+        metadata = shared_file_metadata(event)
+        if metadata is not None:
+            self._turn_shared_files.append(metadata["path"])
         self._emit(event)
 
     def _check_cancelled(self):

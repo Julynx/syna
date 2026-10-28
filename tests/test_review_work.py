@@ -178,6 +178,41 @@ def test_review_work_defaults_to_agent_model_and_high_effort(monkeypatch):
     assert calls["effort"] == "high"
 
 
+def test_review_work_omits_default_effort_off_openrouter(monkeypatch):
+    calls = _capture_review_request(monkeypatch)
+    monkeypatch.setattr(
+        verification,
+        "get_env",
+        lambda: {"MODEL": "agent/main", "BASE_URL": "https://api.openai.com/v1"},
+    )
+    _with_provider(
+        lambda: [{"role": "user", "content": "task"}],
+        lambda: TOOL_REGISTRY["review_work"](summary="s"),
+    )
+    assert calls["effort"] is None, (
+        "the OpenRouter-style reasoning object must not reach strict"
+        " OpenAI-compatible endpoints by default"
+    )
+
+
+def test_review_work_sends_explicit_effort_off_openrouter(monkeypatch):
+    calls = _capture_review_request(monkeypatch)
+    monkeypatch.setattr(
+        verification,
+        "get_env",
+        lambda: {
+            "MODEL": "agent/main",
+            "BASE_URL": "https://api.openai.com/v1",
+            "VERIFIER_MODEL_EFFORT": "low",
+        },
+    )
+    _with_provider(
+        lambda: [{"role": "user", "content": "task"}],
+        lambda: TOOL_REGISTRY["review_work"](summary="s"),
+    )
+    assert calls["effort"] == "low", "an explicit effort is always sent"
+
+
 def test_review_work_requires_a_conversation_provider(monkeypatch):
     _capture_review_request(monkeypatch)
     verification.pop_conversation_log_provider()
@@ -398,6 +433,8 @@ def main():
             test_review_work_returns_verifier_report,
             test_review_log_tail_is_truncated_to_configured_chars,
             test_review_work_defaults_to_agent_model_and_high_effort,
+            test_review_work_omits_default_effort_off_openrouter,
+            test_review_work_sends_explicit_effort_off_openrouter,
             test_review_work_requires_a_conversation_provider,
             test_review_work_without_model_falls_back_to_default,
             test_review_work_rejects_invalid_effort,

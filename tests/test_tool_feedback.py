@@ -500,6 +500,87 @@ def test_session_step_budget_warning_and_exhaustion():
     )
 
 
+def test_session_step_budget_notices_carry_shared_files_ledger():
+    session = _make_session()
+    session.max_steps_per_turn = 3
+    session.step_warning_remaining = 1
+    session.client = FakeChat(
+        [
+            _make_tool_call("share_file", {"file_path": "/workspace/chart.png"}),
+            REPLY_VALID,
+            REPLY_VALID,
+            REPLY_FINAL,
+        ]
+    )
+    session.run_turn("probe")
+
+    notices = [
+        m["content"]
+        for m in session.messages
+        if is_channel_message(m.get("content") or "", "HARNESS_NOTICE")
+        and ("steps left" in m["content"] or "step budget" in m["content"].lower())
+    ]
+    assert len(notices) == 2
+    for notice in notices:
+        assert "- /workspace/chart.png" in notice
+    assert "Only claim a file is shared" in notices[-1]
+    print("PASS step-budget notices list the files actually shared this turn")
+
+
+def test_session_step_budget_notices_report_no_shares():
+    session = _make_session()
+    session.max_steps_per_turn = 3
+    session.step_warning_remaining = 1
+    session.client = FakeChat([REPLY_VALID, REPLY_VALID, REPLY_VALID, REPLY_FINAL])
+    session.run_turn("probe")
+
+    notices = [
+        m["content"]
+        for m in session.messages
+        if is_channel_message(m.get("content") or "", "HARNESS_NOTICE")
+        and ("steps left" in m["content"] or "step budget" in m["content"].lower())
+    ]
+    assert len(notices) == 2
+    for notice in notices:
+        assert "so far in this turn: none." in notice
+    print("PASS step-budget notices state when nothing was shared")
+
+
+def test_thinking_effort_default_is_gated_to_openrouter():
+    from _runner import MonkeyPatch
+
+    import syna.conversation.session as session_module
+
+    patch = MonkeyPatch()
+    try:
+        patch.setattr(session_module, "get_env", lambda: {"MODEL": "m"})
+        assert session_module.load_thinking_effort() == "medium", (
+            "unset THINKING_EFFORT on OpenRouter applies the medium default"
+        )
+        patch.setattr(
+            session_module,
+            "get_env",
+            lambda: {"MODEL": "m", "BASE_URL": "https://api.openai.com/v1"},
+        )
+        assert session_module.load_thinking_effort() is None, (
+            "unset THINKING_EFFORT off OpenRouter omits the reasoning field"
+        )
+        patch.setattr(
+            session_module,
+            "get_env",
+            lambda: {
+                "MODEL": "m",
+                "BASE_URL": "https://api.openai.com/v1",
+                "THINKING_EFFORT": "high",
+            },
+        )
+        assert session_module.load_thinking_effort() == "high", (
+            "an explicit THINKING_EFFORT is always sent"
+        )
+    finally:
+        patch.undo()
+
+
 def test_session_step_budget_empty_report_reports_error():
     session = _make_session()
     session.max_steps_per_turn = 2
@@ -664,9 +745,20 @@ def test_session_lone_think_is_accepted_and_persists():
     print("PASS lone think tool call produces tool result and turn continues")
 
 
+def _smoke_share(file_path: str) -> dict:
+    """Stand-in for share_file returning its delivery metadata."""
+    return {
+        "path": file_path,
+        "name": file_path.rsplit("/", 1)[-1],
+        "is_dir": False,
+    }
+
+
 def main():
     TOOL_REGISTRY["smoke_tool"] = _smoke_tool
     TOOL_REGISTRY["smoke_fail"] = _smoke_fail
+    original_share = TOOL_REGISTRY.get("share_file")
+    TOOL_REGISTRY["share_file"] = _smoke_share
     try:
         test_session_wipe_single_failure_on_success()
         test_session_wipe_multiple_consecutive_failures_on_success()
@@ -682,6 +774,9 @@ def main():
         test_web_events_carry_raw_and_arguments()
         test_session_tool_results_use_protocol_markers()
         test_session_step_budget_warning_and_exhaustion()
+        test_session_step_budget_notices_carry_shared_files_ledger()
+        test_session_step_budget_notices_report_no_shares()
+        test_thinking_effort_default_is_gated_to_openrouter()
         test_session_step_budget_empty_report_reports_error()
         test_session_step_budget_mixed_reply_closes_tool_group()
         test_session_repeated_identical_calls_get_nudge()
@@ -692,6 +787,10 @@ def main():
     finally:
         TOOL_REGISTRY.pop("smoke_tool", None)
         TOOL_REGISTRY.pop("smoke_fail", None)
+        if original_share is None:
+            TOOL_REGISTRY.pop("share_file", None)
+        else:
+            TOOL_REGISTRY["share_file"] = original_share
 
 
 if __name__ == "__main__":

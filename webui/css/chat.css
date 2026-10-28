@@ -273,6 +273,31 @@
   }
 }
 
+.inline-image-frame {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  font-size: 0;
+}
+.inline-image-frame img {
+  max-width: 100%;
+}
+.bubble.model .inline-image-frame .copy-btn {
+  opacity: 0;
+  pointer-events: none;
+}
+.bubble.model .inline-image-frame:hover .copy-btn,
+.bubble.model .inline-image-frame:focus-within .copy-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .bubble.model .inline-image-frame .copy-btn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .tool-row {
   position: relative;
   display: flex;

@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from posixpath import basename, normpath
 from typing import Any
+from urllib.parse import quote
 
 import uvicorn
 from dotenv import dotenv_values
@@ -654,12 +655,14 @@ def download_file(client_id: str, token: str):
 
 
 @app.get("/api/image/{client_id}")
-def serve_pod_image(client_id: str, path: str):
+def serve_pod_image(client_id: str, path: str, download: bool = False):
     """Stream an image from the session pod for inline rendering.
 
     The client rewrites markdown image paths (e.g. from Syna's replies)
     to this endpoint. Only image files under /workspace are eligible;
     everything is copied out of the pod, so host files are unreachable.
+    With `download` (the UI's per-image download button), the response
+    carries a Content-Disposition attachment header.
     """
     record = _sessions.get(client_id)
     if record is None:
@@ -674,10 +677,12 @@ def serve_pod_image(client_id: str, path: str):
             status_code=400,
             detail="Only image files under /workspace can be displayed.",
         )
-    return _prepare_pod_image(record, cleaned)
+    return _prepare_pod_image(record, cleaned, as_attachment=download)
 
 
-def _prepare_pod_image(record, pod_path: str) -> FileResponse:
+def _prepare_pod_image(
+    record, pod_path: str, as_attachment: bool = False
+) -> FileResponse:
     """Copy, normalize, and cache one pod image for serving.
 
     Sources larger than MAX_SERVE_BYTES are rejected outright. Sources
@@ -720,7 +725,11 @@ def _prepare_pod_image(record, pod_path: str) -> FileResponse:
             with Image.open(source) as img:
                 if not image_exceeds_box(img):
                     return _serve_image_copy(
-                        record, token_dir, source, _media_type_for(pod_path)
+                        record,
+                        token_dir,
+                        source,
+                        _media_type_for(pod_path),
+                        download_name=basename(pod_path) if as_attachment else None,
                     )
     except HTTPException:
         shutil.rmtree(token_dir, ignore_errors=True)
@@ -739,7 +748,13 @@ def _prepare_pod_image(record, pod_path: str) -> FileResponse:
         raise HTTPException(
             status_code=415, detail="Could not read the file as an image."
         ) from exc
-    return _serve_image_copy(record, token_dir, target, "image/png")
+    return _serve_image_copy(
+        record,
+        token_dir,
+        target,
+        "image/png",
+        download_name=basename(pod_path) if as_attachment else None,
+    )
 
 
 def _media_type_for(pod_path: str) -> str:
@@ -747,23 +762,57 @@ def _media_type_for(pod_path: str) -> str:
     return SERVED_IMAGE_EXTENSIONS[Path(pod_path).suffix.lower()]
 
 
+def _content_disposition(download_name: str) -> str:
+    """Build a header-safe Content-Disposition attachment value.
+
+    HTTP headers are latin-1 encoded by Starlette, so names carrying
+    characters above U+00FF (CJK, Cyrillic, Greek, ...) would raise
+    UnicodeEncodeError inside the response and break the download; those
+    go into the RFC 5987 `filename*` form percent-encoded as UTF-8,
+    which every modern browser prefers. Control characters and quotes
+    are stripped in both forms: a pod filename the model controls must
+    not reach the HTTP header layer unfiltered.
+    """
+    cleaned = "".join(
+        character
+        for character in download_name.replace('"', "").replace("\\", "")
+        if character >= " " and character != chr(127)
+    ).strip()
+    if not cleaned:
+        cleaned = "image.png"
+    try:
+        cleaned.encode("latin-1")
+    except UnicodeEncodeError:
+        encoded = quote(cleaned.encode("utf-8"))
+        return f"attachment; filename=\"image.png\"; filename*=UTF-8''{encoded}"
+    return f'attachment; filename="{cleaned}"'
+
+
 def _serve_image_copy(
-    record, token_dir: Path, file_path: Path, media_type: str
+    record,
+    token_dir: Path,
+    file_path: Path,
+    media_type: str,
+    download_name: str | None = None,
 ) -> FileResponse:
     """Track a prepared copy for eviction and build its file response.
 
     The LRU cap bounds the temp footprint across history replays; the
-    session tmp dir wipe on teardown removes whatever remains.
+    session tmp dir wipe on teardown removes whatever remains. When
+    `download_name` is set the response is served as an attachment.
     """
     record.image_cache[uuid.uuid4().hex] = token_dir
     while len(record.image_cache) > IMAGE_CACHE_LIMIT:
         oldest_key = next(iter(record.image_cache))
         oldest_dir = record.image_cache.pop(oldest_key)
         shutil.rmtree(oldest_dir, ignore_errors=True)
+    headers = {"Cache-Control": "no-store"}
+    if download_name:
+        headers["Content-Disposition"] = _content_disposition(download_name)
     return FileResponse(
         file_path,
         media_type=media_type,
-        headers={"Cache-Control": "no-store"},
+        headers=headers,
     )
 
 

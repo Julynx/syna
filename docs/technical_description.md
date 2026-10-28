@@ -72,6 +72,7 @@ workflows keep working unchanged.
 | --- | --- |
 | `OPENROUTER_API_KEY` | API key for the configured endpoint (any OpenAI-compatible provider's key goes here; the variable name predates multi-endpoint support). |
 | `MODEL` | Main agent model (default `~z-ai/glm-flash-latest` when unset). |
+| `THINKING_EFFORT` | Reasoning effort for the main agent requests. Unset, the default `medium` applies on OpenRouter; on other endpoints unset omits the field entirely (the OpenRouter-style `reasoning` object is forwarded verbatim to custom `BASE_URL`s and strict OpenAI-compatible endpoints reject it as an unknown parameter). An explicit value is always sent to any endpoint. |
 | `BASE_URL` | OpenAI-like endpoint URL (default `https://openrouter.ai/api/v1`; also OpenAI, Gemini's compatibility layer, a local Ollama, or any compatible endpoint). Image generation and the speech tools are OpenRouter-only and report themselves as not configured elsewhere. |
 | `STT_MODEL` | Voice transcription model (default `google/chirp-3` when unset; gated by the `voice_enabled` toggle). |
 | `TTS_MODEL` | Speech synthesis model (default `google/gemini-3.8-flash-lite-tts` when unset; gated by the `voice_enabled` toggle). |
@@ -79,7 +80,7 @@ workflows keep working unchanged.
 | `TTS_RESPONSE_FORMAT` | Speech endpoint response format (default `pcm`; raw samples are wrapped in a WAV container server-side). Some models, e.g. OpenAI TTS, also accept `mp3`. |
 | `IMAGE_MODEL` | Image generation model for the `text_to_image` tool (default `google/gemini-3.1-flash-image` when unset; the tool only runs when the `image_generation_enabled` toggle is on). |
 | `VERIFIER_MODEL` | Reviewer model for the `review_work` tool (defaults to `MODEL`, then the default model, when unset). |
-| `VERIFIER_MODEL_EFFORT` | Reasoning effort for the reviewer request (default `high`). |
+| `VERIFIER_MODEL_EFFORT` | Reasoning effort for the reviewer request (default `high` on OpenRouter when unset; on other endpoints unset omits the field, same gate as `THINKING_EFFORT`; an explicit value is always sent). |
 | `SPEECH_LANGUAGE` | Spoken language hint for STT (default `en`). |
 
 `assets/config.json` holds all runtime settings:
@@ -236,7 +237,12 @@ Client behavior notes:
   `GET /api/image/{client_id}?path=...` (lazy-loaded, with an
   "unavailable" fallback chip), while remote `http(s)` sources are
   converted to plain links and never fetched — a page could otherwise
-  make Syna embed an image whose URL exfiltrates data.
+  make Syna embed an image whose URL exfiltrates data. Pod images are
+  also wrapped in an `.inline-image-frame` carrying a download button
+  (revealed on frame hover, check-mark feedback like the copy buttons);
+  clicking it navigates the same endpoint with `&download=1`, which the
+  server answers with `Content-Disposition: attachment`. Message
+  download/copy behavior is untouched.
 - When Syna calls `ask_user`, the composer slides down and a question
   panel slides up in its place (choices capped in height and scrollable,
   an always-appended "Other — type your own response" choice, and a stop
@@ -546,7 +552,12 @@ Tool-call parsing and execution under native OpenRouter tool calling.
   rendering of a call.
 - `load_tool_call_timeout()` — configured `tool_call_timeout_s` (default 60).
 - `_unpack_tool_call(raw_call)` — extracts call ID, tool name, decodes JSON
-  arguments string or dict, and reports argument decoding errors.
+  arguments string or dict, and reports argument decoding errors. When a
+  strict parse fails, a repair pass retires the double-escaped-quote
+  serialization some models emit (`\\"` where `\"` belongs, observed with
+  GLM Flash): it only fires on an already-failing payload, logs when it
+  repairs, and unrepairable errors quote the raw arguments around the
+  failure position so self-correction is one-shot.
 - `ParseOutcome(structural_error, outputs, warnings, think_signatures)` — returns
   `outputs` carrying one entry per processed call in reply order, including
   skipped calls; entries for calls that never reached dispatch carry `"error": True`
@@ -612,7 +623,9 @@ serves pod images for inline rendering: only image files under `/workspace`
 that fit the 1024x1024 box and stay under 5 MB are served untouched
 (animations survive), everything else is downscaled into the box and
 converted to PNG; each request gets a fresh copy (LRU-capped at 32) with
-`Cache-Control: no-store`, so regenerated images are never served stale.
+`Cache-Control: no-store`, so regenerated images are never served stale,
+and a `download` query parameter serves the image as an attachment for the
+UI's per-image download button.
 A janitor coroutine reaps idle, disconnected sessions. `index()` serves
 `chat.html` and injects `window.SYNA_CONFIG` (UI limits, voice availability,
 the configured initial voice-mode state, and the per-process `auth_token`;
@@ -708,7 +721,15 @@ the settings the web client needs for voice mode. Failures raise
   `step_warning_remaining` steps are left, the model receives a wrap-up
   notice. Past the cap the turn ends with one final model request with
   `tool_choice="none"`, delivering the status report as natural language; an
-  empty report ends the turn with the plain exhaustion error.
+  empty report ends the turn with the plain exhaustion error. Both notices
+  carry a per-turn share_file ledger — the paths actually shared this turn
+  (`format_shared_files_ledger`, fed by the session's `_on_tool_event`
+  through `shared_file_metadata`), plus, at exhaustion, the instruction to
+  only claim a file is shared if it appears in the list, and to only
+  report checks and verifications actually run. The ledger exists
+  because the `tool_choice="none"` final request makes claiming "shared"
+  possible while making the action impossible: in a live run the exhausted
+  turn reported its chart as shared although `share_file` had never run.
 - **Loop detection**: identical non-`think` calls repeated
   `REPEATED_CALL_LIMIT` (3) times within one turn trigger a one-time
   "change approach" harness notice; the same guard covers identical think
@@ -761,6 +782,14 @@ Global Docker client plus per-thread container registry and per-call context.
   background processes, and `Memory` / `PidsLimit` ceilings (`pod_memory_mb`,
   `pod_pids_limit`) protect the host from runaway work inside the pod
   without restricting what the model may do there.
+- Self-heal: a connection-level failure from `run_container` (dead pipe,
+  closed socket — the engine quit or the host slept mid-session) triggers
+  one client reset (`_reset_dead_client`, also the body of
+  `close_docker_client`) and re-init through bollard's discovery, then a
+  single retry; other errors propagate unchanged. The heal covers
+  container creation: a session whose engine dies mid-turn keeps failing
+  its `execute_command` calls until the next turn that (re)creates a pod;
+  the per-call errors are still honest and a fresh session self-heals.
 - Per-call context (thread-locals, set inside the tool worker thread by
   `execute_tool_with_timeout`): `set_call_output_path` /
   `get_call_output_path` carry the `/tool_outputs/` path where the current
@@ -884,9 +913,11 @@ leaves data instead of a mystery), base64-encodes it into a fresh
 single-message conversation (plain-text response, no JSON mode), and
 replaces the bytes with a text placeholder carrying the description so
 images never linger in history. The request runs at `medium` reasoning
-effort: without it the provider default for this model is maximum, which
-burns the completion budget on hidden reasoning and can return no content
-at all.
+effort on OpenRouter: without it the provider default there is maximum,
+which burns the completion budget on hidden reasoning and can return no
+content at all. Other endpoints omit the field (same gate as
+`THINKING_EFFORT`), since the OpenRouter-style `reasoning` object is
+forwarded verbatim to custom `BASE_URL`s and strict endpoints reject it.
 
 ### `src/syna/capabilities/web_search.py`
 `search(query, delay_s=2)` — searches the query through the stealth browser
@@ -944,6 +975,9 @@ All suites are plain scripts runnable with the project venv
   `structured_output` event contract: dict-returning tools carry their raw return
   value on the finished event, string-returning tools do not, and
   `session.shared_file_metadata()` matches only well-formed finished `share_file` events.
+  The double-escaped-quote repair pass is covered too: a GLM-shaped payload
+  repairs and executes, strictly valid payloads are never rewritten, and
+  unrepairable errors quote the raw arguments around the failure position.
 - `tests/test_editor.py` — line-editor validation: valid and combined edits
   apply; null/non-object payloads, multi-key operations, missing required keys
   and unknown operation types raise clean `ValueError`s and leave the file
@@ -951,7 +985,8 @@ All suites are plain scripts runnable with the project venv
 - `tests/test_tool_feedback.py` — session-level loop: history wiping after
   success, abort after 3 consecutive failures, `<tool_results>` marker
   format, parser warnings surfaced as harness notices, think+respond turns,
-  step-budget warning, final status report delivered at exhaustion (and the
+  step-budget warning (with the shared-files ledger, populated and empty),
+  final status report delivered at exhaustion (and the
   error path when the final reply holds no valid `respond`), repeated-call
   nudges, compaction channel detection, and web event details.
 - `tests/test_output_and_persistence.py` — `output.py` cleaning and
@@ -968,6 +1003,8 @@ All suites are plain scripts runnable with the project venv
   escaping-layer artifacts) and survives a JSON roundtrip unchanged.
 - `tests/test_context_management.py` — token estimation, elision semantics
   (saved_to-only, recency window, idempotence), pod `HostConfig` assembly,
+  the container self-heal (a stale-endpoint failure resets the client and
+  retries once; a non-connection error propagates without a reset),
   a session-level elision-under-budget run, interval elision with per-request
   batching disabled, and a session-level proof that outputs stay full-text
   between batched elision passes.
@@ -1017,7 +1054,8 @@ All suites are plain scripts runnable with the project venv
   extensions), pass-through for small in-box images (animated GIF bytes
   untouched), downscaling of oversized dimensions into the 1024x1024 PNG
   box, the 50 MB rejection, the recompression threshold, malformed-image
-  rejection, and the LRU cache eviction.
+  rejection, the LRU cache eviction, and the `download=1` attachment
+  header (default responses carry none).
 - `tests/test_net_guard.py` — the browser's network policy: blocked-range
   matrix (loopback v4/v6/mapped, RFC1918, metadata, CGNAT, multicast),
   URL-spec obfuscations (decimal, hex, octal, mixed, trailing dot, and

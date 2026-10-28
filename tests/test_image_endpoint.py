@@ -210,6 +210,87 @@ def test_image_cache_evicts_oldest(monkeypatch):
     assert len(record.image_cache) == 2
 
 
+def test_download_param_serves_attachment(monkeypatch):
+    payload = _png_bytes()
+    client, _ = _client_with(
+        monkeypatch, FakeContainer({"/workspace/images/small.png": payload})
+    )
+
+    response = client.get(
+        "/api/image/testclient",
+        params={"path": "/workspace/images/small.png", "download": "1"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == payload
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("attachment;")
+    assert 'filename="small.png"' in disposition
+
+
+def test_download_off_by_default(monkeypatch):
+    payload = _png_bytes()
+    client, _ = _client_with(
+        monkeypatch, FakeContainer({"/workspace/images/small.png": payload})
+    )
+
+    response = client.get(
+        "/api/image/testclient", params={"path": "/workspace/images/small.png"}
+    )
+
+    assert response.status_code == 200
+    assert "content-disposition" not in response.headers
+
+
+def test_attachment_filename_is_sanitized():
+    from syna.server import _content_disposition
+
+    assert _content_disposition("chart.png") == 'attachment; filename="chart.png"'
+    assert _content_disposition('we"ird\\name.png') == (
+        'attachment; filename="weirdname.png"'
+    )
+    assert _content_disposition("we\nird\tname.png") == (
+        'attachment; filename="weirdname.png"'
+    )
+    assert _content_disposition("a\x00b\x1fc.png") == 'attachment; filename="abc.png"'
+    assert _content_disposition("\n\t") == 'attachment; filename="image.png"', (
+        "a name that sanitizes to nothing falls back instead of breaking the header"
+    )
+
+
+def test_attachment_filename_latin1_boundary():
+    from syna.server import _content_disposition
+
+    assert _content_disposition("gráfico.png") == (
+        'attachment; filename="gráfico.png"'
+    ), "latin-1 names stay in the simple quoted form"
+    header = _content_disposition("图表.png")
+    assert "filename*=UTF-8''" in header, (
+        "names above latin-1 move to the RFC 5987 encoded form"
+    )
+    assert "图表" not in header, "no raw non-latin-1 character reaches the header"
+    header.encode("latin-1"), "the finished header must be latin-1 encodable"
+
+
+def test_download_non_latin1_name_serves_encoded_attachment(monkeypatch):
+    payload = _png_bytes()
+    client, _ = _client_with(
+        monkeypatch, FakeContainer({"/workspace/images/图表.png": payload})
+    )
+
+    response = client.get(
+        "/api/image/testclient",
+        params={"path": "/workspace/images/图表.png", "download": "1"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == payload
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("attachment;")
+    assert "filename*=UTF-8''" in disposition
+
+
 def main():
     """Run every image-endpoint test and report a summary."""
     try:
@@ -226,6 +307,11 @@ def main():
                 test_non_image_file_is_rejected,
                 test_recompress_threshold_converts_to_png,
                 test_image_cache_evicts_oldest,
+                test_download_param_serves_attachment,
+                test_download_off_by_default,
+                test_attachment_filename_is_sanitized,
+                test_attachment_filename_latin1_boundary,
+                test_download_non_latin1_name_serves_encoded_attachment,
             ]
         )
     finally:
