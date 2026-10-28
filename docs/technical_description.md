@@ -271,6 +271,15 @@ Client behavior notes:
   (`withToken`/`authHeaders`): the WebSocket URL, fetches, inline pod
   images (`<img>` cannot set headers — query param), and file-download
   chips. The token arrives via `SYNA_CONFIG` from the served page.
+- The composer carries an Allegro pill (`#allegro-btn`, `queue_music`
+  icon + label) left of the send button: a speed-mode toggle remembered
+  in localStorage (`syna-allegro`), collapsed to an icon-only circle
+  below 640px. The flag rides every `message` event; the pill is
+  disabled while busy. Toggling plays a dedicated ascending/descending
+  Sfx pair (`allegroOn`/`allegroOff`, `ui` category) and re-triggers the
+  shared `icon-pop` animation; both the sound and the animation respect
+  the existing conventions (sound-button click exclusion, reduced-motion
+  opt-out).
 - The composer area ends with a small centered cursive disclaimer:
   "Syna is an AI agent; it can make mistakes. Review its outputs and
   files before acting on them."
@@ -691,7 +700,10 @@ temp dir if it was removed externally). During a turn the record registers an
 question from the tool call's `started` arguments) and blocks on the pending
 answer queue; the WebSocket handler resolves the question on an `answer`
 message or treats a plain `message` as the typed answer instead of queueing a
-turn, and `stop`, `new-chat`, and teardown release the pending question so
+turn (the message's Allegro flag is captured at enqueue time in
+`_inbox_item_from_message`, and the worker applies it via `set_allegro`
+when the turn starts, so mid-turn changes are impossible), and `stop`,
+`new-chat`, and teardown release the pending question so
 the blocked tool unwinds as a failed call. `GET /api/image/{client_id}`
 serves pod images for inline rendering: only image files under `/workspace`
 (png/jpg/jpeg/webp/gif) are eligible, sources over 50 MB are rejected, images
@@ -759,6 +771,11 @@ the settings the web client needs for voice mode. Failures raise
 - Builds the system prompt from `assets/prompt.md`: fills `{{CURRENT_DATE}}`,
   `{{COMMAND_TIMEOUT}}` and `{{OUTPUT_LIMIT}}`. Tool documentation is not
   injected into the prompt; the request's tool schemas are the single copy.
+  With `build_prompt(allegro=True)` the Allegro speed rule is appended
+  after the base prompt.
+- `set_allegro(enabled)` rewrites the system message in place only on an
+  actual change: a no-op leaves the provider prompt cache untouched, a
+  real mode change invalidates it once. Sessions start in normal mode.
 - Loads dynamic tool schemas via `get_tool_definitions()` from `tool_schemas.py`.
 - `run_turn(query)` requests model responses via `ask_question` with native `tools`
   and `tool_choice="auto"`. When the model returns a plain text response without

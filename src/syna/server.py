@@ -256,7 +256,7 @@ class SessionRecord:
                 if self.container is None:
                     continue
                 self.session.clear_cancel()
-                self._run_turn(item["content"])
+                self._run_turn(item["content"], bool(item.get("allegro")))
         finally:
             unregister_container()
             if self.container is not None:
@@ -300,11 +300,12 @@ class SessionRecord:
         logger.info("Container ready for session %s", self.client_id)
         self.push({"type": "ready"}, persistent=False)
 
-    def _run_turn(self, user_text: str):
+    def _run_turn(self, user_text: str, allegro: bool = False):
         self.busy.set()
         self.push({"type": "busy"}, persistent=False)
         interaction.register_responder(self._answer_question)
         try:
+            self.session.set_allegro(allegro)
             self.session.run_turn(user_text)
         except Exception:
             logger.exception("Turn failed for session %s", self.client_id)
@@ -321,6 +322,24 @@ class SessionRecord:
 def _sanitize_client_id(client_id: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", client_id)[:64]
     return cleaned or uuid.uuid4().hex
+
+
+def _inbox_item_from_message(data: dict) -> dict | None:
+    """Translate a websocket message event into an inbox item.
+
+    The Allegro flag is captured here, at enqueue time: the worker later
+    samples it when dequeuing, so a turn always runs with the mode the
+    user saw when the message left the composer. Empty content yields
+    None and must not enqueue anything.
+    """
+    content = str(data.get("content", "")).strip()
+    if not content:
+        return None
+    return {
+        "kind": "message",
+        "content": content,
+        "allegro": bool(data.get("allegro")),
+    }
 
 
 def get_or_create_session(client_id: str) -> SessionRecord:
@@ -1127,9 +1146,10 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             record.touch()
             message_type = data.get("type")
             if message_type == "message":
-                content = str(data.get("content", "")).strip()
-                if not content:
+                item = _inbox_item_from_message(data)
+                if item is None:
                     continue
+                content = item["content"]
                 # A pending ask_user question is waiting: this message
                 # is the typed answer, not the start of a new turn.
                 if record.pending_question.active and record.answer_pending_question(
@@ -1144,7 +1164,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                         "queued": record.busy.is_set(),
                     }
                 )
-                record.inbox.put({"kind": "message", "content": content})
+                record.inbox.put(item)
             elif message_type == "answer":
                 choice = str(data.get("choice", "")).strip()
                 if not choice:

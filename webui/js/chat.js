@@ -4,6 +4,7 @@ const chat = document.getElementById("chat");
 const input = document.getElementById("input");
 const sendBtn = document.getElementById("send-btn");
 const attachBtn = document.getElementById("attach-btn");
+const allegroBtn = document.getElementById("allegro-btn");
 const newchatBtn = document.getElementById("newchat-btn");
 const settingsBtn = document.getElementById("settings-btn");
 const fileInput = document.getElementById("file-input");
@@ -130,7 +131,38 @@ const ICONS = {
   factCheck: GLYPH("fact_check"),
   speakerOn: GLYPH("record_voice_over", "s-on"),
   speakerOff: GLYPH("voice_over_off", "s-off"),
+  allegro: GLYPH("queue_music"),
 };
+
+const allegro = (() => {
+  let on = false;
+  try {
+    on = localStorage.getItem("syna-allegro") === "on";
+  } catch (e) {}
+  allegroBtn.innerHTML =
+    ICONS.allegro + '<span class="allegro-label">Allegro</span>';
+  const paint = () => {
+    allegroBtn.classList.toggle("on", on);
+    allegroBtn.setAttribute("aria-pressed", String(on));
+  };
+  paint();
+  allegroBtn.addEventListener("click", () => {
+    on = !on;
+    try {
+      localStorage.setItem("syna-allegro", on ? "on" : "off");
+    } catch (e) {}
+    paint();
+    allegroBtn.classList.remove("pop");
+    void allegroBtn.offsetWidth;
+    allegroBtn.classList.add("pop");
+    Sfx.play(on ? "allegroOn" : "allegroOff");
+  });
+  return {
+    get on() {
+      return on;
+    },
+  };
+})();
 
 const TOOL_META = {
   think: { verb: "Noted", icon: ICONS.think, key: "thought" },
@@ -1379,13 +1411,16 @@ function setSendState() {
     sendBtn.title = busy && !pendingAnswer ? "Stop" : "Send";
   }
   document.querySelector(".composer").classList.toggle("busy", busy);
+  allegroBtn.disabled = busy;
   sendBtn.disabled = busy && !pendingAnswer ? false : !input.value.trim();
 }
 
 function sendMessage() {
   const content = input.value.trim();
   if (!content || !ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: "message", content: content }));
+  ws.send(
+    JSON.stringify({ type: "message", content: content, allegro: allegro.on })
+  );
   Sfx.play("send");
   input.value = "";
   fitInput();

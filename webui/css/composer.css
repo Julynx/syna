@@ -155,6 +155,66 @@ footer {
   box-shadow: 0 8px 18px -8px rgba(129, 140, 248, 0.4);
 }
 
+#allegro-btn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 38px;
+  padding: 0 12px 0 10px;
+  border: none;
+  border-radius: 19px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    opacity 0.2s ease,
+    transform 0.15s var(--ease);
+}
+#allegro-btn .material-symbols-outlined {
+  font-size: 17px;
+}
+#allegro-btn .allegro-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+#allegro-btn:not(:disabled):hover {
+  color: var(--text);
+  transform: translateY(-1px);
+}
+#allegro-btn:not(:disabled):active {
+  transform: translateY(0) scale(0.96);
+}
+#allegro-btn.on {
+  background: linear-gradient(135deg, #6366f1, var(--accent));
+  color: var(--on-accent);
+  box-shadow: 0 6px 14px -8px rgba(79, 70, 229, 0.65);
+}
+#allegro-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+#allegro-btn.pop .material-symbols-outlined {
+  animation: icon-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@media (max-width: 640px) {
+  #allegro-btn {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 50%;
+  }
+  #allegro-btn .allegro-label {
+    display: none;
+  }
+}
+
 #file-input {
   display: none;
 }
@@ -475,7 +535,8 @@ footer {
 
 @media (prefers-reduced-motion: reduce) {
   .composer::before,
-  #send-btn.pop .material-symbols-outlined {
+  #send-btn.pop .material-symbols-outlined,
+  #allegro-btn.pop .material-symbols-outlined {
     animation: none !important;
   }
   .settings-modal-backdrop,

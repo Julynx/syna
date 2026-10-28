@@ -60,6 +60,31 @@ const Sfx = (() => {
       cat: "ui",
       gap: 0.1,
     },
+    allegroOn: {
+      n: [
+        [0, 0],
+        [7, 0.05],
+        [12, 0.09],
+      ],
+      g: 0.13,
+      d: 0.26,
+      f: 3400,
+      tr: 0.08,
+      cat: "ui",
+      gap: 0.1,
+    },
+    allegroOff: {
+      n: [
+        [12, 0],
+        [7, 0.05],
+      ],
+      g: 0.12,
+      d: 0.22,
+      f: 3000,
+      tr: 0.06,
+      cat: "ui",
+      gap: 0.1,
+    },
     send: {
       n: [
         [0, 0],
@@ -373,7 +398,12 @@ const Sfx = (() => {
     addEventListener(ev, () => Sfx.unlock(), { capture: true });
   });
   document.addEventListener("click", (e) => {
-    if (e.target.closest("#send-btn, #sound-btn, .see-btn, .tool-row")) return;
+    if (
+      e.target.closest(
+        "#send-btn, #sound-btn, #allegro-btn, .see-btn, .tool-row",
+      )
+    )
+      return;
     if (e.target.closest("button, a.file-chip")) Sfx.play("click");
   });
   let hovered = null;

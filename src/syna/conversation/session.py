@@ -71,6 +71,17 @@ STEP_BUDGET_OUT_NOTICE = (
     " user knows where things stand. Do not call any tools."
 )
 
+ALLEGRO_PROMPT_SUFFIX = (
+    "\n\nYou are currently operating in 'Allegro' mode. Speed is important"
+    " for this task. Try to complete it in the minimum number of tool calls"
+    " possible without compromising the reliability of your results. Batch"
+    " tool calls when reasonable, skip optional polish, and keep reasoning,"
+    " narration, and the final report short. Verify when errors would be"
+    " costly or hard to notice, but don't report something as verified"
+    " unless you verified it. Speed doesn't override your other values or"
+    " guidelines."
+)
+
 VALID_THINKING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 DEFAULT_THINKING_EFFORT = "medium"
@@ -130,16 +141,20 @@ class TurnCancelled(Exception):
     """Raised when the user interrupts the current agent turn."""
 
 
-def build_prompt():
+def build_prompt(allegro: bool = False):
     """Build the system prompt with date and limits filled in.
 
     Tool documentation lives only in the request's tool schemas
     (get_tool_definitions); it is deliberately not duplicated here.
+    With allegro, the speed-priority rule is appended after the base
+    prompt so the model can act on it from the turn's first request.
     """
     prompt = read_asset_text("prompt.md")
     prompt = prompt.replace("{{CURRENT_DATE}}", date.today().isoformat())
     prompt = prompt.replace("{{COMMAND_TIMEOUT}}", str(load_command_timeout_s()))
     prompt = prompt.replace("{{OUTPUT_LIMIT}}", str(load_output_limit_chars()))
+    if allegro:
+        prompt += ALLEGRO_PROMPT_SUFFIX
     return prompt
 
 
@@ -326,9 +341,29 @@ class AgentSession:
         self.client = create_model_client()
         self.model = self._require_model()
         self.tool_definitions = get_tool_definitions()
-        msg = {"role": "system", "content": build_prompt()}
+        self.allegro = False
+        msg = {"role": "system", "content": build_prompt(self.allegro)}
         self.messages.append(msg)
         get_logger().info(str(msg))
+
+    def set_allegro(self, enabled: bool):
+        """Apply the Allegro speed mode for the next turn.
+
+        Rewrites the system message only on an actual change: a no-op
+        leaves the provider prompt cache untouched. A deliberate mode
+        change invalidates the cache once, the documented acceptable
+        cost. Mid-turn changes are impossible by construction: the web
+        worker samples the flag when it dequeues a message, never during
+        the turn it starts.
+        """
+        if enabled == self.allegro:
+            return
+        self.allegro = enabled
+        self.messages[0]["content"] = build_prompt(enabled)
+        get_logger().info(
+            "Allegro mode %s for the next turn",
+            "enabled" if enabled else "disabled",
+        )
 
     def cancel(self):
         """Request the interruption of the current turn at its next pause."""

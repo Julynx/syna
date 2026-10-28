@@ -43,24 +43,32 @@ Prerequisites and design notes:
 - Lifecycle: a delegate must respect the session's cancel event and step
   budget, or a cancelled turn can keep burning tokens in the background.
 
-## Turbo switch
+## Allegro (the Turbo switch) — implemented
 
-A client-side toggle (settings modal, next to the existing feature
-switches) that appends one rule to the end of the system prompt, nudging
-the agent toward the minimum number of steps:
+Originally researched as a "Turbo switch": a client-side toggle that
+appends one rule to the end of the system prompt, nudging the agent
+toward the minimum number of steps. Shipped as **Allegro**.
 
-> You are currently operating in 'Turbo' mode. Speed is important for this task. Try to complete it in the minimum number of tool calls possible without compromising the reliability of your results. Batch tool calls when reasonable, skip optional polish, and keep reasoning, narration, and the final report short. Verify when errors would be costly or hard to notice, but don't report something as verified unless you verified it. Speed doesn't override your other values or guidelines. 
+The message the mode appends:
 
-Shape:
+> You are currently operating in 'Allegro' mode. Speed is important for this task. Try to complete it in the minimum number of tool calls possible without compromising the reliability of your results. Batch tool calls when reasonable, skip optional polish, and keep reasoning, narration, and the final report short. Verify when errors would be costly or hard to notice, but don't report something as verified unless you verified it. Speed doesn't override your other values or guidelines. 
 
-- Server-side, `build_prompt()` gains one conditional suffix; the client
-  toggle is a config value like the voice/image switches.
-- Apply the mode from session start. Toggling it mid-session rewrites
-  the system prompt and invalidates the provider prompt cache from that
-  point once — acceptable for a deliberate mode change, but the cleanest
-  behavior is per-session.
-- Cheap by construction: no new tools, no state, no harness logic — one
-  prompt suffix the model can act on immediately.
+Mechanism as built:
+
+- The composer gains a pill (`queue_music` icon + label, left of the
+  send button) that toggles the mode; the state is remembered in
+  localStorage. The pill collapses to an icon-only circle below 640px.
+- The flag travels with each message (`{type: "message", allegro}`) and
+  the server captures it at enqueue time; the worker applies it when the
+  turn starts, never mid-turn. The pill is disabled while busy, matching
+  the server-side guarantee.
+- `build_prompt(allegro=True)` appends the rule after the base prompt;
+  `AgentSession.set_allegro` rewrites the system message only on an
+  actual change. Cost: one prompt-cache invalidation per real mode
+  change, none for a no-op toggle. No new tools, no harness logic.
+- Toggle feedback follows project conventions: an ascending pentatonic
+  figure on enable, its inversion on disable (Sfx catalog, `ui`
+  category), and the shared `icon-pop` keyframes on the icon.
 
 ## Explicitly out of scope by design
 
