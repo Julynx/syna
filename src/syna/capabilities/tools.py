@@ -341,7 +341,7 @@ def edit_file(file_path: str, operations: list[dict]):
       - `{"delete": {"line_num_or_range": [45, 47]}}`
       - `{"replace_string": {"old_string": "...", "new_string": "..."}}` — replaces the one exact occurrence of old_string; fails unless it matches exactly once. Prefer this for small edits: it cannot hit the wrong line.
 
-    Ranges are inclusive. Every line number in a call refers to the file as it was before that call, so several operations can be combined without recalculating; line numbers count lines exactly like `grep -n`. Afterwards, numbering has shifted: re-read the affected lines before the next edit, which also confirms the edit landed as intended. Write each line with its full indentation. The file's newline style and trailing-newline presence are preserved.
+    Ranges are inclusive. Every line number in a call refers to the file as it was before that call, so several operations can be combined without recalculating; line numbers count lines exactly like `grep -n`. Afterwards, numbering has shifted: re-read the affected lines before the next edit, which also confirms the edit landed as intended. Write each line with its full indentation.
 
     Example: edit_file(file_path="/workspace/app/config.py", operations=[{"replace_string": {"old_string": "TIMEOUT_SECONDS = 10", "new_string": "TIMEOUT_SECONDS = 30"}}])
     """
