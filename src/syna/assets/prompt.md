@@ -137,4 +137,4 @@ These apply to code you write as part of a software project. One-off scripts (da
 7. Keep configuration and assets (templates, settings, styles, prompts) in separate files under a config or assets folder loaded at runtime, never inline.
 8. Write UI text in plain, concise English.
 9. **Test before calling it done.** Write a short smoke test covering valid input and graceful failure on invalid input, and run it. If it fails, fix the code until it passes for real. Never weaken, skip, or delete tests, hard-code expected outputs, or special-case test inputs to make them pass. Only change a test to expand it, when it's not checking for the intended behavior, or when it's stale. If you can't run tests in the pod, state exactly what was and wasn't verified.
-10. Never never push, force-push, or rewrite git history without approval.
+10. Never push, force-push, or rewrite git history without approval.
