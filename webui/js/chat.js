@@ -2015,7 +2015,7 @@ async function openSettingsModal() {
   cat6Body.className = "settings-group";
   cat6Body.style.marginTop = "14px";
 
-  const allegroNote = document.createElement("p");
+  const allegroNote = document.createElement("div");
   allegroNote.className = "settings-note";
   const numberOf = (value, fallback) => {
     const parsed = Number(value);
@@ -2025,15 +2025,31 @@ async function openSettingsModal() {
   const command = numberOf(config.command_timeout_s, defaults.command_timeout_s);
   const toolCall = numberOf(config.tool_call_timeout_s, defaults.tool_call_timeout_s);
   const half = (value) => Math.max(1, Math.round(value / 2));
-  allegroNote.innerHTML =
-    "<b>Allegro mode.</b> When the pill in the composer is on, Syna runs" +
-    " a faster, lighter profile: thinking effort is capped at low, the" +
-    " pause before each model request is 1s instead of 2s, and these" +
-    ` values are halved: Max Steps Per Turn (${steps} → ${half(steps)}), ` +
-    `Command Timeout (${command} → ${half(command)}s), ` +
-    `Tool Call Timeout (${toolCall} → ${half(toolCall)}s). ` +
-    "Faster user settings always win, and nothing here is editable —" +
-    " toggle Allegro from the composer.";
+
+  const lead = document.createElement("p");
+  lead.innerHTML =
+    "<b>Allegro mode</b> makes Syna work faster: less reasoning," +
+    " shorter waits, and a tighter step budget.";
+  allegroNote.appendChild(lead);
+
+  const rows = [
+    ["Thinking effort", "capped at low"],
+    ["Request pause", "2 s → 1 s"],
+    ["Steps per turn", `${steps} → ${half(steps)}`],
+    ["Command timeout", `${command} s → ${half(command)} s`],
+    ["Tool call timeout", `${toolCall} s → ${half(toolCall)} s`],
+  ];
+  const list = document.createElement("ul");
+  for (const [label, value] of rows) {
+    const item = document.createElement("li");
+    const term = document.createElement("span");
+    term.className = "settings-note-term";
+    term.textContent = label;
+    item.appendChild(term);
+    item.appendChild(document.createTextNode(value));
+    list.appendChild(item);
+  }
+  allegroNote.appendChild(list);
   cat6Body.appendChild(allegroNote);
   cat6.appendChild(cat6Body);
   body.appendChild(cat6);

@@ -346,6 +346,25 @@ footer {
   user-select: none;
 }
 
+.settings-note p {
+  margin: 0 0 8px;
+}
+
+.settings-note ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-note-term {
+  display: inline-block;
+  min-width: 132px;
+  color: var(--text);
+}
+
 .settings-note b {
   color: var(--text);
   font-weight: 600;
