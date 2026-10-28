@@ -1,0 +1,50 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  offline-suites:
+    runs-on: ubuntu-latest
+    env:
+      SYNA_HOME: ${{ github.workspace }}/.syna-home
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Seed the data home
+        run: |
+          mkdir -p "$SYNA_HOME"
+          cp src/syna/assets/config.json "$SYNA_HOME/config.json"
+          echo "OPENROUTER_API_KEY=sk-ci-dummy" > "$SYNA_HOME/.env"
+
+      - name: Run the offline test suites
+        run: |
+          skipped=" test_browser_health test_browser_read_tables test_browser_screenshot"
+          skipped="$skipped test_live_search_diagnose test_live_text_to_image"
+          skipped="$skipped test_live_truthfulness test_live_web_search"
+          failed=0
+          for suite in tests/test_*.py; do
+            name="$(basename "$suite" .py)"
+            case "$skipped" in
+              *" $name "*) echo "SKIP $name (needs a real browser or API)"; continue ;;
+            esac
+            echo "RUN $name"
+            python "$suite" || failed=1
+          done
+          exit $failed
+
+      - name: Ruff format check
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: format --check .

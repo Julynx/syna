@@ -25,6 +25,7 @@ DEFAULT_TTS_VOICE = "Kore"
 DEFAULT_IMAGE_MODEL = "google/gemini-3.1-flash-image"
 
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 
 def normalize_base_url(base_url: str | None) -> str:
@@ -44,6 +45,27 @@ def is_openrouter_base_url(base_url: str | None) -> bool:
     so OpenRouter-only request fields are gated on this check.
     """
     return normalize_base_url(base_url) == DEFAULT_OPENROUTER_BASE_URL
+
+
+def sticky_routing_fields(session_id: str | None) -> dict:
+    """Return the request-body fields that pin provider cache routing.
+
+    OpenRouter accepts a top-level `session_id` as its sticky-routing
+    key, keeping every request of a conversation on the provider that
+    holds the warm prompt cache. OpenAI's documented equivalent is
+    `prompt_cache_key`. Strict OpenAI-compatible endpoints may reject
+    unknown top-level fields with a 400 (the same failure mode the
+    ungated `reasoning` object had), so other custom BASE_URLs get
+    neither field and rely on the providers' automatic prefix caching.
+    """
+    if not session_id:
+        return {}
+    base_url = normalize_base_url(get_env().get("BASE_URL"))
+    if base_url == DEFAULT_OPENROUTER_BASE_URL:
+        return {"session_id": session_id}
+    if base_url == DEFAULT_OPENAI_BASE_URL:
+        return {"prompt_cache_key": session_id}
+    return {}
 
 
 # Feature toggles edited in the settings modal. Voice stays available with
@@ -68,13 +90,38 @@ def get_env() -> dict[str, str]:
 def load_config() -> dict[str, Any]:
     """Load configuration values from config.json in the Syna data home.
 
-    The data home is seeded with the bundled defaults on first run. The
-    configuration is cached after the first read; treat the returned dict
-    as read-only and expect a restart to pick up edits.
+    The data home is seeded with the bundled defaults on first run. To
+    keep existing installs working across upgrades, the bundled defaults
+    are merged under the user's file: keys the user's file lacks appear
+    with their default values (an old config.json predating a new
+    required key no longer crashes callers that index directly), and
+    every user-set value wins. The configuration is cached after the
+    first read; treat the returned dict as read-only and expect a
+    restart to pick up edits.
     """
     config_path = get_data_home() / "config.json"
-    with open(config_path, "r", encoding="utf-8") as config_file:
-        return json.load(config_file)
+    with open(config_path, encoding="utf-8") as config_file:
+        user_config = json.load(config_file)
+    return _merge_values(_bundled_defaults(), user_config)
+
+
+def _bundled_defaults() -> dict[str, Any]:
+    """The shipped config.json defaults; empty when they cannot be read."""
+    try:
+        with open(asset_path("config.json"), encoding="utf-8") as defaults_file:
+            return json.load(defaults_file)
+    except (OSError, ValueError):
+        return {}
+
+
+def _merge_values(defaults: Any, override: Any) -> Any:
+    """Merge two config values recursively; the override wins."""
+    if isinstance(defaults, dict) and isinstance(override, dict):
+        merged = dict(defaults)
+        for key, value in override.items():
+            merged[key] = _merge_values(merged.get(key), value)
+        return merged
+    return override
 
 
 def save_config(updates: dict[str, Any]) -> Path:

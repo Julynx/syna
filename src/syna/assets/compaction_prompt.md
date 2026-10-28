@@ -56,6 +56,7 @@ messages:
   what the transcript supports.
 - Present tense, third person, written so the agent can read it as an
   accurate account of its own conversation so far.
+- Write in the same language as the user messages in the conversation.
 - Information-dense: short labeled sections or bullet lists where they help
   scanning, never at the cost of losing a preserved detail.
 - As brief as clarity allows.

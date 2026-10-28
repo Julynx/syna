@@ -376,9 +376,24 @@ async def _janitor_loop():
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+def _server_port() -> int:
+    """The loopback port the web UI is served on."""
+    return int(config.get("server_port", 8000))
+
+
+# Cross-origin access is pinned to this server's own UI origin: a page
+# served from any other local port is a different application and must
+# not be able to fetch the HTML shell (which embeds the auth token) or
+# open the WebSocket.
+TRUSTED_ORIGINS = [
+    f"http://{host}:{_server_port()}" for host in ("127.0.0.1", "localhost", "[::1]")
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$",
+    allow_origins=TRUSTED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -417,7 +432,6 @@ def _loopback_binding() -> bool:
         return False
 
 
-LOCAL_ORIGIN_PATTERN = re.compile(r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$")
 HOST_HEADER_PATTERN = re.compile(r"^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$")
 
 
@@ -433,10 +447,15 @@ def _host_header_allowed(host_header: str) -> bool:
 
 
 def _is_local_origin(origin: str) -> bool:
-    """Whether an Origin header comes from a local loopback interface."""
+    """Whether an Origin header names this server's own UI origin.
+
+    Pinned to the configured port, unlike the old any-loopback-port
+    regex: another local port hosts some other application, whose pages
+    must not read the token-embedding HTML shell or reach the WebSocket.
+    """
     if not origin:
         return True
-    return bool(LOCAL_ORIGIN_PATTERN.match(origin.lower()))
+    return origin.lower() in TRUSTED_ORIGINS
 
 
 @app.middleware("http")
@@ -1147,7 +1166,7 @@ def main():
     """Start the Syna web server."""
     global AUTH_TOKEN
     AUTH_TOKEN = secrets.token_urlsafe(32)
-    port = int(config.get("server_port", 8000))
+    port = _server_port()
     host = str(config.get("server_host", "127.0.0.1"))
     url = f"http://127.0.0.1:{port}/"
 

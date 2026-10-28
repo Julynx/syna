@@ -333,16 +333,17 @@ def read_file(file_path: str, start: int = 1, limit: int = 200):
 
 def edit_file(file_path: str, operations: list[dict]):
     """
-    Edit a text file by line number. Prefer this to `sed` or rewriting the whole file.
+    Edit a text file by line number or by exact string match. Prefer this to `sed` or rewriting the whole file.
     - `file_path` (string, required): absolute path.
     - `operations` (list, required): one or more of
       - `{"insert_above": {"line_num": 3, "insert_lines": ["..."]}}`
       - `{"replace": {"line_num_or_range": [45, 47], "replace_with_lines": ["..."]}}`
       - `{"delete": {"line_num_or_range": [45, 47]}}`
+      - `{"replace_string": {"old_string": "...", "new_string": "..."}}` — replaces the one exact occurrence of old_string; fails unless it matches exactly once. Prefer this for small edits: it cannot hit the wrong line.
 
-    Ranges are inclusive. Every line number in a call refers to the file as it was before that call, so several operations can be combined without recalculating. Afterwards, numbering has shifted: re-read the affected lines before the next edit, which also confirms the edit landed as intended. Write each line with its full indentation.
+    Ranges are inclusive. Every line number in a call refers to the file as it was before that call, so several operations can be combined without recalculating; line numbers count lines exactly like `grep -n`. Afterwards, numbering has shifted: re-read the affected lines before the next edit, which also confirms the edit landed as intended. Write each line with its full indentation. The file's newline style and trailing-newline presence are preserved.
 
-    Example: edit_file(file_path="/workspace/app/config.py", operations=[{"replace": {"line_num_or_range": [12, 13], "replace_with_lines": ["TIMEOUT_SECONDS = 30", "MAX_RETRIES = 3"]}}])
+    Example: edit_file(file_path="/workspace/app/config.py", operations=[{"replace_string": {"old_string": "TIMEOUT_SECONDS = 10", "new_string": "TIMEOUT_SECONDS = 30"}}])
     """
     with tempfile.TemporaryDirectory(prefix="syna-") as temp_dir:
         temp_path = Path(temp_dir)

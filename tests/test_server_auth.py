@@ -83,33 +83,81 @@ def test_shell_and_vendor_stay_open(monkeypatch):
     assert vendor.status_code == 404
 
 
+def _assert_ws_denied(client, path, headers=None, why=""):
+    """Connect expecting the handshake to be denied (HTTP 403 / close 1008)."""
+    try:
+        with client.websocket_connect(path, headers=headers or {}):
+            pass
+    except Exception:
+        return
+    raise AssertionError(why or "the WebSocket handshake must have been denied")
+
+
 def test_ws_rejects_foreign_origin(monkeypatch):
+    monkeypatch.setattr(server, "AUTH_TOKEN", "secret123")
+    client = TestClient(server.app)
+    _assert_ws_denied(
+        client,
+        "/ws/authtest?token=secret123",
+        headers={"Origin": "http://rebind.evil.example"},
+        why="a foreign Origin must not open a WebSocket",
+    )
+
+
+def test_ws_rejects_other_local_ports(monkeypatch):
+    """Another loopback port is a different application, not this UI.
+
+    The old any-loopback-port regex let a page on localhost:9999 (a dev
+    server, an XSS'd local app) pass the origin check.
+    """
+    monkeypatch.setattr(server, "AUTH_TOKEN", "secret123")
+    client = TestClient(server.app)
+    _assert_ws_denied(
+        client,
+        "/ws/authtest?token=secret123",
+        headers={"Origin": "http://localhost:9999"},
+        why="another local port's origin must not open a WebSocket",
+    )
+
+
+def test_ws_accepts_the_pinned_origin(monkeypatch):
+    """The server's own UI origin still opens WebSockets."""
     monkeypatch.setattr(server, "AUTH_TOKEN", "secret123")
     client = TestClient(server.app)
 
     try:
         with client.websocket_connect(
             "/ws/authtest?token=secret123",
-            headers={"Origin": "http://rebind.evil.example"},
+            headers={"Origin": server.TRUSTED_ORIGINS[0]},
         ):
             pass
-    except Exception:
-        pass
-    else:
-        raise AssertionError("a foreign Origin must not open a WebSocket")
+    except Exception as exc:
+        raise AssertionError(f"the server's own origin must open a WebSocket: {exc}")
+
+
+def test_cors_headers_are_pinned_to_the_own_origin():
+    """Cross-origin reads of the token-embedding shell are limited to the UI."""
+    client = TestClient(server.app)
+    pinned = server.TRUSTED_ORIGINS[0]
+
+    allowed = client.get("/", headers={"Origin": pinned})
+    assert allowed.headers.get("access-control-allow-origin") == pinned, (
+        "the server's own UI origin must be able to read the HTML shell"
+    )
+
+    foreign = client.get("/", headers={"Origin": "http://localhost:9999"})
+    assert "access-control-allow-origin" not in foreign.headers, (
+        "another local port must not be able to read the HTML shell,"
+        " which embeds the auth token"
+    )
 
 
 def test_ws_rejects_missing_token(monkeypatch):
     monkeypatch.setattr(server, "AUTH_TOKEN", "secret123")
     client = TestClient(server.app)
-
-    try:
-        with client.websocket_connect("/ws/authtest"):
-            pass
-    except Exception:
-        pass
-    else:
-        raise AssertionError("a missing token must not open a WebSocket")
+    _assert_ws_denied(
+        client, "/ws/authtest", why="a missing token must not open a WebSocket"
+    )
 
 
 def main():
@@ -123,6 +171,9 @@ def main():
             test_localhost_host_header_is_accepted,
             test_shell_and_vendor_stay_open,
             test_ws_rejects_foreign_origin,
+            test_ws_rejects_other_local_ports,
+            test_ws_accepts_the_pinned_origin,
+            test_cors_headers_are_pinned_to_the_own_origin,
             test_ws_rejects_missing_token,
         ]
     )

@@ -1,5 +1,48 @@
 # Syna — Technical Description
 
+- [Syna — Technical Description](#syna--technical-description)
+  - [Overview](#overview)
+  - [Running](#running)
+  - [Filesystem layout](#filesystem-layout)
+  - [Dependencies](#dependencies)
+  - [Configuration](#configuration)
+  - [Web UI build system](#web-ui-build-system)
+  - [Landing page](#landing-page)
+  - [File structure and module responsibilities](#file-structure-and-module-responsibilities)
+    - [`src/syna/__init__.py`](#srcsyna__init__py)
+    - [`src/syna/conversation/ask.py`](#srcsynaconversationaskpy)
+    - [`src/syna/capabilities/browser.py`](#srcsynacapabilitiesbrowserpy)
+    - [`src/syna/capabilities/net_guard.py`](#srcsynacapabilitiesnet_guardpy)
+    - [`tests/test_browser_health.py`](#teststest_browser_healthpy)
+    - [`src/syna/protocol/channel.py`](#srcsynaprotocolchannelpy)
+    - [`src/syna/ask_utils.py`](#srcsynaask_utilspy)
+    - [`src/syna/conversation/commands.py`](#srcsynaconversationcommandspy)
+    - [`src/syna/protocol/compaction.py`](#srcsynaprotocolcompactionpy)
+    - [`src/syna/protocol/context.py`](#srcsynaprotocolcontextpy)
+    - [`src/syna/config.py`](#srcsynaconfigpy)
+    - [`src/syna/capabilities/editor.py`](#srcsynacapabilitieseditorpy)
+    - [`src/syna/capabilities/image_generation.py`](#srcsynacapabilitiesimage_generationpy)
+    - [`src/syna/protocol/output.py`](#srcsynaprotocoloutputpy)
+    - [`src/syna/capabilities/imaging.py`](#srcsynacapabilitiesimagingpy)
+    - [`src/syna/protocol/inspect_module.py`](#srcsynaprotocolinspect_modulepy)
+    - [`src/syna/protocol/tool_schemas.py`](#srcsynaprotocoltool_schemaspy)
+    - [`src/syna/interaction.py`](#srcsynainteractionpy)
+    - [`src/syna/paths.py`](#srcsynapathspy)
+    - [`src/syna/setup.py`](#srcsynasetuppy)
+    - [`src/syna/protocol/parse.py`](#srcsynaprotocolparsepy)
+    - [`src/syna/server.py`](#srcsynaserverpy)
+    - [`src/syna/capabilities/speech.py`](#srcsynacapabilitiesspeechpy)
+    - [`src/syna/conversation/session.py`](#srcsynaconversationsessionpy)
+    - [`src/syna/state.py`](#srcsynastatepy)
+    - [`src/syna/capabilities/tools.py`](#srcsynacapabilitiestoolspy)
+    - [`src/syna/protocol/user_messages.py`](#srcsynaprotocoluser_messagespy)
+    - [`src/syna/capabilities/verification.py`](#srcsynacapabilitiesverificationpy)
+    - [`src/syna/capabilities/vision.py`](#srcsynacapabilitiesvisionpy)
+    - [`src/syna/capabilities/web_search.py`](#srcsynacapabilitiesweb_searchpy)
+  - [Prompt caching and prefix stability](#prompt-caching-and-prefix-stability)
+  - [Concurrency model](#concurrency-model)
+  - [Tests](#tests)
+
 ## Overview
 
 Syna is a terminal and web AI agent that answers user requests by driving an
@@ -38,6 +81,10 @@ create files with full root access.
   the UIs with `python scripts/build.py` — `src/syna/assets/chat.html` and
   `src/syna/assets/setup.html` are generated files and
   must not be edited directly.
+- CI (`.github/workflows/tests.yml`): every push and pull request runs the
+  offline test suites on Python 3.12 in an isolated `SYNA_HOME` seeded with
+  the bundled `config.json` and a dummy API key, skipping the browser and
+  live-API suites, then checks `ruff format`.
 - Install from PyPI with `uv tool install syna-agent` (or
   `pip install syna-agent`); for development, `uv sync`; Python >= 3.12
   required.
@@ -68,56 +115,56 @@ workflows keep working unchanged.
 
 `.env` holds the secrets and model selection:
 
-| Key | Purpose |
-| --- | --- |
-| `OPENROUTER_API_KEY` | API key for the configured endpoint (any OpenAI-compatible provider's key goes here; the variable name predates multi-endpoint support). |
-| `MODEL` | Main agent model (default `~z-ai/glm-flash-latest` when unset). |
-| `THINKING_EFFORT` | Reasoning effort for the main agent requests. Unset, the default `medium` applies on OpenRouter; on other endpoints unset omits the field entirely (the OpenRouter-style `reasoning` object is forwarded verbatim to custom `BASE_URL`s and strict OpenAI-compatible endpoints reject it as an unknown parameter). An explicit value is always sent to any endpoint. |
-| `BASE_URL` | OpenAI-like endpoint URL (default `https://openrouter.ai/api/v1`; also OpenAI, Gemini's compatibility layer, a local Ollama, or any compatible endpoint). Image generation and the speech tools are OpenRouter-only and report themselves as not configured elsewhere. |
-| `STT_MODEL` | Voice transcription model (default `google/chirp-3` when unset; gated by the `voice_enabled` toggle). |
-| `TTS_MODEL` | Speech synthesis model (default `google/gemini-3.8-flash-lite-tts` when unset; gated by the `voice_enabled` toggle). |
-| `TTS_VOICE` | Synthesis voice (default `Kore`). |
-| `TTS_RESPONSE_FORMAT` | Speech endpoint response format (default `pcm`; raw samples are wrapped in a WAV container server-side). Some models, e.g. OpenAI TTS, also accept `mp3`. |
-| `IMAGE_MODEL` | Image generation model for the `text_to_image` tool (default `google/gemini-3.1-flash-image` when unset; the tool only runs when the `image_generation_enabled` toggle is on). |
-| `VERIFIER_MODEL` | Reviewer model for the `review_work` tool (defaults to `MODEL`, then the default model, when unset). |
-| `VERIFIER_MODEL_EFFORT` | Reasoning effort for the reviewer request (default `high` on OpenRouter when unset; on other endpoints unset omits the field, same gate as `THINKING_EFFORT`; an explicit value is always sent). |
-| `SPEECH_LANGUAGE` | Spoken language hint for STT (default `en`). |
+| Key                     | Purpose                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OPENROUTER_API_KEY`    | API key for the configured endpoint (any OpenAI-compatible provider's key goes here; the variable name predates multi-endpoint support).                                                                                                                                                                                                                             |
+| `MODEL`                 | Main agent model (default `~z-ai/glm-flash-latest` when unset).                                                                                                                                                                                                                                                                                                      |
+| `THINKING_EFFORT`       | Reasoning effort for the main agent requests. Unset, the default `medium` applies on OpenRouter; on other endpoints unset omits the field entirely (the OpenRouter-style `reasoning` object is forwarded verbatim to custom `BASE_URL`s and strict OpenAI-compatible endpoints reject it as an unknown parameter). An explicit value is always sent to any endpoint. |
+| `BASE_URL`              | OpenAI-like endpoint URL (default `https://openrouter.ai/api/v1`; also OpenAI, Gemini's compatibility layer, a local Ollama, or any compatible endpoint). Image generation and the speech tools are OpenRouter-only and report themselves as not configured elsewhere.                                                                                               |
+| `STT_MODEL`             | Voice transcription model (default `google/chirp-3` when unset; gated by the `voice_enabled` toggle).                                                                                                                                                                                                                                                                |
+| `TTS_MODEL`             | Speech synthesis model (default `google/gemini-3.8-flash-lite-tts` when unset; gated by the `voice_enabled` toggle).                                                                                                                                                                                                                                                 |
+| `TTS_VOICE`             | Synthesis voice (default `Kore`).                                                                                                                                                                                                                                                                                                                                    |
+| `TTS_RESPONSE_FORMAT`   | Speech endpoint response format (default `pcm`; raw samples are wrapped in a WAV container server-side). Some models, e.g. OpenAI TTS, also accept `mp3`.                                                                                                                                                                                                            |
+| `IMAGE_MODEL`           | Image generation model for the `text_to_image` tool (default `google/gemini-3.1-flash-image` when unset; the tool only runs when the `image_generation_enabled` toggle is on).                                                                                                                                                                                       |
+| `VERIFIER_MODEL`        | Reviewer model for the `review_work` tool (defaults to `MODEL`, then the default model, when unset).                                                                                                                                                                                                                                                                 |
+| `VERIFIER_MODEL_EFFORT` | Reasoning effort for the reviewer request (default `high` on OpenRouter when unset; on other endpoints unset omits the field, same gate as `THINKING_EFFORT`; an explicit value is always sent).                                                                                                                                                                     |
+| `SPEECH_LANGUAGE`       | Spoken language hint for STT (default `en`).                                                                                                                                                                                                                                                                                                                         |
 
 `assets/config.json` holds all runtime settings:
 
-| Key | Purpose |
-| --- | --- |
-| `timeout_ms` | Model request timeout. |
-| `retry` | Backoff strategy for model requests. |
-| `max_command_output_chars` | Character limit at which tool output is cut to its beginning and end (the system prompt's `{{OUTPUT_LIMIT}}`). The full output always remains available at the `saved_to` path. |
-| `tool_call_timeout_s` | Per-tool-call timeout (default 60). A call that exceeds it is detached, not killed; see `parse.py`. |
-| `command_timeout_s` | Per-`execute_command` timeout (default 50, kept below `tool_call_timeout_s`). The command is wrapped in `timeout -k 5` inside the pod so hangs are killed instead of detaching; long-running work belongs in background jobs (`nohup ... &`), as the system prompt documents. |
-| `pod_memory_mb` | Pod memory ceiling in MB (default 8192). Protects the host from runaway processes inside the pod; does not restrict what the model may do inside it. |
-| `pod_pids_limit` | Pod process-count ceiling (default 512), guarding against fork bombs. |
-| `max_steps_per_turn` | Model requests allowed per turn (default 100). Before the cap, the model receives a wrap-up warning; past it, the turn ends with one final request reserved for a `respond` status report. |
-| `step_warning_remaining` | Remaining-steps count that triggers the wrap-up warning (default 20). |
-| `context_budget_tokens` | Estimated-token budget for the whole conversation (default 100000). When exceeded, old tool outputs are elided first and summarization runs only if the budget is still exceeded. |
-| `elide_keep_recent_messages` | History messages kept untouched by output elision (default 12). |
-| `elide_interval_messages` | History size at which lossless output elision runs on its own, instead of waiting for the token budget (default 30). Keeps prompts small through long runs; elided outputs remain readable in the pod at their `saved_to` paths. |
-| `elide_every_requests` | Requests between batched elision passes once the message interval is reached (default 10). Batching keeps the conversation prefix stable between passes so the provider prompt cache stays warm; the token-budget path always elides immediately. |
-| `elide_user_message_head_chars` | How much of an archived large user message stays in history after elision (default 300); the rest is replaced by a pointer to the verbatim archive file. |
-| `user_message_archive_min_chars` | User message length at which the message is archived verbatim into the pod and annotated with its path (default 2000). |
-| `user_messages_dest` | Pod directory holding the archived user messages (default `/user_messages`). |
-| `verify_log_tail_chars` | How many characters of the serialized conversation log the `review_work` reviewer receives (default 128000). |
-| `max_history_messages` | History length that triggers compaction as a safety net for degenerate all-small-message histories; the token budget is the primary trigger. |
-| `enable_compaction` | Master switch for history compaction. |
-| `max_visible_tool_calls` | UI limit on rendered tool rows. |
-| `voice_enabled` | Voice category toggle (default `true`): off hides the mic, disables the top-bar voice icon, and makes the speech tools report themselves as unavailable. |
-| `image_generation_enabled` | Image generation toggle (default `false`): off makes `text_to_image` report itself as unavailable; on, the model may generate images. |
-| `log_file` | Log file name (written to the project root). |
-| `session_dump_file` | Per-session message dump file name template. |
-| `server_host`, `server_port` | Web server binding. |
-| `session_idle_timeout_min` | Idle web sessions are reaped after this. |
-| `upload_dest` | Default upload destination inside the pod. |
-| `voice.silence_timeout_ms` | Mic silence that ends a voice recording. |
-| `voice.silence_threshold_dbfs` | Loudness level treated as silence. |
-| `voice.max_recording_ms` | Hard cap on one voice recording. |
-| `voice.voice_mode_on` | Initial voice-mode state pushed to the client on every fresh session (page load, new chat, server restart). Accepts booleans and "true"/"false" strings; voice never persists across sessions. |
+| Key                              | Purpose                                                                                                                                                                                                                                                                       |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `timeout_ms`                     | Model request timeout.                                                                                                                                                                                                                                                        |
+| `retry`                          | Backoff strategy for model requests.                                                                                                                                                                                                                                          |
+| `max_command_output_chars`       | Character limit at which tool output is cut to its beginning and end (the system prompt's `{{OUTPUT_LIMIT}}`). The full output always remains available at the `saved_to` path.                                                                                               |
+| `tool_call_timeout_s`            | Per-tool-call timeout (default 60). A call that exceeds it is detached, not killed; see `parse.py`.                                                                                                                                                                           |
+| `command_timeout_s`              | Per-`execute_command` timeout (default 50, kept below `tool_call_timeout_s`). The command is wrapped in `timeout -k 5` inside the pod so hangs are killed instead of detaching; long-running work belongs in background jobs (`nohup ... &`), as the system prompt documents. |
+| `pod_memory_mb`                  | Pod memory ceiling in MB (default 8192). Protects the host from runaway processes inside the pod; does not restrict what the model may do inside it.                                                                                                                          |
+| `pod_pids_limit`                 | Pod process-count ceiling (default 512), guarding against fork bombs.                                                                                                                                                                                                         |
+| `max_steps_per_turn`             | Model requests allowed per turn (default 100). Before the cap, the model receives a wrap-up warning; past it, the turn ends with one final request reserved for a `respond` status report.                                                                                    |
+| `step_warning_remaining`         | Remaining-steps count that triggers the wrap-up warning (default 20).                                                                                                                                                                                                         |
+| `context_budget_tokens`          | Estimated-token budget for the whole conversation (default 100000). When exceeded, old tool outputs are elided first and summarization runs only if the budget is still exceeded.                                                                                             |
+| `elide_keep_recent_messages`     | History messages kept untouched by output elision (default 12).                                                                                                                                                                                                               |
+| `elide_interval_messages`        | History size at which lossless output elision runs on its own, instead of waiting for the token budget (default 30). Keeps prompts small through long runs; elided outputs remain readable in the pod at their `saved_to` paths.                                              |
+| `elide_every_requests`           | Requests between batched elision passes once the message interval is reached (default 10). Batching keeps the conversation prefix stable between passes so the provider prompt cache stays warm; the token-budget path always elides immediately.                             |
+| `elide_user_message_head_chars`  | How much of an archived large user message stays in history after elision (default 300); the rest is replaced by a pointer to the verbatim archive file.                                                                                                                      |
+| `user_message_archive_min_chars` | User message length at which the message is archived verbatim into the pod and annotated with its path (default 2000).                                                                                                                                                        |
+| `user_messages_dest`             | Pod directory holding the archived user messages (default `/user_messages`).                                                                                                                                                                                                  |
+| `verify_log_tail_chars`          | How many characters of the serialized conversation log the `review_work` reviewer receives (default 128000).                                                                                                                                                                  |
+| `max_history_messages`           | History length that triggers compaction as a safety net for degenerate all-small-message histories; the token budget is the primary trigger.                                                                                                                                  |
+| `enable_compaction`              | Master switch for history compaction.                                                                                                                                                                                                                                         |
+| `max_visible_tool_calls`         | UI limit on rendered tool rows.                                                                                                                                                                                                                                               |
+| `voice_enabled`                  | Voice category toggle (default `true`): off hides the mic, disables the top-bar voice icon, and makes the speech tools report themselves as unavailable.                                                                                                                      |
+| `image_generation_enabled`       | Image generation toggle (default `false`): off makes `text_to_image` report itself as unavailable; on, the model may generate images.                                                                                                                                         |
+| `log_file`                       | Log file name (written to the project root).                                                                                                                                                                                                                                  |
+| `session_dump_file`              | Per-session message dump file name template.                                                                                                                                                                                                                                  |
+| `server_host`, `server_port`     | Web server binding.                                                                                                                                                                                                                                                           |
+| `session_idle_timeout_min`       | Idle web sessions are reaped after this.                                                                                                                                                                                                                                      |
+| `upload_dest`                    | Default upload destination inside the pod.                                                                                                                                                                                                                                    |
+| `voice.silence_timeout_ms`       | Mic silence that ends a voice recording.                                                                                                                                                                                                                                      |
+| `voice.silence_threshold_dbfs`   | Loudness level treated as silence.                                                                                                                                                                                                                                            |
+| `voice.max_recording_ms`         | Hard cap on one voice recording.                                                                                                                                                                                                                                              |
+| `voice.voice_mode_on`            | Initial voice-mode state pushed to the client on every fresh session (page load, new chat, server restart). Accepts booleans and "true"/"false" strings; voice never persists across sessions.                                                                                |
 
 The data-home `config.json` is seeded from the bundled defaults on first run
 and is never re-merged with them afterwards. Upgrading the package therefore
@@ -395,15 +442,20 @@ embedded in a result block, so web content cannot forge the framing.
 ### `src/syna/ask_utils.py`
 Shared helpers: `show_welcome()` banner and `ask_question(client, model,
 messages, delay, effort, dump_path, response_format, accept_reply,
-session_id, tools, tool_choice)` — sends model requests with configurable delay,
+session_id, tools, tool_choice, usage_callback)` — sends model requests with configurable delay,
 request dumps, and native `tools` and `tool_choice` parameters. Every request
 carries `max_tokens` from the `max_output_tokens` config value (default
 16384), so reasoning models cannot starve the visible reply of the
 provider's default completion budget; `finish_reason` and the
 prompt/completion/reasoning/cached token split are logged for every
-response. When a `session_id` is given it is sent with every request so
-OpenRouter pins provider sticky routing and the provider-side prompt cache
-stays warm for the whole conversation. Accepts an optional `accept_reply`
+response. When a `session_id` is given, the request-body routing fields
+are chosen per endpoint family by `sticky_routing_fields` (session_id on
+OpenRouter, prompt_cache_key on OpenAI, nothing on other custom
+endpoints), so provider-side prompt caches stay warm where the endpoint
+supports it and strict endpoints never see unknown top-level fields. An
+optional `usage_callback` receives the (prompt_tokens, cached_tokens)
+pair of every response, including retried attempts, for session-level
+accounting. Accepts an optional `accept_reply`
 validator that raises `ReplyRejected` on channel impersonation in content or
 tool call arguments. Transient empty responses are retried up to
 `EMPTY_RESPONSE_MAX_ATTEMPTS` times.
@@ -429,8 +481,13 @@ repeated compactions merge rather than duplicate.
 
 ### `src/syna/protocol/context.py`
 Token estimation and elision for context management:
-`estimate_tokens` / `estimate_history_tokens` (characters/4 heuristic, no
-tokenizer dependency), `elide_tool_outputs` — replaces old result
+`estimate_tokens` / `estimate_history_tokens` — a script-aware heuristic
+(about 1.5 characters per token for CJK scripts and fullwidth forms, 4
+for everything else; measured against the o200k tokenizer it tracks real
+counts within about 6% on Chinese, Japanese, and Korean samples, where a
+single global ratio would underestimate CJK-heavy text by roughly 2.5x;
+deliberately no tokenizer dependency),
+`elide_tool_outputs` — replaces old result
 outputs that carry a `saved_to` path with a one-line pointer to the pod
 file, leaving the system message, the most recent messages, and anything
 unrecoverable untouched — and `elide_archived_user_messages`, which
@@ -440,20 +497,38 @@ a head excerpt of `elide_user_message_head_chars` characters plus a
 pointer to the verbatim archive file. Both passes are idempotent.
 
 ### `src/syna/config.py`
-Configuration and logging: `load_config()` (reads `assets/config.json`),
-`get_logger()` (file logger), `get_project_root()`, and loaders for the
+Configuration and logging: `load_config()` (reads `assets/config.json` and
+merges the bundled defaults under the user's file recursively — user
+values win, and keys an older install's file lacks appear with their
+default values, so new required keys added in an upgrade no longer crash
+direct-indexing callers), `get_logger()` (file logger),
+`get_project_root()`, `normalize_base_url()`
+and `is_openrouter_base_url()` (endpoint classification),
+`sticky_routing_fields()` (per-endpoint-family cache-routing request
+fields: `session_id` for OpenRouter, `prompt_cache_key` for OpenAI,
+nothing for strict custom endpoints), and loaders for the
 protocol limits the prompt and tools consume: `load_output_limit_chars()`
 (head-and-tail cut), `load_command_timeout_s()` and
 `load_tool_call_timeout_s()`.
 
 ### `src/syna/capabilities/editor.py`
-Read/edit primitives used by the `read_file` and `edit_file` tools. Files are
-read and written as UTF-8 (undecodable bytes replaced), so pod files with
-non-ASCII content survive host-side processing. Edit operations are validated
-before the file is touched: non-dict or multi-key
+Line-based reading and editing for the `read_file` and `edit_file` tools,
+designed to round-trip files byte-exactly. Reads decode with
+`surrogateescape`, so bytes that are not valid UTF-8 survive an
+unrelated edit untouched (the numbered display maps them to U+FFFD;
+`errors="replace"` would have corrupted them permanently on write).
+Content splits on `\n` only — matching `grep -n` line numbering, where
+`splitlines()` also broke on form feeds and U+2028 and sent edits to
+the wrong line — and a file's newline style (CRLF stays CRLF) and
+missing trailing newline are preserved on write. Edit operations are
+validated before the file is touched: non-dict or multi-key
 operations, non-object payloads, missing required keys, unknown operation
-types, out-of-bounds line numbers, invalid ranges and overlapping ranges all
-raise clean `ValueError`s instead of leaking internal TypeErrors.
+types, out-of-bounds line numbers, invalid ranges, overlapping edit
+ranges, and a `replace_string` whose `old_string` matches zero or
+several times all raise clean `ValueError`s instead of leaking internal
+`TypeError`s. `replace_string` swaps the one exact occurrence of a text
+snippet (the safer anchor for small edits in files that may have
+changed) and runs after the batch's line operations.
 
 ### `src/syna/capabilities/image_generation.py`
 Text-to-image generation through OpenRouter's dedicated Image API
@@ -644,7 +719,12 @@ binding (a DNS-rebound page's requests carry the attacker's domain). The
 WebSocket endpoint rejects foreign `Origin` handshakes and requires the
 token in the query (a missing Origin comes from the file:// fallback and
 still needs the token; uvicorn's access log records the query string, so
-the log file contains the token — local, process-private). `/` and
+the log file contains the token — local, process-private). CORS and the
+WebSocket Origin check are pinned to the server's own UI origin
+(`TRUSTED_ORIGINS`, the configured `server_port` on the loopback hosts):
+another local port hosts some other application, whose pages must not
+read the token-embedding HTML shell or open the WebSocket — the old
+any-loopback-port regex allowed exactly that drive-by. `/` and
 `/vendor/*` stay open so the page can bootstrap and learn the token. With
 `AUTH_TOKEN` unset (embedded use, tests) every check is disabled; the
 client sends `withToken()`/`authHeaders()` everywhere regardless. The
@@ -734,6 +814,10 @@ the settings the web client needs for voice mode. Failures raise
   `REPEATED_CALL_LIMIT` (3) times within one turn trigger a one-time
   "change approach" harness notice; the same guard covers identical think
   notes (lone or batched).
+- **Session cache accounting**: every response's (prompt, cached) token
+  pair accumulates through `ask_question`'s `usage_callback`; on `close()`
+  the session logs one aggregate line (requests, prompt tokens, cached
+  tokens, hit ratio) as the health check for prompt-cache behavior.
 - **Lone-think acceptance**: a reply containing only `think` calls is
   accepted rather than bounced — the reply persists in history, pending
   corrective notices from earlier malformed attempts are purged, the no-tool
@@ -946,6 +1030,35 @@ live in `browser.py` (`visit`/`read`): there is exactly one website viewer,
 so the model can move from viewing a page to acting on it in the next tool
 call.
 
+## Prompt caching and prefix stability
+
+Agentic loops resend the full history on every step, so provider-side
+prompt caching is the largest lever on cost and latency. Syna's approach,
+in three parts:
+
+1. **Routing keys per endpoint family** (`config.sticky_routing_fields`):
+   OpenRouter requests carry a top-level `session_id` (the session's
+   client id), which activates provider sticky routing from the first
+   request — every request of a conversation lands on the provider
+   holding the warm cache. OpenAI endpoints carry `prompt_cache_key`,
+   the documented equivalent. Other custom `BASE_URL`s carry neither
+   field: strict OpenAI-compatible servers reject unknown top-level
+   fields with a 400 (the same failure mode the ungated `reasoning`
+   object had), and they still benefit from automatic prefix caching.
+2. **Prefix stability**: provider caches match the request prefix byte
+   for byte, so the common path is strictly append-only — pinned by
+   `test_request_prefix_is_stable_across_steps`. The documented
+   invalidation events are the deliberate ones: batched elision passes
+   (every `elide_every_requests` requests), compaction, and the
+   purge-after-repair splice. The system prompt changes only across
+   days (`{{CURRENT_DATE}}`), never between requests of a session.
+3. **Measurement**: per-response cached-token counts are logged on every
+   request and aggregated into one session-end summary line (requests,
+   prompt tokens, cached tokens, hit ratio). A low ratio on a long
+   session points at something repeatedly invalidating the prefix; that
+   measurement decides whether elision cadence constants ever need
+   tuning.
+
 ## Concurrency model
 
 - CLI: one thread; tools run in short-lived daemon threads created by
@@ -978,10 +1091,14 @@ All suites are plain scripts runnable with the project venv
   The double-escaped-quote repair pass is covered too: a GLM-shaped payload
   repairs and executes, strictly valid payloads are never rewritten, and
   unrepairable errors quote the raw arguments around the failure position.
-- `tests/test_editor.py` — line-editor validation: valid and combined edits
+- `tests/test_editor.py` - line-editor validation: valid and combined edits
   apply; null/non-object payloads, multi-key operations, missing required keys
   and unknown operation types raise clean `ValueError`s and leave the file
-  untouched.
+  untouched; CRLF style and a missing trailing newline are preserved;
+  non-UTF-8 bytes survive unrelated edits byte-exactly; line numbering
+  matches `grep -n` on form-feed content; and `replace_string` swaps the
+  unique match, fails cleanly on zero or several matches without touching
+  the file, and composes with line operations.
 - `tests/test_tool_feedback.py` — session-level loop: history wiping after
   success, abort after 3 consecutive failures, `<tool_results>` marker
   format, parser warnings surfaced as harness notices, think+respond turns,
@@ -1001,13 +1118,21 @@ All suites are plain scripts runnable with the project venv
 - `tests/test_request_payload.py` — verifies the request payload sent to
   OpenRouter carries the system prompt with real quote characters (no
   escaping-layer artifacts) and survives a JSON roundtrip unchanged.
-- `tests/test_context_management.py` — token estimation, elision semantics
+- `tests/test_cache_routing.py` — endpoint-family cache routing:
+  `sticky_routing_fields` per family (session_id / prompt_cache_key /
+  nothing), `ask_question` applying the fields and reporting usage to
+  the callback, and the session-end cache summary line (hit ratio
+  math, silence when no requests were made).
+- `tests/test_context_management.py` — token estimation (bounds, the
+  script-aware CJK ratio, and hard-coded o200k tokenizer bounds),
+  elision semantics
   (saved_to-only, recency window, idempotence), pod `HostConfig` assembly,
   the container self-heal (a stale-endpoint failure resets the client and
   retries once; a non-connection error propagates without a reset),
   a session-level elision-under-budget run, interval elision with per-request
-  batching disabled, and a session-level proof that outputs stay full-text
-  between batched elision passes.
+  batching disabled, a session-level proof that outputs stay full-text
+  between batched elision passes, and the append-only prefix-stability
+  invariant across consecutive requests (frozen request snapshots).
 - `tests/test_eval_scoring.py` — eval outcome scoring: honest failures,
   false successes, false failures, clarifying questions, no-report runs,
   and the headline rate computation.
@@ -1069,8 +1194,10 @@ All suites are plain scripts runnable with the project venv
 - `tests/test_server_auth.py` — the local-origin and token enforcement:
   open API without a token, 401 without / 404 with the token (header and
   query), 403 on foreign Host headers, localhost accepted, shell and
-  vendor staying open with the token injected, and WebSocket handshake
-  rejection for foreign Origins and missing tokens.
+  vendor staying open with the token injected, WebSocket handshake
+  rejection for foreign Origins, other local ports (the pinned-origin
+  rule), and missing tokens, acceptance of the server's own pinned
+  origin, and CORS headers granted only to the UI origin.
 - `tests/test_web_search_pacing.py` — search rate-limit pacing: concurrent
   searches never overlap, the gap survives separate non-overlapping calls,
   and the pacing sleep is randomized within `[delay_s, 1.5*delay_s)` rather

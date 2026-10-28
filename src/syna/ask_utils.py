@@ -7,7 +7,7 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
-from .config import get_logger, load_config
+from .config import get_logger, load_config, sticky_routing_fields
 
 EMPTY_RESPONSE_MAX_ATTEMPTS = 3
 DEFAULT_MAX_OUTPUT_TOKENS = 16384
@@ -92,6 +92,7 @@ def ask_question(
     session_id: str | None = None,
     tools: list[dict] | None = None,
     tool_choice: str | dict | None = None,
+    usage_callback: Callable[[int | None, int | None], None] | None = None,
 ) -> dict:
     """Send conversation messages to the model and record its response.
 
@@ -107,9 +108,14 @@ def ask_question(
             Returning a non-None string rejects the response and raises ReplyRejected.
         session_id: Optional OpenRouter session id. It pins provider sticky
             routing for the conversation so provider-side prompt caches stay
-            warm across requests.
+            warm across requests. The concrete request fields are chosen per
+            endpoint family by `sticky_routing_fields` (session_id on
+            OpenRouter, prompt_cache_key on OpenAI, nothing elsewhere).
         tools: Optional list of tool schema dictionaries.
         tool_choice: Optional tool choice setting ('auto', 'none', or specific tool).
+        usage_callback: Optional callable receiving (prompt_tokens,
+            cached_tokens) of every response, including retried attempts,
+            for session-level usage accounting.
 
     Returns:
         The assistant message dictionary appended to history.
@@ -133,11 +139,21 @@ def ask_question(
                 request["tool_choice"] = tool_choice
             if effort:
                 request["reasoning"] = {"effort": effort}
-            if session_id:
-                request["session_id"] = session_id
+            request.update(sticky_routing_fields(session_id))
             _write_dump(dump_path, request)
             response = client.chat.send(**request)
             _log_response_meta(logger, response, attempt)
+            if usage_callback is not None:
+                usage = getattr(response, "usage", None)
+                if usage is not None:
+                    usage_callback(
+                        getattr(usage, "prompt_tokens", None),
+                        getattr(
+                            getattr(usage, "prompt_tokens_details", None),
+                            "cached_tokens",
+                            None,
+                        ),
+                    )
             message = response.choices[0].message
             if message.refusal:
                 raise RuntimeError(f"Model refused to respond: {message.refusal}")

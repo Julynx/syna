@@ -31,6 +31,50 @@ def test_bundled_config_matches_code_defaults():
     assert bundled["max_history_messages"] == DEFAULT_MAX_HISTORY_MESSAGES == 300
 
 
+def test_load_config_merges_defaults_under_user_values():
+    """Upgrades reach old installs: missing keys get defaults, user wins."""
+    from syna.config import load_config
+
+    home_override = tempfile.mkdtemp(prefix="syna-merge-")
+    bundled = json.loads(read_asset_text("config.json"))
+    user_config = {
+        "model": "user/custom-model",
+        "retry": {"max_elapsed_time_ms": 999},
+    }
+    (Path(home_override) / "config.json").write_text(
+        json.dumps(user_config), encoding="utf-8"
+    )
+    previous = os.environ.get("SYNA_HOME")
+    os.environ["SYNA_HOME"] = home_override
+    paths.get_data_home.cache_clear()
+    load_config.cache_clear()
+    try:
+        merged = load_config()
+        assert merged["model"] == "user/custom-model", "user values must win"
+        assert "retry" in merged, (
+            "an old config.json missing a new required key must still"
+            " receive the bundled default (create_model_client indexes"
+            " config['retry'] directly)"
+        )
+        assert merged["retry"]["max_elapsed_time_ms"] == 999, (
+            "the user's nested override must survive the merge"
+        )
+        assert (
+            merged["retry"]["initial_interval_ms"]
+            == bundled["retry"]["initial_interval_ms"]
+        ), "retry keys the user did not set keep their bundled values"
+        assert merged["max_history_messages"] == bundled["max_history_messages"], (
+            "keys absent from the user's file appear with bundled values"
+        )
+    finally:
+        if previous is None:
+            os.environ.pop("SYNA_HOME", None)
+        else:
+            os.environ["SYNA_HOME"] = previous
+        paths.get_data_home.cache_clear()
+        load_config.cache_clear()
+
+
 def test_data_home_respects_syna_home_override(monkeypatch):
     home_override = tempfile.mkdtemp(prefix="syna-home-")
     paths.get_data_home.cache_clear()
@@ -540,6 +584,7 @@ def main():
         [
             test_bundled_assets_resolve,
             test_bundled_config_matches_code_defaults,
+            test_load_config_merges_defaults_under_user_values,
             test_data_home_respects_syna_home_override,
             test_repo_checkout_uses_repo_root,
             test_endpoint_needs_key_matrix,

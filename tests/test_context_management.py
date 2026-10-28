@@ -1,5 +1,6 @@
 """Tests for token estimation, tool-output elision, and pod resource limits."""
 
+import itertools
 import json
 import sys
 import tempfile
@@ -42,6 +43,38 @@ def test_estimate_tokens_bounds():
     assert estimate_tokens("") >= 1
     assert estimate_tokens("x" * 400) == 100
     assert estimate_tokens("x" * 401) == 101
+
+
+def test_estimate_tokens_is_script_aware():
+    cjk = "这是用于测试估算器的一段中文文本，包含标点和数字12345。"
+    latin = "The quick brown fox jumps over the lazy dog near the riverbank."
+    per_char_cjk = estimate_tokens(cjk) / len(cjk)
+    per_char_latin = estimate_tokens(latin) / len(latin)
+    assert per_char_cjk > per_char_latin * 2.2, (
+        "CJK text must score far more tokens per character than latin text;"
+        " a single global ratio underestimates CJK by ~2.5x"
+    )
+
+
+def test_estimate_tokens_tracks_real_tokenizer_counts():
+    """Bounds measured once against the o200k tokenizer (offline install).
+
+    The estimator must stay within 25% of the real count on these
+    samples; the hard-coded numbers keep the test offline.
+    """
+    samples = [
+        ("The quick brown fox jumps over the lazy dog near the riverbank.", 14),
+        ("这是用于测试估算器的一段中文文本，包含标点和数字12345。", 19),
+        ("これはトークン推定をテストするための日本語のテキストです。", 20),
+        ("이것은 토큰 추정을 테스트하기 위한 한국어 텍스트입니다.", 17),
+        ("Chart 图表 generated for the user, 標題 included.", 13),
+    ]
+    for text, real_tokens in samples:
+        estimate = estimate_tokens(text)
+        assert abs(estimate - real_tokens) <= real_tokens * 0.25, (
+            f"estimate drifted from the real tokenizer: {text[:20]!r}"
+            f" estimated {estimate}, real {real_tokens}"
+        )
 
 
 def test_estimate_history_tokens_counts_every_message():
@@ -393,16 +426,93 @@ class FakeChat:
         self.requests = []
         self.chat = self
 
+    def _snapshot(self, request):
+        """Return what send() records; subclasses may freeze the request."""
+        return request
+
     def send(self, **request):
-        self.requests.append(request)
+        self.requests.append(self._snapshot(request))
         reply = self.replies.pop(0)
         if isinstance(reply, FakeMessage):
             return FakeResponse(reply)
         return FakeResponse(FakeMessage(content=reply))
 
 
+class SnapshotChat(FakeChat):
+    """FakeChat that records a frozen copy of every request.
+
+    The real SDK serializes the request at send time, while a plain
+    FakeChat keeps a live reference to the evolving history list, so a
+    meaningful prefix-stability check needs the frozen copy.
+    """
+
+    def _snapshot(self, request):
+        import copy
+
+        return copy.deepcopy(request)
+
+
+def test_request_prefix_is_stable_across_steps():
+    """Consecutive requests must share a byte-identical prompt prefix.
+
+    Provider-side prompt caches match the request prefix exactly, so a
+    mutation of any earlier message between steps invalidates the cache
+    from that message onward and re-bills the whole history. Elision,
+    compaction, and purge-after-repair are the documented exceptions;
+    this test pins the append-only invariant for the common path.
+    """
+    TOOL_REGISTRY["smoke_tool"] = lambda label="unlabeled": f"ran: {label}"
+    pod = FakePod()
+    register_container(pod)
+    try:
+        from syna.conversation.session import AgentSession
+
+        session = AgentSession(session_id="prefix-stability-test")
+        session.dump_path = Path(tempfile.mkdtemp(prefix="syna-prefix-")) / "dump.json"
+        session.request_delay = 0
+        session.context_budget_tokens = 10**9
+        session.max_history_messages = 10**6
+        session.elide_keep_recent_messages = 0
+        session.elide_interval_messages = 10**6
+        session.elide_every_requests = 10**6
+        session.client = SnapshotChat(
+            [
+                _make_tool_call_reply(
+                    "smoke_tool", {"label": "first"}, call_id="call_1"
+                ),
+                _make_tool_call_reply(
+                    "smoke_tool", {"label": "second"}, call_id="call_2"
+                ),
+                _make_text_reply("done"),
+            ]
+        )
+        session.run_turn("probe")
+    finally:
+        unregister_container()
+        TOOL_REGISTRY.pop("smoke_tool", None)
+
+    requests = session.client.requests
+    assert len(requests) == 3, "three model requests expected"
+    for previous, current in itertools.pairwise(requests):
+        history = previous["messages"]
+        current_prefix = current["messages"][: len(history)]
+        assert json.dumps(current_prefix) == json.dumps(history), (
+            "an earlier message changed between steps, which invalidates"
+            " the provider prompt cache from that message onward"
+        )
+        assert len(current["messages"]) > len(history), (
+            "each step must append new history"
+        )
+        assert json.dumps(current["tools"]) == json.dumps(previous["tools"]), (
+            "the tool definitions must stay identical across steps"
+        )
+    assert requests[0]["messages"][0]["role"] == "system"
+
+
 def main():
     test_estimate_tokens_bounds()
+    test_estimate_tokens_is_script_aware()
+    test_estimate_tokens_tracks_real_tokenizer_counts()
     test_estimate_history_tokens_counts_every_message()
     test_elide_replaces_old_saved_outputs_with_pointers()
     test_elide_keeps_results_without_saved_to()
@@ -416,6 +526,7 @@ def main():
     test_session_elides_old_outputs_under_token_budget()
     test_session_elides_old_outputs_on_message_interval()
     test_session_elision_is_batched_by_request_interval()
+    test_request_prefix_is_stable_across_steps()
     print("ALL CONTEXT AND POD LIMIT TESTS PASSED")
 
 

@@ -335,6 +335,7 @@ class AgentSession:
         self._tool_errored = False
         self._row_open = False
         self._requests_since_elide = 0
+        self._usage_totals = {"requests": 0, "prompt_tokens": 0, "cached_tokens": 0}
         self.thinking_effort = load_thinking_effort()
         self.client = create_model_client()
         self.model = self._require_model()
@@ -353,7 +354,39 @@ class AgentSession:
 
     def close(self):
         """Release the underlying model client's HTTP resources."""
+        self._log_cache_summary()
         self.client.__exit__(None, None, None)
+
+    def _record_usage(self, prompt_tokens: int | None, cached_tokens: int | None):
+        """Accumulate per-response usage for the end-of-session summary."""
+        self._usage_totals["requests"] += 1
+        if prompt_tokens:
+            self._usage_totals["prompt_tokens"] += prompt_tokens
+        if cached_tokens:
+            self._usage_totals["cached_tokens"] += cached_tokens
+
+    def _log_cache_summary(self):
+        """Log the session's aggregate prompt-cache hit ratio.
+
+        With sticky routing in place this ratio is the health check for
+        prompt-cache behavior across the whole session; a low ratio on a
+        long session points at something repeatedly invalidating the
+        request prefix.
+        """
+        totals = self._usage_totals
+        if not totals["requests"]:
+            return
+        prompt = totals["prompt_tokens"]
+        ratio = f"{totals['cached_tokens'] / prompt:.0%}" if prompt else "n/a"
+        get_logger().info(
+            "Session cache summary: requests=%d, prompt_tokens=%d,"
+            " cached_tokens=%d, hit_ratio=%s",
+            totals["requests"],
+            prompt,
+            totals["cached_tokens"],
+            ratio,
+        )
+        self._usage_totals = {"requests": 0, "prompt_tokens": 0, "cached_tokens": 0}
 
     def notify_file_upload(self, file_name: str, pod_path: str):
         """Record a user file upload in the conversation history."""
@@ -559,6 +592,7 @@ class AgentSession:
                     session_id=self.session_id,
                     tools=self.tool_definitions,
                     tool_choice="auto",
+                    usage_callback=self._record_usage,
                 )
             except ReplyRejected as exc:
                 defanged = defang_sentinels(exc.raw_content)
@@ -809,6 +843,7 @@ class AgentSession:
                 effort=self.thinking_effort,
                 response_format=None,
                 session_id=self.session_id,
+                usage_callback=self._record_usage,
             )
             summary = (
                 summary_msg.get("content") or ""
@@ -921,6 +956,7 @@ class AgentSession:
                 session_id=self.session_id,
                 tools=self.tool_definitions,
                 tool_choice="none",
+                usage_callback=self._record_usage,
             )
         except TurnCancelled:
             self._finish_cancelled_turn()
