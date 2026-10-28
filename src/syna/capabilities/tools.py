@@ -85,7 +85,7 @@ COMMAND_KILL_GRACE_S = 5
 
 def think(thought: str):
     """
-    Record reasoning in the conversation. It does not affect the pod, and the call returns nothing.
+    Record reasoning in the conversation. It does not affect the pod, and the call returns "(noted)".
 
     Your private reasoning may not carry over between turns, but `think` entries stay visible for the rest of the task. Use it for things you will need later: a plan for multi-step work, a conclusion from a surprising or failed result, a decision and its reason, or a check of your claims against the evidence before giving your final answer. Skip it for routine steps you act on immediately.
 
@@ -239,7 +239,7 @@ def _capture_screenshot(screenshot_fn, browser, args: dict) -> str:
         f"Screenshot saved to {pod_path} ({max(1, len(data) // 1024)} KB)."
         " The screenshot is capped to the viewport: if something is not"
         " visible, it may be out of view, scroll and take another screenshot"
-        " to see it. You may inspect the screenshot with the describe_image tool if you need to."
+        " to see it."
     )
 
 
@@ -468,9 +468,7 @@ def text_to_speech(file_path: str):
     )
     pod_path = _write_into_pod(audio.content, "/workspace/audio", name)
     return (
-        f"Speech audio saved to {pod_path}"
-        f" ({max(1, len(audio.content) // 1024)} KB)."
-        " Deliver it to the user with the share_file tool."
+        f"Speech audio saved to {pod_path} ({max(1, len(audio.content) // 1024)} KB)."
     )
 
 
@@ -485,7 +483,7 @@ def text_to_image(prompt: str):
 
     Do not use this tool:
       * To depict real-world events, people, places, species, animals, plants, products or objects as they exist in the world. Source an image from a reliable online source instead; accuracy prevails.
-      * To assemble images and text into an infographic, a grid with labels, or similar structures. This tool cannot source images from the pod or the web, and cannot reliably generate stuctured documents like that. Source the base images and compose them using a script or markup rendered to an image instead.
+      * To assemble images and text into an infographic, a grid with labels, or similar structures. This tool cannot source images from the pod or the web, and cannot reliably generate structured documents like that. Source the base images and compose them using a script or markup rendered to an image instead.
       * For diagrams, charts, and other visualizations based on quantitative data. Use a script that parses such data and outputs the diagram instead of calling this tool.
 
     If this tool is unavailable or unsuitable, and images are still needed for the task, fall back to downloading from online sources or using a script.
