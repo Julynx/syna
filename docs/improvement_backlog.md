@@ -43,6 +43,28 @@ Prerequisites and design notes:
 - Lifecycle: a delegate must respect the session's cancel event and step
   budget, or a cancelled turn can keep burning tokens in the background.
 
+## Turbo switch
+
+A client-side toggle (settings modal, next to the existing feature
+switches) that appends one rule to the end of the system prompt, nudging
+the agent toward the minimum number of steps:
+
+> "You are currently operating in 'Turbo' mode. Speed is important for
+> this task. Try to complete it in the minimum amount of steps possible
+> without compromising the reliability of your results or any of your
+> other values."
+
+Shape:
+
+- Server-side, `build_prompt()` gains one conditional suffix; the client
+  toggle is a config value like the voice/image switches.
+- Apply the mode from session start. Toggling it mid-session rewrites
+  the system prompt and invalidates the provider prompt cache from that
+  point once — acceptable for a deliberate mode change, but the cleanest
+  behavior is per-session.
+- Cheap by construction: no new tools, no state, no harness logic — one
+  prompt suffix the model can act on immediately.
+
 ## Explicitly out of scope by design
 
 ### Cross-session persistent memory
