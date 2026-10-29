@@ -269,7 +269,7 @@ function cancelAnim(host) {
   }
 }
 
-function addBubble(content, side, queued) {
+function addBubble(content, side) {
   const bubble = document.createElement("div");
   bubble.className = "bubble " + side;
   const rendered = side === "model" ? renderMarkdown(content) : "";
@@ -287,12 +287,6 @@ function addBubble(content, side, queued) {
     addCopyButton(bubble, content);
   }
   append(bubble);
-  if (queued) {
-    const tag = document.createElement("div");
-    tag.className = "queued-tag";
-    tag.textContent = "queued";
-    append(tag);
-  }
 }
 
 /* Images from the pod render inline through the session's image endpoint;
@@ -1032,6 +1026,7 @@ function dockAsk(event) {
   const question = String(args.question_text || "");
   const choices = Array.isArray(args.choices) ? args.choices.map(String) : [];
   liveAsk = { id: event.id, question, choices };
+  setQueueSendDisabled(true);
   showWaitingStatus();
   if (!choices.length) {
     pendingAnswer = true;
@@ -1050,6 +1045,7 @@ function dockAsk(event) {
 function undockAsk() {
   if (!liveAsk) return;
   liveAsk = null;
+  setQueueSendDisabled(false);
   pendingAnswer = false;
   if (inlineAskRow) {
     const row = inlineAskRow;
@@ -1078,6 +1074,115 @@ function resetAskState() {
   }
   setComposerVisible(true);
   setSendState();
+}
+
+/* Queued messages. A message sent while the agent is busy never enters
+   the chat: it waits as a pill docked right on top of the input field.
+   "Send now" hands it to the server for delivery at the turn's next
+   opening; the matching user_message event (same id) turns the pill
+   into a chat bubble when the message actually reaches history. */
+let queuedMessages = [];
+let queueDock = null;
+
+const QUEUE_PREVIEW_CHARS = 80;
+
+function queuePreview(content) {
+  const text = String(content || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > QUEUE_PREVIEW_CHARS
+    ? text.slice(0, QUEUE_PREVIEW_CHARS) + "..."
+    : text;
+}
+
+function addQueuedMessage(id, content) {
+  queuedMessages.push({ id: id, content: content });
+  if (!queueDock) {
+    queueDock = document.createElement("div");
+    queueDock.className = "queue-dock";
+    const footerEl = document.querySelector("footer");
+    footerEl.insertBefore(queueDock, footerEl.querySelector(".composer"));
+    growIn(queueDock);
+  }
+  const pill = document.createElement("div");
+  pill.className = "queue-pill glass";
+  pill.dataset.queueId = id;
+  const label = document.createElement("span");
+  label.className = "queue-label";
+  label.textContent = "Queued";
+  const text = document.createElement("span");
+  text.className = "queue-text";
+  text.textContent = queuePreview(content);
+  const sendNowBtn = document.createElement("button");
+  sendNowBtn.type = "button";
+  sendNowBtn.className = "queue-send icon-btn";
+  sendNowBtn.title = "Send now";
+  sendNowBtn.setAttribute("aria-label", "Send now");
+  sendNowBtn.innerHTML = ICONS.send;
+  if (liveAsk) {
+    sendNowBtn.disabled = true;
+    sendNowBtn.title = "Answer Syna's question first";
+  }
+  sendNowBtn.addEventListener("click", () => {
+    sendNow(id, sendNowBtn);
+  });
+  pill.appendChild(label);
+  pill.appendChild(text);
+  pill.appendChild(sendNowBtn);
+  queueDock.appendChild(pill);
+  growIn(pill);
+}
+
+function sendNow(id, btn) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  Sfx.play("send");
+  ws.send(JSON.stringify({ type: "send_now", id: id }));
+  if (btn) btn.disabled = true;
+}
+
+/* While Syna waits for an answer, a "Send now" delivery can only happen
+   after the question is resolved — disable the buttons so that shows. */
+function setQueueSendDisabled(disabled) {
+  if (!queueDock) return;
+  queueDock.querySelectorAll(".queue-send").forEach((btn) => {
+    btn.disabled = disabled;
+    btn.title = disabled ? "Answer Syna's question first" : "Send now";
+  });
+}
+
+function resolveQueuedMessage(id) {
+  if (!queuedMessages.length) return;
+  const index = queuedMessages.findIndex((item) => item.id === id);
+  let removed;
+  if (index >= 0) {
+    removed = queuedMessages.splice(index, 1)[0];
+  } else {
+    console.warn(
+      "Delivery for untracked queued message " +
+        id +
+        "; removing the oldest pill.",
+    );
+    removed = queuedMessages.shift();
+  }
+  const pill = queueDock
+    ? queueDock.querySelector(
+        '[data-queue-id="' + CSS.escape(removed.id) + '"]',
+      )
+    : null;
+  if (pill) shrinkOut(pill);
+  if (!queuedMessages.length && queueDock) {
+    const dock = queueDock;
+    queueDock = null;
+    shrinkOut(dock);
+  }
+}
+
+function clearQueuedMessages() {
+  queuedMessages = [];
+  if (queueDock) {
+    queueDock.remove();
+    queueDock = null;
+  }
 }
 
 function finishToolRow(event) {
@@ -1244,13 +1349,18 @@ function render(event) {
   }
   switch (event.type) {
     case "user_message":
-      addBubble(event.content, "user", event.queued);
+      if (event.queued) {
+        addQueuedMessage(event.id, event.content);
+      } else {
+        if (event.id) resolveQueuedMessage(event.id);
+        addBubble(event.content, "user");
+      }
       break;
     case "model_message":
-      addBubble(event.content, "model", false);
-      if (!replaying && window.Voice) {
-        if (narrates) Voice.showPill("Tuning up, please wait...");
-        Voice.speak(event.content);
+      if (!replaying && window.Voice && Voice.willNarrate(event.content)) {
+        Voice.narrate(event.content, () => addBubble(event.content, "model"));
+      } else {
+        addBubble(event.content, "model");
       }
       break;
     case "history_done":
@@ -1331,6 +1441,7 @@ function connect() {
     openFileGroup = null;
     thinkingRow = null;
     resetAskState();
+    clearQueuedMessages();
     if (window.Voice) Voice.reset();
     setStatus("ready", "Ready");
     updateAmbient();
@@ -1353,6 +1464,7 @@ function connect() {
   ws.onclose = () => {
     busy = false;
     resetAskState();
+    clearQueuedMessages();
     setSendState();
     setStatus("", "Connecting...");
     updateAmbient();
@@ -1419,7 +1531,12 @@ function sendMessage() {
   const content = input.value.trim();
   if (!content || !ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(
-    JSON.stringify({ type: "message", content: content, allegro: allegro.on })
+    JSON.stringify({
+      type: "message",
+      id: crypto.randomUUID(),
+      content: content,
+      allegro: allegro.on,
+    }),
   );
   Sfx.play("send");
   input.value = "";
@@ -1464,6 +1581,7 @@ async function newChat() {
     openFileGroup = null;
     thinkingRow = null;
     resetAskState();
+    clearQueuedMessages();
     busy = false;
     setSendState();
     addEventRow("Starting a fresh session...");
@@ -2021,9 +2139,18 @@ async function openSettingsModal() {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
   };
-  const steps = numberOf(config.max_steps_per_turn, defaults.max_steps_per_turn);
-  const command = numberOf(config.command_timeout_s, defaults.command_timeout_s);
-  const toolCall = numberOf(config.tool_call_timeout_s, defaults.tool_call_timeout_s);
+  const steps = numberOf(
+    config.max_steps_per_turn,
+    defaults.max_steps_per_turn,
+  );
+  const command = numberOf(
+    config.command_timeout_s,
+    defaults.command_timeout_s,
+  );
+  const toolCall = numberOf(
+    config.tool_call_timeout_s,
+    defaults.tool_call_timeout_s,
+  );
   const half = (value) => Math.max(1, Math.round(value / 2));
 
   const lead = document.createElement("p");

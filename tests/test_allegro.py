@@ -246,15 +246,20 @@ def test_set_allegro_rewrites_system_message_only_on_change():
 
 
 def test_inbox_item_captures_allegro_at_enqueue_time():
-    item = _inbox_item_from_message({"content": "  do it  ", "allegro": True})
+    item = _inbox_item_from_message(
+        {"content": "  do it  ", "allegro": True, "id": "msg-1"}
+    )
     assert item == {
         "kind": "message",
+        "id": "msg-1",
         "content": "do it",
         "allegro": True,
     }, "the flag is captured with the message, not read later"
 
-    assert _inbox_item_from_message({"content": "plain"}) == {
+    plain = _inbox_item_from_message({"content": "plain"})
+    assert plain == {
         "kind": "message",
+        "id": plain["id"],
         "content": "plain",
         "allegro": False,
     }, "a missing flag means normal mode"

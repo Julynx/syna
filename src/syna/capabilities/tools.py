@@ -82,6 +82,38 @@ EXIT_CODE_MARKER_PATTERN = re.compile(r"\n<<<SYNA_EXIT=(\d+)>>>\s*$")
 
 COMMAND_TIMEOUT_MARGIN_S = 5
 COMMAND_KILL_GRACE_S = 5
+COMMAND_TIMEOUT_EXIT_CODES = {124, 137}
+
+
+def command_runtime_limit_s() -> int:
+    """The effective maximum runtime of one execute_command call.
+
+    The configured command timeout bounded by the harness's tool-call
+    detach timeout; Allegro's halving applies through the thread-local
+    timeout scale, so callers on a turn thread get the value actually
+    enforced for that turn.
+    """
+    return _effective_command_timeout()
+
+
+def _command_timeout_notice(exit_code: int, timeout_s: int) -> str:
+    """Explain a timeout-killed command to the model, with the exact limit."""
+    if exit_code == 137:
+        what = (
+            "was killed (exit code 137): either the final kill after the"
+            " timeout, or the system killed it (for example, out of memory)"
+        )
+    else:
+        what = "hit the timeout and was killed (exit code 124)"
+    return (
+        f"\n\nTIMEOUT: this execute_command call failed. The command {what}"
+        f" after {timeout_s} seconds — {timeout_s} seconds is the maximum"
+        " runtime of one execute_command call. The command is no longer"
+        " running and the output above is partial. For longer work, launch"
+        " it in the background (append `&`, or `nohup ... &`) with its"
+        " output redirected to a file, then check on it with later calls"
+        " instead of waiting on one."
+    )
 
 
 def think(thought: str):
@@ -145,8 +177,11 @@ def execute_command(command: str, arguments: list[str] | None = None):
 
     match = EXIT_CODE_MARKER_PATTERN.search(view)
     if match:
-        set_last_exit_code(int(match.group(1)))
+        exit_code = int(match.group(1))
+        set_last_exit_code(exit_code)
         view = view[: match.start()]
+        if exit_code in COMMAND_TIMEOUT_EXIT_CODES:
+            view += _command_timeout_notice(exit_code, timeout_s)
     else:
         set_last_exit_code(None)
     return view

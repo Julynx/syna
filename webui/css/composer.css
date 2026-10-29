@@ -638,6 +638,62 @@ footer {
   border-style: dashed;
 }
 
+/* Queued messages docked on top of the input field. */
+.queue-dock {
+  max-width: 880px;
+  margin: 0 auto 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.queue-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 16px;
+  padding: 7px 7px 7px 14px;
+}
+.queue-label {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  user-select: none;
+}
+.queue-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.queue-send {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--glass-line);
+  background: var(--surface-soft);
+  color: var(--text);
+}
+.queue-send .material-symbols-outlined {
+  font-size: 16px;
+}
+.queue-send:not(:disabled):hover {
+  border-color: var(--accent-line);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.queue-send:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
 .disclaimer {
   max-width: 880px;
   margin: 6px auto 0;
@@ -654,6 +710,9 @@ footer {
     max-width: 1060px;
   }
   .ask-panel {
+    max-width: 1060px;
+  }
+  .queue-dock {
     max-width: 1060px;
   }
   .disclaimer {

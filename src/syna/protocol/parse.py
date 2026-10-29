@@ -35,7 +35,11 @@ from ..state import (
     set_call_output_path,
     unregister_container,
 )
-from ..capabilities.tools import TOOL_REGISTRY
+from ..capabilities.tools import (
+    COMMAND_TIMEOUT_EXIT_CODES,
+    TOOL_REGISTRY,
+    command_runtime_limit_s,
+)
 from ..capabilities.verification import (
     REVIEW_TOOL_NAME,
     current_conversation_log_provider,
@@ -43,7 +47,7 @@ from ..capabilities.verification import (
     set_conversation_log_provider,
 )
 
-TIMEOUT_EXIT_CODES = {124, 137}
+TIMEOUT_EXIT_CODES = COMMAND_TIMEOUT_EXIT_CODES
 TOOLS_PERSISTED_IN_POD = {"execute_command"}
 SKIPPED_CALL_NOTICE = "Skipped: an earlier call in this reply failed."
 
@@ -209,7 +213,7 @@ def build_detached_call_notice(
     tool_name: str, tool_arguments: dict, timeout_s: float
 ) -> str:
     """Compose the tool result reported to the model for a detached call."""
-    return (
+    notice = (
         f"Tool call timed out after {timeout_s} seconds:"
         f" {build_signature(tool_name, tool_arguments)}."
         " The call was not aborted: it is still running in the background and"
@@ -217,6 +221,15 @@ def build_detached_call_notice(
         " it. If the call runs a process inside the container, you can locate"
         " and terminate it with another execute_command (e.g. ps / kill)."
     )
+    if tool_name == "execute_command":
+        notice += (
+            " This is the harness detach limit, not execute_command's own"
+            f" limit: execute_command kills its commands after"
+            f" {command_runtime_limit_s()} seconds at most, so a call that"
+            " reached this point means the container call itself stopped"
+            " responding."
+        )
+    return notice
 
 
 def execute_tool_with_timeout(

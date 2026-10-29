@@ -30,8 +30,16 @@ const Voice = (() => {
   let playbackUrl = null;
   let speaking = false;
   let pillEl = null;
+  let pendingNarration = null;
+
+  const NARRATION_REVEAL_TIMEOUT_MS = Number.isFinite(
+    settings.narration_reveal_timeout_ms,
+  )
+    ? settings.narration_reveal_timeout_ms
+    : 30000;
 
   function reset() {
+    cancelPendingNarration(false);
     enabled = initialEnabled;
     stopPlayback();
     cancelRecording();
@@ -65,6 +73,7 @@ const Voice = (() => {
   }
 
   function showPill(label) {
+    hidePill();
     pillEl = document.createElement("div");
     pillEl.className = "inline-status glass voice-status";
     pillEl.innerHTML =
@@ -76,11 +85,11 @@ const Voice = (() => {
     if (stick) followBottom(700);
   }
 
-  function hidePill() {
+  function hidePill(immediate) {
     const pill = pillEl;
     pillEl = null;
     if (!pill || pill.parentNode !== chat) return;
-    if (REDUCE) {
+    if (REDUCE || immediate) {
       pill.remove();
       return;
     }
@@ -123,13 +132,50 @@ const Voice = (() => {
     return enabled && TTS_AVAILABLE && !!speakableText(String(rawText || ""));
   }
 
-  async function speak(rawText) {
+  /* A still-waiting narration is superseded (new narrated reply) or
+     cancelled (reset). When superseded its text is revealed immediately
+     so a message never stays hidden behind a newer request. */
+  function cancelPendingNarration(reveal) {
+    if (!pendingNarration) return;
+    const pending = pendingNarration;
+    pendingNarration = null;
+    clearTimeout(pending.timer);
+    pending.controller.abort();
+    if (reveal) pending.reveal();
+  }
+
+  /* Narrated reply flow. The response text stays hidden while speech is
+     being generated: the "Tuning up, please wait..." pill appears first,
+     and the bubble is revealed only when the audio is ready, the request
+     fails, or the reveal timeout elapses — whichever comes first. */
+  async function narrate(rawText, reveal) {
     const text = speakableText(String(rawText || ""));
     if (!enabled || !TTS_AVAILABLE || !text) {
       hidePill();
+      reveal();
       return;
     }
+    cancelPendingNarration(true);
     stopPlayback();
+    showPill("Tuning up, please wait...");
+    const controller = new AbortController();
+    const pending = { controller: controller, timer: 0, reveal: reveal };
+    pendingNarration = pending;
+    const settle = (play) => {
+      if (pendingNarration !== pending) return;
+      pendingNarration = null;
+      clearTimeout(pending.timer);
+      // The pill vanishes the moment the text is revealed, so the
+      // shrinking pill never lingers above the incoming bubble.
+      hidePill(true);
+      reveal();
+      if (play) play();
+    };
+    pending.timer = setTimeout(() => {
+      if (pendingNarration !== pending) return;
+      controller.abort();
+      settle(null);
+    }, NARRATION_REVEAL_TIMEOUT_MS);
     try {
       const response = await fetch(API_BASE + "/api/speech/synthesize", {
         method: "POST",
@@ -138,6 +184,7 @@ const Voice = (() => {
           "X-Syna-Token": window.SYNA_CONFIG?.auth_token || "",
         },
         body: JSON.stringify({ text: text }),
+        signal: controller.signal,
       });
       const payload = response.ok
         ? null
@@ -147,19 +194,30 @@ const Voice = (() => {
           (payload && payload.detail) || "HTTP " + response.status,
         );
       }
-      playbackUrl = URL.createObjectURL(await response.blob());
-      playback = new Audio(playbackUrl);
-      playback.onended = () => {
-        voiceBtn.classList.remove("speaking");
-        setSpeaking(false);
-      };
-      voiceBtn.classList.add("speaking");
-      setSpeaking(true);
-      await playback.play();
+      const audioUrl = URL.createObjectURL(await response.blob());
+      if (pendingNarration !== pending) {
+        URL.revokeObjectURL(audioUrl);
+        return;
+      }
+      settle(() => {
+        playbackUrl = audioUrl;
+        playback = new Audio(playbackUrl);
+        playback.onended = () => {
+          voiceBtn.classList.remove("speaking");
+          setSpeaking(false);
+        };
+        voiceBtn.classList.add("speaking");
+        setSpeaking(true);
+        playback.play().catch((err) => {
+          voiceBtn.classList.remove("speaking");
+          setSpeaking(false);
+          console.error(err);
+          addEventRow("Speech playback failed: " + err.message, true);
+        });
+      });
     } catch (err) {
-      voiceBtn.classList.remove("speaking");
-      setSpeaking(false);
-      hidePill();
+      if (pendingNarration !== pending) return;
+      settle(null);
       console.error(err);
       addEventRow("Speech playback failed: " + err.message, true);
     }
@@ -334,11 +392,9 @@ const Voice = (() => {
   });
 
   return {
-    speak,
+    narrate,
     stopPlayback,
     reset,
-    showPill,
-    hidePill,
     willNarrate,
     get enabled() {
       return enabled;

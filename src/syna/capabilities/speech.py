@@ -37,6 +37,7 @@ DEFAULT_SPEECH_LANGUAGE = "en"
 DEFAULT_SILENCE_TIMEOUT_MS = 2000
 DEFAULT_SILENCE_THRESHOLD_DBFS = -45
 DEFAULT_MAX_RECORDING_MS = 60000
+DEFAULT_NARRATION_REVEAL_TIMEOUT_MS = 30000
 
 PCM_SAMPLE_RATE_HZ = 24000
 PCM_SAMPLE_WIDTH_BYTES = 2
@@ -308,5 +309,8 @@ def client_configuration(settings: SpeechSettings, app_config: dict) -> dict:
         ),
         "max_recording_ms": voice_config.get(
             "max_recording_ms", DEFAULT_MAX_RECORDING_MS
+        ),
+        "narration_reveal_timeout_ms": voice_config.get(
+            "narration_reveal_timeout_ms", DEFAULT_NARRATION_REVEAL_TIMEOUT_MS
         ),
     }

@@ -39,6 +39,7 @@
     "voice_mode_on": false,
     "silence_timeout_ms": 2000,
     "silence_threshold_dbfs": -45,
-    "max_recording_ms": 60000
+    "max_recording_ms": 60000,
+    "narration_reveal_timeout_ms": 30000
   }
 }

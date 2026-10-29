@@ -190,16 +190,6 @@
   margin: 12px 0;
 }
 
-.queued-tag {
-  font-size: 11px;
-  color: var(--muted);
-  margin: -6px 4px 0 0;
-  transition:
-    opacity var(--dur-in) var(--ease),
-    filter var(--dur-in) var(--ease),
-    transform var(--dur-in) var(--ease);
-}
-
 .copy-btn {
   position: absolute;
   top: 7px;
@@ -749,7 +739,6 @@
   .bubble,
   .tool-row,
   .event-row,
-  .queued-tag,
   .see-more,
   .files-group,
   .inline-status,
@@ -815,7 +804,6 @@
   .tool-row,
   .tool-detail,
   .event-row,
-  .queued-tag,
   .see-more,
   .files-group,
   .inline-status,

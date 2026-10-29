@@ -1,3 +1,5 @@
 .venv/
 node_modules/
 src/syna/assets/vendor/
+src/syna/assets/chat.html
+src/syna/assets/setup.html

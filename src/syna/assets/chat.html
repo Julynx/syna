@@ -651,16 +651,6 @@ body.dragging #drop-overlay {
   margin: 12px 0;
 }
 
-.queued-tag {
-  font-size: 11px;
-  color: var(--muted);
-  margin: -6px 4px 0 0;
-  transition:
-    opacity var(--dur-in) var(--ease),
-    filter var(--dur-in) var(--ease),
-    transform var(--dur-in) var(--ease);
-}
-
 .copy-btn {
   position: absolute;
   top: 7px;
@@ -1210,7 +1200,6 @@ body.dragging #drop-overlay {
   .bubble,
   .tool-row,
   .event-row,
-  .queued-tag,
   .see-more,
   .files-group,
   .inline-status,
@@ -1276,7 +1265,6 @@ body.dragging #drop-overlay {
   .tool-row,
   .tool-detail,
   .event-row,
-  .queued-tag,
   .see-more,
   .files-group,
   .inline-status,
@@ -1926,6 +1914,62 @@ footer {
   border-style: dashed;
 }
 
+/* Queued messages docked on top of the input field. */
+.queue-dock {
+  max-width: 880px;
+  margin: 0 auto 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.queue-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 16px;
+  padding: 7px 7px 7px 14px;
+}
+.queue-label {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  user-select: none;
+}
+.queue-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.queue-send {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--glass-line);
+  background: var(--surface-soft);
+  color: var(--text);
+}
+.queue-send .material-symbols-outlined {
+  font-size: 16px;
+}
+.queue-send:not(:disabled):hover {
+  border-color: var(--accent-line);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.queue-send:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
 .disclaimer {
   max-width: 880px;
   margin: 6px auto 0;
@@ -1942,6 +1986,9 @@ footer {
     max-width: 1060px;
   }
   .ask-panel {
+    max-width: 1060px;
+  }
+  .queue-dock {
     max-width: 1060px;
   }
   .disclaimer {
@@ -3119,7 +3166,7 @@ function cancelAnim(host) {
   }
 }
 
-function addBubble(content, side, queued) {
+function addBubble(content, side) {
   const bubble = document.createElement("div");
   bubble.className = "bubble " + side;
   const rendered = side === "model" ? renderMarkdown(content) : "";
@@ -3137,12 +3184,6 @@ function addBubble(content, side, queued) {
     addCopyButton(bubble, content);
   }
   append(bubble);
-  if (queued) {
-    const tag = document.createElement("div");
-    tag.className = "queued-tag";
-    tag.textContent = "queued";
-    append(tag);
-  }
 }
 
 /* Images from the pod render inline through the session's image endpoint;
@@ -3882,6 +3923,7 @@ function dockAsk(event) {
   const question = String(args.question_text || "");
   const choices = Array.isArray(args.choices) ? args.choices.map(String) : [];
   liveAsk = { id: event.id, question, choices };
+  setQueueSendDisabled(true);
   showWaitingStatus();
   if (!choices.length) {
     pendingAnswer = true;
@@ -3900,6 +3942,7 @@ function dockAsk(event) {
 function undockAsk() {
   if (!liveAsk) return;
   liveAsk = null;
+  setQueueSendDisabled(false);
   pendingAnswer = false;
   if (inlineAskRow) {
     const row = inlineAskRow;
@@ -3928,6 +3971,115 @@ function resetAskState() {
   }
   setComposerVisible(true);
   setSendState();
+}
+
+/* Queued messages. A message sent while the agent is busy never enters
+   the chat: it waits as a pill docked right on top of the input field.
+   "Send now" hands it to the server for delivery at the turn's next
+   opening; the matching user_message event (same id) turns the pill
+   into a chat bubble when the message actually reaches history. */
+let queuedMessages = [];
+let queueDock = null;
+
+const QUEUE_PREVIEW_CHARS = 80;
+
+function queuePreview(content) {
+  const text = String(content || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > QUEUE_PREVIEW_CHARS
+    ? text.slice(0, QUEUE_PREVIEW_CHARS) + "..."
+    : text;
+}
+
+function addQueuedMessage(id, content) {
+  queuedMessages.push({ id: id, content: content });
+  if (!queueDock) {
+    queueDock = document.createElement("div");
+    queueDock.className = "queue-dock";
+    const footerEl = document.querySelector("footer");
+    footerEl.insertBefore(queueDock, footerEl.querySelector(".composer"));
+    growIn(queueDock);
+  }
+  const pill = document.createElement("div");
+  pill.className = "queue-pill glass";
+  pill.dataset.queueId = id;
+  const label = document.createElement("span");
+  label.className = "queue-label";
+  label.textContent = "Queued";
+  const text = document.createElement("span");
+  text.className = "queue-text";
+  text.textContent = queuePreview(content);
+  const sendNowBtn = document.createElement("button");
+  sendNowBtn.type = "button";
+  sendNowBtn.className = "queue-send icon-btn";
+  sendNowBtn.title = "Send now";
+  sendNowBtn.setAttribute("aria-label", "Send now");
+  sendNowBtn.innerHTML = ICONS.send;
+  if (liveAsk) {
+    sendNowBtn.disabled = true;
+    sendNowBtn.title = "Answer Syna's question first";
+  }
+  sendNowBtn.addEventListener("click", () => {
+    sendNow(id, sendNowBtn);
+  });
+  pill.appendChild(label);
+  pill.appendChild(text);
+  pill.appendChild(sendNowBtn);
+  queueDock.appendChild(pill);
+  growIn(pill);
+}
+
+function sendNow(id, btn) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  Sfx.play("send");
+  ws.send(JSON.stringify({ type: "send_now", id: id }));
+  if (btn) btn.disabled = true;
+}
+
+/* While Syna waits for an answer, a "Send now" delivery can only happen
+   after the question is resolved — disable the buttons so that shows. */
+function setQueueSendDisabled(disabled) {
+  if (!queueDock) return;
+  queueDock.querySelectorAll(".queue-send").forEach((btn) => {
+    btn.disabled = disabled;
+    btn.title = disabled ? "Answer Syna's question first" : "Send now";
+  });
+}
+
+function resolveQueuedMessage(id) {
+  if (!queuedMessages.length) return;
+  const index = queuedMessages.findIndex((item) => item.id === id);
+  let removed;
+  if (index >= 0) {
+    removed = queuedMessages.splice(index, 1)[0];
+  } else {
+    console.warn(
+      "Delivery for untracked queued message " +
+        id +
+        "; removing the oldest pill.",
+    );
+    removed = queuedMessages.shift();
+  }
+  const pill = queueDock
+    ? queueDock.querySelector(
+        '[data-queue-id="' + CSS.escape(removed.id) + '"]',
+      )
+    : null;
+  if (pill) shrinkOut(pill);
+  if (!queuedMessages.length && queueDock) {
+    const dock = queueDock;
+    queueDock = null;
+    shrinkOut(dock);
+  }
+}
+
+function clearQueuedMessages() {
+  queuedMessages = [];
+  if (queueDock) {
+    queueDock.remove();
+    queueDock = null;
+  }
 }
 
 function finishToolRow(event) {
@@ -4094,13 +4246,18 @@ function render(event) {
   }
   switch (event.type) {
     case "user_message":
-      addBubble(event.content, "user", event.queued);
+      if (event.queued) {
+        addQueuedMessage(event.id, event.content);
+      } else {
+        if (event.id) resolveQueuedMessage(event.id);
+        addBubble(event.content, "user");
+      }
       break;
     case "model_message":
-      addBubble(event.content, "model", false);
-      if (!replaying && window.Voice) {
-        if (narrates) Voice.showPill("Tuning up, please wait...");
-        Voice.speak(event.content);
+      if (!replaying && window.Voice && Voice.willNarrate(event.content)) {
+        Voice.narrate(event.content, () => addBubble(event.content, "model"));
+      } else {
+        addBubble(event.content, "model");
       }
       break;
     case "history_done":
@@ -4181,6 +4338,7 @@ function connect() {
     openFileGroup = null;
     thinkingRow = null;
     resetAskState();
+    clearQueuedMessages();
     if (window.Voice) Voice.reset();
     setStatus("ready", "Ready");
     updateAmbient();
@@ -4203,6 +4361,7 @@ function connect() {
   ws.onclose = () => {
     busy = false;
     resetAskState();
+    clearQueuedMessages();
     setSendState();
     setStatus("", "Connecting...");
     updateAmbient();
@@ -4269,7 +4428,12 @@ function sendMessage() {
   const content = input.value.trim();
   if (!content || !ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(
-    JSON.stringify({ type: "message", content: content, allegro: allegro.on })
+    JSON.stringify({
+      type: "message",
+      id: crypto.randomUUID(),
+      content: content,
+      allegro: allegro.on,
+    }),
   );
   Sfx.play("send");
   input.value = "";
@@ -4314,6 +4478,7 @@ async function newChat() {
     openFileGroup = null;
     thinkingRow = null;
     resetAskState();
+    clearQueuedMessages();
     busy = false;
     setSendState();
     addEventRow("Starting a fresh session...");
@@ -4871,9 +5036,18 @@ async function openSettingsModal() {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
   };
-  const steps = numberOf(config.max_steps_per_turn, defaults.max_steps_per_turn);
-  const command = numberOf(config.command_timeout_s, defaults.command_timeout_s);
-  const toolCall = numberOf(config.tool_call_timeout_s, defaults.tool_call_timeout_s);
+  const steps = numberOf(
+    config.max_steps_per_turn,
+    defaults.max_steps_per_turn,
+  );
+  const command = numberOf(
+    config.command_timeout_s,
+    defaults.command_timeout_s,
+  );
+  const toolCall = numberOf(
+    config.tool_call_timeout_s,
+    defaults.tool_call_timeout_s,
+  );
   const half = (value) => Math.max(1, Math.round(value / 2));
 
   const lead = document.createElement("p");
@@ -5059,8 +5233,16 @@ const Voice = (() => {
   let playbackUrl = null;
   let speaking = false;
   let pillEl = null;
+  let pendingNarration = null;
+
+  const NARRATION_REVEAL_TIMEOUT_MS = Number.isFinite(
+    settings.narration_reveal_timeout_ms,
+  )
+    ? settings.narration_reveal_timeout_ms
+    : 30000;
 
   function reset() {
+    cancelPendingNarration(false);
     enabled = initialEnabled;
     stopPlayback();
     cancelRecording();
@@ -5094,6 +5276,7 @@ const Voice = (() => {
   }
 
   function showPill(label) {
+    hidePill();
     pillEl = document.createElement("div");
     pillEl.className = "inline-status glass voice-status";
     pillEl.innerHTML =
@@ -5105,11 +5288,11 @@ const Voice = (() => {
     if (stick) followBottom(700);
   }
 
-  function hidePill() {
+  function hidePill(immediate) {
     const pill = pillEl;
     pillEl = null;
     if (!pill || pill.parentNode !== chat) return;
-    if (REDUCE) {
+    if (REDUCE || immediate) {
       pill.remove();
       return;
     }
@@ -5152,13 +5335,50 @@ const Voice = (() => {
     return enabled && TTS_AVAILABLE && !!speakableText(String(rawText || ""));
   }
 
-  async function speak(rawText) {
+  /* A still-waiting narration is superseded (new narrated reply) or
+     cancelled (reset). When superseded its text is revealed immediately
+     so a message never stays hidden behind a newer request. */
+  function cancelPendingNarration(reveal) {
+    if (!pendingNarration) return;
+    const pending = pendingNarration;
+    pendingNarration = null;
+    clearTimeout(pending.timer);
+    pending.controller.abort();
+    if (reveal) pending.reveal();
+  }
+
+  /* Narrated reply flow. The response text stays hidden while speech is
+     being generated: the "Tuning up, please wait..." pill appears first,
+     and the bubble is revealed only when the audio is ready, the request
+     fails, or the reveal timeout elapses — whichever comes first. */
+  async function narrate(rawText, reveal) {
     const text = speakableText(String(rawText || ""));
     if (!enabled || !TTS_AVAILABLE || !text) {
       hidePill();
+      reveal();
       return;
     }
+    cancelPendingNarration(true);
     stopPlayback();
+    showPill("Tuning up, please wait...");
+    const controller = new AbortController();
+    const pending = { controller: controller, timer: 0, reveal: reveal };
+    pendingNarration = pending;
+    const settle = (play) => {
+      if (pendingNarration !== pending) return;
+      pendingNarration = null;
+      clearTimeout(pending.timer);
+      // The pill vanishes the moment the text is revealed, so the
+      // shrinking pill never lingers above the incoming bubble.
+      hidePill(true);
+      reveal();
+      if (play) play();
+    };
+    pending.timer = setTimeout(() => {
+      if (pendingNarration !== pending) return;
+      controller.abort();
+      settle(null);
+    }, NARRATION_REVEAL_TIMEOUT_MS);
     try {
       const response = await fetch(API_BASE + "/api/speech/synthesize", {
         method: "POST",
@@ -5167,6 +5387,7 @@ const Voice = (() => {
           "X-Syna-Token": window.SYNA_CONFIG?.auth_token || "",
         },
         body: JSON.stringify({ text: text }),
+        signal: controller.signal,
       });
       const payload = response.ok
         ? null
@@ -5176,19 +5397,30 @@ const Voice = (() => {
           (payload && payload.detail) || "HTTP " + response.status,
         );
       }
-      playbackUrl = URL.createObjectURL(await response.blob());
-      playback = new Audio(playbackUrl);
-      playback.onended = () => {
-        voiceBtn.classList.remove("speaking");
-        setSpeaking(false);
-      };
-      voiceBtn.classList.add("speaking");
-      setSpeaking(true);
-      await playback.play();
+      const audioUrl = URL.createObjectURL(await response.blob());
+      if (pendingNarration !== pending) {
+        URL.revokeObjectURL(audioUrl);
+        return;
+      }
+      settle(() => {
+        playbackUrl = audioUrl;
+        playback = new Audio(playbackUrl);
+        playback.onended = () => {
+          voiceBtn.classList.remove("speaking");
+          setSpeaking(false);
+        };
+        voiceBtn.classList.add("speaking");
+        setSpeaking(true);
+        playback.play().catch((err) => {
+          voiceBtn.classList.remove("speaking");
+          setSpeaking(false);
+          console.error(err);
+          addEventRow("Speech playback failed: " + err.message, true);
+        });
+      });
     } catch (err) {
-      voiceBtn.classList.remove("speaking");
-      setSpeaking(false);
-      hidePill();
+      if (pendingNarration !== pending) return;
+      settle(null);
       console.error(err);
       addEventRow("Speech playback failed: " + err.message, true);
     }
@@ -5363,11 +5595,9 @@ const Voice = (() => {
   });
 
   return {
-    speak,
+    narrate,
     stopPlayback,
     reset,
-    showPill,
-    hidePill,
     willNarrate,
     get enabled() {
       return enabled;

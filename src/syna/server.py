@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from posixpath import basename, normpath
@@ -101,7 +102,10 @@ class SessionRecord:
 
     def __init__(self, client_id: str):
         self.client_id = client_id
-        self.inbox: queue.Queue = queue.Queue()
+        # A deque under a condition instead of a queue.Queue: "Send now"
+        # removes a specific queued item, which a Queue cannot do safely.
+        self.inbox: deque = deque()
+        self.inbox_ready = threading.Condition()
         self.outbound: queue.Queue = queue.Queue()
         self.event_log: list[dict] = []
         self.event_log_lock = threading.Lock()
@@ -240,23 +244,73 @@ class SessionRecord:
             event = {key: value for key, value in event.items() if key != "output"}
         self.push(event)
 
+    def enqueue_message(self, item: dict):
+        """Add one message to the session's inbox and wake the worker."""
+        with self.inbox_ready:
+            self.inbox.append(item)
+            self.inbox_ready.notify()
+
+    def take_message(self, item_id: str) -> dict | None:
+        """Remove and return the queued item with this id, if present."""
+        with self.inbox_ready:
+            for index, item in enumerate(self.inbox):
+                if item.get("id") == item_id:
+                    del self.inbox[index]
+                    return item
+        return None
+
+    def _requeue_front(self, item: dict):
+        """Put one item back at the head of the inbox (engine retry)."""
+        with self.inbox_ready:
+            self.inbox.appendleft(item)
+
+    def _next_message(self, timeout: float) -> dict | None:
+        """Wait for an inbox item, returning None on timeout."""
+        with self.inbox_ready:
+            if not self.inbox:
+                self.inbox_ready.wait(timeout=timeout)
+            return self.inbox.popleft() if self.inbox else None
+
+    def _requeue_injections(self):
+        """Return undelivered "Send now" injections to the inbox.
+
+        A turn that ends before an opening arrives (final response,
+        error, user stop) would otherwise silently drop an injected
+        message; back as an inbox item it runs as the next turn instead.
+        """
+        for item in self.session.take_injections():
+            self.enqueue_message(item)
+
     def _run_worker(self):
         """Own this session's container and process the inbox sequentially."""
         self._start_container()
         try:
             while not self.shutdown.is_set():
-                try:
-                    item = self.inbox.get(timeout=1.0)
-                except queue.Empty:
-                    continue
-                if item.get("kind") != "message":
+                item = self._next_message(timeout=1.0)
+                if item is None or item.get("kind") != "message":
                     continue
                 if self.container is None:
                     self._start_container()
                 if self.container is None:
+                    # Never drop the message: it goes back to the head of
+                    # the queue (its pill stays honest) and the engine
+                    # bring-up is retried after a pause.
+                    self._requeue_front(item)
+                    self.shutdown.wait(5.0)
                     continue
+                if item.get("was_queued"):
+                    # The queued pill becomes a chat bubble exactly when
+                    # the message leaves the queue and starts its turn.
+                    self.push(
+                        {
+                            "type": "user_message",
+                            "content": item["content"],
+                            "id": item.get("id"),
+                        }
+                    )
                 self.session.clear_cancel()
                 self._run_turn(item["content"], bool(item.get("allegro")))
+                self._requeue_injections()
         finally:
             unregister_container()
             if self.container is not None:
@@ -329,14 +383,16 @@ def _inbox_item_from_message(data: dict) -> dict | None:
 
     The Allegro flag is captured here, at enqueue time: the worker later
     samples it when dequeuing, so a turn always runs with the mode the
-    user saw when the message left the composer. Empty content yields
-    None and must not enqueue anything.
+    user saw when the message left the composer. The client-generated id
+    rides along so queue pills and chat bubbles can be matched per
+    message. Empty content yields None and must not enqueue anything.
     """
     content = str(data.get("content", "")).strip()
     if not content:
         return None
     return {
         "kind": "message",
+        "id": str(data.get("id", "")) or uuid.uuid4().hex,
         "content": content,
         "allegro": bool(data.get("allegro")),
     }
@@ -1157,14 +1213,30 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 ):
                     record.push({"type": "user_message", "content": content})
                     continue
+                was_queued = record.busy.is_set()
+                item["was_queued"] = was_queued
                 record.push(
                     {
                         "type": "user_message",
                         "content": content,
-                        "queued": record.busy.is_set(),
+                        "id": item.get("id"),
+                        "queued": was_queued,
                     }
                 )
-                record.inbox.put(item)
+                record.enqueue_message(item)
+            elif message_type == "send_now":
+                item_id = str(data.get("id", ""))
+                if not item_id:
+                    continue
+                item = record.take_message(item_id)
+                if item is None:
+                    continue
+                if record.busy.is_set():
+                    # Deliver at the turn's next request boundary; the
+                    # session never interrupts what it is doing.
+                    record.session.queue_injection(item)
+                else:
+                    record.enqueue_message(item)
             elif message_type == "answer":
                 choice = str(data.get("choice", "")).strip()
                 if not choice:

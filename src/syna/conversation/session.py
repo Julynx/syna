@@ -362,6 +362,8 @@ class AgentSession:
         self._archive_nonce = secrets.token_hex(8)
         self.dump_path = get_session_dump_path(session_id)
         self._cancel_event = threading.Event()
+        self._injection_lock = threading.Lock()
+        self._pending_injections: list[dict] = []
         self._tool_call_seq = 0
         self._tool_errored = False
         self._row_open = False
@@ -420,6 +422,60 @@ class AgentSession:
     def clear_cancel(self):
         """Forget any pending cancellation request."""
         self._cancel_event.clear()
+
+    def queue_injection(self, item: dict):
+        """Hold a queued message for delivery at the turn's next opening.
+
+        Called from the web worker when the user presses "Send now" on a
+        queued message while a turn is running. The message is appended
+        to history at the next request boundary — after the running tool
+        batch is atomic and its results are in — so the model receives it
+        before it can send anything else. Never interrupts a turn.
+        """
+        with self._injection_lock:
+            self._pending_injections.append(item)
+        get_logger().info(
+            "Queued message %s held for injection at the next opening",
+            item.get("id", "?"),
+        )
+
+    def take_injections(self) -> list[dict]:
+        """Drain and return the pending injected messages, oldest first."""
+        with self._injection_lock:
+            items = self._pending_injections
+            self._pending_injections = []
+        return items
+
+    def apply_injections(self) -> int:
+        """Append every pending injected message to history.
+
+        Runs at the top of the turn loop, after a finished tool batch's
+        results are in history and before the next model request, so the
+        message always reaches the model before anything else is sent.
+        Each message goes through the same large-message archiving as a
+        turn-starting one, and the user_message event lets the client
+        turn its queue pill into a chat bubble. Returns how many landed.
+        """
+        injected = 0
+        for item in self.take_injections():
+            content = str(item.get("content", "")).strip()
+            if not content:
+                continue
+            msg = {
+                "role": "user",
+                "content": self._prepare_user_message(content),
+            }
+            self.messages.append(msg)
+            get_logger().info(str(msg))
+            self._emit(
+                {
+                    "type": "user_message",
+                    "content": content,
+                    "id": item.get("id"),
+                }
+            )
+            injected += 1
+        return injected
 
     def close(self):
         """Release the underlying model client's HTTP resources."""
@@ -662,6 +718,10 @@ class AgentSession:
                     )
                 self._requests_since_elide += 1
                 self._compact_history_if_needed()
+                # A "Send now" message from the queue lands here: after the
+                # previous batch's results are in history, before the next
+                # model request, so the model cannot act again without it.
+                self.apply_injections()
                 self._emit({"type": "status", "text": "Thinking..."})
                 response_msg = ask_question(
                     self.client,

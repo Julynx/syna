@@ -164,6 +164,7 @@ workflows keep working unchanged.
 | `voice.silence_timeout_ms`       | Mic silence that ends a voice recording.                                                                                                                                                                                                                                      |
 | `voice.silence_threshold_dbfs`   | Loudness level treated as silence.                                                                                                                                                                                                                                            |
 | `voice.max_recording_ms`         | Hard cap on one voice recording.                                                                                                                                                                                                                                              |
+| `voice.narration_reveal_timeout_ms` | How long a narrated reply stays hidden while speech is being generated before its text is revealed anyway (default 30000).                                                                                                                                                   |
 | `voice.voice_mode_on`            | Initial voice-mode state pushed to the client on every fresh session (page load, new chat, server restart). Accepts booleans and "true"/"false" strings; voice never persists across sessions.                                                                                |
 
 The data-home `config.json` is seeded from the bundled defaults on first run
@@ -200,8 +201,9 @@ sources live in `webui/`:
   activity AUDIO layer (`sfx.js` heartbeat/notes, driven by the same
   `data-ambient` attribute) stays silent while `Voice.speaking` is true —
   the voice is the only sound. Voice context pills ("Listening..." while
-  recording, "Tuning up, please wait..." between a narrated reply and its
-  playback) reuse the `.inline-status` styling with smooth grow-in/collapse
+  recording, "Tuning up, please wait..." while a narrated reply's speech
+  is being generated, before the reply's text is revealed) reuse the
+  `.inline-status` styling with smooth grow-in/collapse
   transitions and are cleared on every fresh session.
 
 - Rendering cost stays flat as conversations grow: chat children carry
@@ -315,6 +317,34 @@ Client behavior notes:
   send mode. During history replay the question renders statically and
   is re-docked after `history_done` if still unanswered; stop, new chat,
   and disconnects all clear the panel.
+- A message typed while the agent is busy never enters the chat. The
+  server tags its `user_message` event with `queued: true`, and the
+  client docks it as a pill right on top of the input field
+  (`#queue-dock` in the footer, one `.queue-pill` per queued message:
+  uppercase "Queued" label, truncated preview, a "Send now" button).
+  Every message carries a client-generated id, echoed on every event
+  about it, so the matching pill becomes a chat bubble the moment the
+  message actually reaches history — either when the worker dequeues it
+  for a new turn, or when a "Send now" injection lands mid-turn.
+  "Send now" removes the pill's message from the queue and hands it to
+  the session as a pending injection; the button disables until the
+  delivery event arrives, and while Syna is waiting for an `ask_user`
+  answer all Send now buttons disable with an explanatory tooltip, since
+  the delivery can only happen after the question is resolved. Reconnects
+  rebuild the dock from the event log
+  (queued pill events first, their delivery event later); new chat and
+  disconnects clear it. The old in-chat `.queued-tag` is gone.
+- Narrated replies no longer appear while speech is being generated.
+  When a `model_message` will be narrated, the client calls
+  `Voice.narrate(content, reveal)`: the "Tuning up, please wait..."
+  pill appears immediately — *before* the response exists in the chat —
+  and the bubble is rendered only when TTS generation finishes (audio
+  plays), fails (error row), or the configured
+  `voice.narration_reveal_timeout_ms` (default 30 s) elapses, whichever
+  comes first; on timeout the pending audio attempt is dropped. A newer
+  narrated reply supersedes a still-waiting one by revealing its text
+  immediately. History replay is unaffected: replayed messages render
+  directly.
 
 ## Landing page
 
@@ -670,7 +700,11 @@ Tool-call parsing and execution under native OpenRouter tool calling.
   provider (`review_work`'s reviewer snapshot), and the call's
   output path into the worker (all thread-locals), and reports back the
   tool-recorded exit code. On timeout the worker is detached and a notice is
-  returned as the tool output with status `timeout`. `ask_user` and
+  returned as the tool output with status `timeout`; for `execute_command`
+  the notice additionally states that this is the harness detach limit and
+  names the command runtime the tool itself enforces
+  (`command_runtime_limit_s`), so a detached call is understood as the
+  container call having stopped responding. `ask_user` and
   `review_work` are dispatched
   with a `None` timeout so a pending question is never detached, and the
   reviewer request is bounded by the model client's own timeout/retry
@@ -701,14 +735,27 @@ carries `structured_output` metadata — matched via
 `session.shared_file_metadata()` — the record copies the pod path to the host
 and pushes a `file` event the client renders as a download; worker teardown
 releases the container and model client; `share_file` recreates the session
-temp dir if it was removed externally). During a turn the record registers an
+temp dir if it was removed externally). The session inbox is a
+`collections.deque` under a `threading.Condition` rather than a `queue.Queue`,
+so "Send now" can remove one specific queued message by its client-generated
+id: the item is taken out of the queue and, while the worker is busy, handed
+to the session as a pending injection (delivered at the turn's next request
+boundary); when idle it simply runs as the next turn. If the container engine
+is down, the dequeued message goes back to the head of the queue and bring-up
+retries after a pause instead of the message being dropped. Messages typed while a
+pending `ask_user` question awaits are answers, not queue items. During a
+turn the record registers an
 `ask_user` responder that pushes nothing extra (the client renders the
 question from the tool call's `started` arguments) and blocks on the pending
 answer queue; the WebSocket handler resolves the question on an `answer`
 message or treats a plain `message` as the typed answer instead of queueing a
-turn (the message's Allegro flag is captured at enqueue time in
-`_inbox_item_from_message`, and the worker applies it via `set_allegro`
-when the turn starts, so mid-turn changes are impossible), and `stop`,
+turn (the message's Allegro flag and client id are captured at enqueue time in
+`_inbox_item_from_message`; a `queued: true` `user_message` event docks the
+client's queue pill, and the worker re-pushes the message without the flag
+when it dequeues a queued item, turning the pill into a chat bubble —
+injected messages are announced by the session itself at the moment they
+enter history). After every turn the worker re-enqueues undelivered
+injections. `stop`,
 `new-chat`, and teardown release the pending question so
 the blocked tool unwinds as a failed call. `GET /api/image/{client_id}`
 serves pod images for inline rendering: only image files under `/workspace`
@@ -874,6 +921,18 @@ the settings the web client needs for voice mode. Failures raise
   stringified `output` display field cannot carry.
   A `skipped` parser event renders like a finished tool row.
 - User interruption raises `TurnCancelled` inside the `started` event hook.
+- **Queued-message injection ("Send now")**: `queue_injection(item)` holds
+  a queued web message thread-safely; at the top of the turn loop — after
+  the previous tool batch's results are in history and before the next
+  `ask_question` — `apply_injections()` appends every pending message to
+  `self.messages` (through `_prepare_user_message`, so large injected
+  messages archive like turn-starting ones) and emits a `user_message`
+  event carrying the message's client id. The batch is never broken and
+  the turn never interrupted: the model simply cannot make another
+  request without the message being in the same one. Injections left
+  pending when a turn ends (final response, error, cancellation) are
+  returned to the web session's inbox by the worker, so they run as the
+  next turn instead of being dropped.
 - **User message archives**: before appending the user message, `run_turn`
   hands it to `_prepare_user_message` — messages at least
   `user_message_archive_min_chars` long are archived verbatim into the pod
@@ -986,7 +1045,13 @@ conveniences (`DEBIAN_FRONTEND=noninteractive`, pagers to `cat`,
 exec reads a bounded view of the output file (head-and-tail at
 `max_command_output_chars` bytes) together with the recorded exit code;
 exit codes 124/137 (timeout killed) map to status `timeout`, other non-zero
-codes to status `error`. When no call output path is set (direct host-side
+codes to status `error`. A timeout-killed call additionally carries an
+explicit `TIMEOUT:` notice on the result text stating exactly what happened
+(killed at the limit, with the exit code; 137 hedged between the timeout's
+final kill and a system kill such as out-of-memory), naming the effective
+maximum runtime of one execute_command call (`command_runtime_limit_s()`),
+and pointing at background jobs (`nohup ... &`) for longer work. When no call
+output path is set (direct host-side
 use), it falls back to a plain `container.exec`.
 
 ### `src/syna/protocol/user_messages.py`
@@ -1108,7 +1173,11 @@ in three parts:
   them with a follow-up `execute_command`. A pending `ask_user` question
   blocks both the tool worker and the turn thread indefinitely — by design —
   until the user answers or stop/new-chat/teardown releases the pending
-  question with a cancellation sentinel.
+  question with a cancellation sentinel. "Send now" crosses threads in the
+  other direction: the WebSocket handler thread moves the item out of the
+  inbox into the session's lock-guarded injection list, and the turn loop
+  drains it at its next request boundary; the only shared mutable state is
+  that list plus the condition-guarded inbox deque.
 
 ## Tests
 
@@ -1149,6 +1218,13 @@ All suites are plain scripts runnable with the project venv
   real bash (Git Bash on Windows): exit-code capture, `(no output)`,
   head-and-tail marker, and timeout kill with partial output. Does not
   exercise bollard/Docker itself.
+- `tests/test_command_timeout_notice.py` — the explicit timeout notice on
+  `execute_command` results: a 124 kill appends the `TIMEOUT:` notice
+  stating the exit code, the effective maximum runtime, and the
+  background-job advice; 137 hedges between the timeout's final kill and a
+  system kill; successful commands carry no notice; `command_runtime_limit_s`
+  reports the detach-bounded effective limit; and the detach notice names
+  that limit for `execute_command` only.
 - `tests/test_request_payload.py` — verifies the request payload sent to
   OpenRouter carries the system prompt with real quote characters (no
   escaping-layer artifacts) and survives a JSON roundtrip unchanged.
@@ -1179,6 +1255,16 @@ All suites are plain scripts runnable with the project venv
   (batch stops, remainder skipped), the `None`-timeout exemption (a slow
   question is not detached), `PendingQuestion` resolve/release semantics,
   and the terminal responder's number-or-text answer handling.
+- `tests/test_queued_messages.py` — queued messages and "Send now":
+  inbox items carry the client-generated id (and None on empty content),
+  the deque/condition inbox keeps FIFO order while allowing per-id
+  removal and wakes a waiting worker, the injection queue drains oldest
+  first and survives concurrent writers, a turn where the running tool
+  queues a "Send now" message lands it in history after the tool result
+  and before the next model request (message order asserted, the second
+  request payload carries it, and a `user_message` event with the id
+  reaches the client), and undelivered injections re-enqueue after a
+  turn ends.
 - `tests/test_user_message_archives.py` — the archive tool and session  hook: read-only pod write (exact bytes including LF newline
   preservation, mkdir + chmod 444 commands),
   failure returning None, large messages archived and annotated in
