@@ -7,6 +7,19 @@ the
 Browser object. That keeps internals (editor primitives, path utilities,
 browser internals like run()/page/close()) out of the model's reach.
 
+Editing a docstring or the system prompt (assets/prompt.md) is expensive
+and near-irreversible: every token is paid on every request, and text
+accretes because additions are easy to justify and nobody dares remove
+them. Before adding anything, apply three tests: does the model have to
+know this? Will it matter over 50% of the time across a multitude of
+tasks? Can the model learn it reliably from the tool's own output or
+trial and error? If the output already carries the information at the
+moment it matters — a note, an error message, a ref — the description
+does not need it. Document how the implementation works in
+docs/technical_description.md instead; docstrings carry only the contract
+the model must know up front: parameters, units, and non-obvious
+constraints that output cannot teach.
+
 Every tool docstring becomes the model-facing tool documentation through
 the request's tool schemas (`get_tool_definitions` in
 protocol/tool_schemas.py), so the docstrings below must stay in sync
@@ -24,7 +37,7 @@ from typing import Any
 
 from bollard import DockerException
 
-from .browser import Browser, PWError, ToolError
+from .browser import Browser, PWError, ToolError, describe_pw_error
 from ..config import (
     get_logger,
     load_command_timeout_s,
@@ -262,7 +275,7 @@ def _capture_screenshot(screenshot_fn, browser, args: dict) -> str:
     try:
         data = screenshot_fn(browser, **args)
     except PWError as exc:
-        return "ERROR: " + str(exc).strip().splitlines()[0][:300]
+        return "ERROR: " + describe_pw_error(exc)
     except ToolError as exc:
         return f"ERROR: {exc}"
     except TypeError as exc:
@@ -287,7 +300,7 @@ def browser(command: str, args: dict[str, Any]):
     - `args` (object, required): parameters for that command; see the list below.
 
     * `visit`: `url` (string, required). Opens a page and returns a compact view; tables come back one line per row with cells separated by ` | `. Interactive elements appear like `[12] button "Buy"`; pass the number as `ref`. Anti-bot challenges are waited out; if one persists, the view shows it and you can retry or report the block.
-    * `snapshot`: `viewport_only` (boolean). Re-reads the current page.
+    * `snapshot`: `viewport_only` (boolean), `full` (boolean). Re-reads the current page.
     * `click`: `ref` (integer, required). Returns what changed.
     * `type`: `ref` (integer, required), `text` (string, required), `clear` (boolean, default true), `submit` (boolean; presses Enter after typing).
     * `select`: `ref` (integer, required), `option` (string, required): visible label or value.

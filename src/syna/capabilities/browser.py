@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 import sys
 import threading
 import time
@@ -85,16 +86,195 @@ CHALLENGE_MARKERS = (
     "enable javascript and cookies",
 )
 
-# One-shot click on the first button whose label reads like blanket
-# consent. Ported from the retired fetcher; best-effort and silent on
-# failure (a real interstitial still shows up in the view).
-COOKIE_BANNER_JS = r"""
+# Overlay discovery shared by the snapshot walker, read()'s warning and
+# overlay dismissal. Two independent nets: the semantic net catches
+# native dialogs, Bootstrap-style modals and role=dialog surfaces (through
+# open shadow roots and same-origin iframes); the veil net catches
+# hand-rolled consent walls whatever their markup — a visible
+# position:fixed element covering almost the whole viewport, stacking
+# above the page (z-index >= 10), carrying an actionable control, and not
+# containing the page's main content (so SPA app shells are not mistaken
+# for walls; pages without main/article lean on the z-index guard).
+# Read-only observation throughout. Returns the outermost overlay per
+# subtree.
+_OVERLAY_ROOTS_FN = r"""
+function __synaOverlayRoots() {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const visible = (el) => {
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' &&
+      cs.opacity !== '0' && el.getClientRects().length > 0;
+  };
+  const found = [];
+  const frames = [document];
+  for (const f of document.querySelectorAll('iframe')) {
+    try { if (f.contentDocument) frames.push(f.contentDocument); } catch (e) {}
+  }
+  for (const doc of frames) {
+    const scan = (root) => {
+      for (const ov of root.querySelectorAll(
+          'dialog[open], .modal.show, [role=dialog], [role=alertdialog]')) {
+        if (visible(ov)) found.push(ov);
+      }
+      for (const el of root.querySelectorAll('*')) {
+        if (el.shadowRoot) scan(el.shadowRoot);
+      }
+    };
+    scan(doc);
+  }
+  const covers = (el) => {
+    const r = el.getBoundingClientRect();
+    return (r.width * r.height) / Math.max(1, vw * vh) >= 0.9;
+  };
+  const hasControl = (el) =>
+    !!el.querySelector('button, a[href], input:not([type=hidden]), select, [role=button]');
+  const sampled = new Set();
+  for (const doc of frames) {
+    for (const [fx, fy] of [[.5, .5], [.25, .25], [.75, .25], [.25, .75], [.75, .75]]) {
+      let hit = doc.elementFromPoint(vw * fx, vh * fy);
+      const seen = new Set();
+      while (hit && !seen.has(hit)) {
+        seen.add(hit);
+        sampled.add(hit);
+        const sr = hit.shadowRoot;
+        hit = sr ? sr.elementFromPoint(vw * fx, vh * fy) : null;
+      }
+    }
+  }
+  for (const start of sampled) {
+    let node = start;
+    while (node && node !== document.body && node !== document.documentElement) {
+      const cs = getComputedStyle(node);
+      const z = parseInt(cs.zIndex, 10);
+      const main = node.ownerDocument.querySelector('main, [role=main], article');
+      if (cs.position === 'fixed' && z >= 10 && covers(node) &&
+          !(main && node.contains(main)) && hasControl(node) && visible(node)) {
+        found.push(node);
+      }
+      node = node.parentElement;
+    }
+  }
+  return [...new Set(found)].filter(
+    o => !found.some(o2 => o2 !== o && o2.contains(o))
+  );
+}
+"""
+
+# Blocking overlays: consent banners, cookie dialogs, Bootstrap-style
+# modals (including ones like justETF's country warning, which render
+# inside shadow roots where document.querySelectorAll cannot reach and
+# sit transparent over the page intercepting every click) and hand-rolled
+# full-page walls caught by the veil rule. Dismissal clicks
+# consent-language buttons outright, else the overlay's own dismiss
+# control ([data-bs-dismiss], .btn-close, Close/Cancel) — never
+# a "Save"/"OK"/submit button, which could confirm something on the
+# user's behalf.
+OVERLAY_DISMISS_JS = (
+    r"""() => {"""
+    + _OVERLAY_ROOTS_FN
+    + r"""
+  const consent = /^(accept( all)?|allow all|allow cookies|agree|got it|i agree|aceptar( todo| todas)?|acepto|entendido|de acuerdo|permitir todo)\b/i;
+  const back = /^(close|cancel|dismiss|no thanks|no, thanks|×|✕)$/i;
+  const visible = (el) => {
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' &&
+      cs.opacity !== '0' && el.getClientRects().length > 0;
+  };
+  let dismissed = 0;
+  for (const ov of __synaOverlayRoots()) {
+    const controls = [...ov.querySelectorAll(
+      'button, a[role=button], [role=button], [data-bs-dismiss], .btn-close')];
+    const pick =
+      controls.find(
+        c => visible(c) && consent.test((c.innerText || c.value || '').trim())
+      ) ||
+      controls.find(c => c.matches('[data-bs-dismiss], .btn-close') && visible(c)) ||
+      controls.find(c => back.test((c.innerText || '').trim()));
+    if (pick) { pick.click(); dismissed++; }
+  }
+  return dismissed;
+}"""
+)
+
+# Names of visible overlays with the same blocking classification the
+# snapshot walker uses (:modal native dialogs, .modal.show, aria-modal or
+# covering at least half the viewport). read() prepends a warning when
+# the text it returns sits under a blocking one.
+BLOCKING_OVERLAYS_JS = (
+    r"""() => {"""
+    + _OVERLAY_ROOTS_FN
+    + r"""
+  return __synaOverlayRoots()
+    .map(ov => {
+      const r = ov.getBoundingClientRect();
+      const vw = window.innerWidth, vh = window.innerHeight;
+      let blocking = ov.classList.contains('modal') ||
+        ov.getAttribute('aria-modal') === 'true' ||
+        (r.width * r.height) / Math.max(1, vw * vh) >= 0.5;
+      if (ov.localName === 'dialog') {
+        try { blocking = ov.matches(':modal'); } catch (e) { blocking = true; }
+      }
+      const head = ov.querySelector('h1,h2,h3,h4,.modal-title');
+      const name = ((ov.getAttribute('aria-label') || ov.id ||
+        (head && head.textContent) || ov.textContent || ''))
+        .trim().replace(/\s+/g, ' ').slice(0, 60);
+      return { name, blocking };
+    })
+    .filter(o => o.name)
+    .slice(0, 3);
+}
+"""
+)
+
+# Interactive elements inside one child frame, for consent managers
+# (Sourcepoint, Didomi, Quantcast) whose buttons live in cross-origin
+# iframes the in-page snapshot walker cannot cross. Playwright's frame
+# API can, so the harness scans each frame with this and allocates its
+# own refs (FRAME_REF_BASE and up) resolved through a Python-side
+# registry. Only light-DOM controls; ids reuse the frame's own
+# __aiState so refs stay stable between scans of the same frame.
+FRAME_ELEMENTS_JS = r"""
 () => {
-  const re = /^(accept( all)?|allow all|agree|got it|i agree|aceptar( todo| todas)?|acepto|entendido|de acuerdo|permitir todo)\b/i;
-  const els = [...document.querySelectorAll('button,a[role=button],[role=button],input[type=button]')];
-  const b = els.find(e => re.test(((e.innerText || e.value) || '').trim()));
-  if (b) { b.click(); return true; }
-  return false;
+  const S = (window.__aiState = window.__aiState ||
+    { ids: new WeakMap(), els: new Map(), next: 1 });
+  const out = [];
+  for (const el of document.querySelectorAll(
+      'button, a[href], input:not([type=hidden]), select, textarea, [role=button]')) {
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') {
+      continue;
+    }
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) continue;
+    let id = S.ids.get(el);
+    if (!id) { id = S.next++; S.ids.set(el, id); }
+    S.els.set(id, el);
+    const name = ((el.getAttribute('aria-label') ||
+      (el.innerText && el.innerText.trim()) || el.value ||
+      el.getAttribute('placeholder') || el.getAttribute('title') || ''))
+      .trim().replace(/\s+/g, ' ').slice(0, 70);
+    const kind = el.tagName === 'A' ? 'link'
+      : el.tagName === 'SELECT' ? 'select'
+      : (el.tagName === 'INPUT' && !/^(submit|button|reset)$/.test(el.type))
+      ? 'input' : 'button';
+    out.push({ id, name, kind, disabled: el.disabled });
+  }
+  return out.slice(0, 30);
+}
+"""
+
+# Last-resort click for styled controls whose real input sits hidden
+# under a custom label: Playwright's actionability check refuses to
+# click an element that does not receive pointer events, so click the
+# wrapping label first, then the element itself with a raw JS click
+# (HTMLElement.click() toggles checkboxes and fires input/change like
+# a real click, without hit-target checks).
+FALLBACK_CLICK_JS = r"""
+(e) => {
+  const label = (e.labels && e.labels[0]) || e.closest('label');
+  if (label && label !== e) { label.click(); return 'label'; }
+  e.click();
+  return 'js';
 }
 """
 
@@ -152,8 +332,10 @@ TABLE_AWARE_TEXT_JS = r"""
 }
 """
 
-SNAPSHOT_JS = r"""
-(opts) => {
+SNAPSHOT_JS = (
+    r"""(opts) => {"""
+    + _OVERLAY_ROOTS_FN
+    + r"""
   const S = (window.__aiState = window.__aiState || { ids: new WeakMap(), els: new Map(), next: 1 });
   for (const [id, el] of S.els) if (!el.isConnected) S.els.delete(id);
 
@@ -373,13 +555,43 @@ SNAPSHOT_JS = r"""
     if (block || tag === 'tr') flush();
   }
 
-  walk(document.body || document.documentElement);
+  // Blocking overlays: consent banners, cookie dialogs and modals that
+  // sit over the page and intercept its clicks. While one is open the
+  // view collapses to just the overlay(s), so the model's next action is
+  // dismissing it instead of clicking dead refs; opts.full opts out.
+  const tops = __synaOverlayRoots();
+  const isBlocking = (ov) => {
+    if (ov.localName === 'dialog') {
+      try { return ov.matches(':modal'); } catch (e) { return true; }
+    }
+    if (ov.classList.contains('modal')) return true;
+    if (ov.getAttribute('aria-modal') === 'true') return true;
+    const r = ov.getBoundingClientRect();
+    return (r.width * r.height) / Math.max(1, vw * vh) >= 0.5;
+  };
+  const overlayName = (ov) => {
+    const head = ov.querySelector('h1,h2,h3,h4,.modal-title');
+    return cut(squash((ov.getAttribute('aria-label') || ov.id ||
+      (head && head.textContent) || ov.textContent || '')), 60);
+  };
+  const area = (ov) => {
+    const r = ov.getBoundingClientRect();
+    return r.width * r.height;
+  };
+  const blocking = tops.filter(isBlocking).sort((a, b) => area(b) - area(a));
+  const pageHidden = blocking.length > 0 && !opts.full;
+  if (pageHidden) for (const ov of blocking) walk(ov);
+  else walk(document.body || document.documentElement);
   flush();
 
   const de = document.documentElement;
-  return { lines, scrollY: Math.round(window.scrollY), scrollH: de.scrollHeight, vh };
+  return { lines, scrollY: Math.round(window.scrollY), scrollH: de.scrollHeight, vh,
+           pageHidden,
+           blocking: blocking.map(overlayName).filter(Boolean).slice(0, 3),
+           overlays: tops.map(overlayName).filter(Boolean).slice(0, 3) };
 }
 """
+)
 
 
 class Browser:
@@ -410,8 +622,8 @@ class Browser:
     def visit(self, url: str):
         return self._tool("visit", url=url)
 
-    def snapshot(self, viewport_only: bool = False):
-        return self._tool("snapshot", viewport_only=viewport_only)
+    def snapshot(self, viewport_only: bool = False, full: bool = False):
+        return self._tool("snapshot", viewport_only=viewport_only, full=full)
 
     def click(self, ref: int):
         return self._tool("click", ref=ref)
@@ -458,8 +670,61 @@ def detect_host_os() -> str:
     return "linux"
 
 
+# Refs at FRAME_REF_BASE and up belong to elements inside child frames
+# (consent-manager iframes and the like); they resolve through the
+# session's Python-side registry instead of the main world's __aiState.
+FRAME_REF_BASE = 100000
+
+# Frame URLs that only ever carry ad machinery, never consent content.
+FRAME_SCAN_SKIP = ("imasdk", "doubleclick", "googlesyndication")
+
+
 class ToolError(Exception):
     """Raised for errors that should be shown to the model verbatim."""
+
+
+# Call-log lines that carry the actionable verdict (why the action failed),
+# and the retry-cycle boilerplate that repeats until the budget is spent.
+PW_REASON_PATTERN = re.compile(
+    r"intercepts pointer events|intercept|not visible|hidden|detached|"
+    r"obscures|not stable|does not receive pointer|resolved to|"
+    r"element is not|failed to",
+    re.IGNORECASE,
+)
+PW_NOISE_PATTERN = re.compile(
+    r"^(attempting|retrying|waiting|\d+ ?×|click action|"
+    r"element is (visible|enabled|editable|attached)|"
+    r"scrolling into view|done scrolling|performing)",
+    re.IGNORECASE,
+)
+
+
+def describe_pw_error(exc: Exception) -> str:
+    """Condense a Playwright error into one actionable line.
+
+    The first line carries what was attempted (and the timeout); the
+    call-log lines that follow carry the actionability verdict — "element
+    is not visible", "<label> intercepts pointer events", "element is
+    detached" — which is exactly what the model needs to change course.
+    The call log repeats its boilerplate across retry cycles, so verdict
+    lines are picked by keyword first and deduplicated, with other lines
+    filling the remaining budget; long DOM dumps are clipped per line.
+    """
+    lines = [line.strip() for line in str(exc).strip().splitlines() if line.strip()]
+    if not lines:
+        return "Playwright error"
+    parts = [lines[0]]
+    reasons, rest = [], []
+    for line in lines[1:]:
+        if line == "Call log:" or set(line) <= {"="}:
+            continue
+        clean = line.lstrip("- ").strip()
+        if PW_REASON_PATTERN.search(clean):
+            reasons.append(clean[:160])
+        elif not PW_NOISE_PATTERN.search(clean):
+            rest.append(clean[:120])
+    parts.extend(list(dict.fromkeys(reasons + rest))[:5])
+    return "; ".join(parts)[:600]
 
 
 class BrowserSession:
@@ -517,6 +782,8 @@ class BrowserSession:
         self._last: tuple[str, list[str]] | None = None
         self._last_nav_url: str | None = None
         self._last_click_at = 0.0
+        self._frame_refs: dict[int, tuple[Any, int]] = {}
+        self._frame_next = FRAME_REF_BASE
 
     async def start(self) -> "BrowserSession":
         self._cm = AsyncCamoufox(**self._kw)
@@ -741,15 +1008,16 @@ class BrowserSession:
         except TypeError as e:
             return f"ERROR: bad arguments for {name}: {e}"
         except PWError as e:
-            return "ERROR: " + str(e).strip().splitlines()[0][:300]
+            return "ERROR: " + describe_pw_error(e)
 
-    async def _raw_snapshot(self, viewport_only: bool) -> dict:
+    async def _raw_snapshot(self, viewport_only: bool, full: bool = False) -> dict:
         """Run the snapshot walker, retrying once when a navigation destroys the context."""
         page = self._live_page()
         for attempt in (0, 1):
             try:
                 return await page.evaluate(
-                    SNAPSHOT_JS, {"viewportOnly": viewport_only, "maxLine": 240}
+                    SNAPSHOT_JS,
+                    {"viewportOnly": viewport_only, "maxLine": 240, "full": full},
                 )
             except PWError as e:
                 if attempt == 0 and "context" in str(e).lower():
@@ -767,14 +1035,75 @@ class BrowserSession:
             + f"\n... [{dropped} more lines truncated; scroll, use viewport_only, or read(ref)]"
         )
 
-    async def _observe(self, *, viewport_only: bool = False, diff: bool = False) -> str:
-        data = await self._raw_snapshot(viewport_only)
+    async def _scan_frames(self) -> list[str]:
+        """List interactive elements inside child frames, allocating refs.
+
+        Consent managers (Sourcepoint, Didomi, Quantcast) render their
+        buttons inside cross-origin iframes the in-page walker cannot
+        cross; Playwright's frame API can. Only called for views where an
+        overlay blocks the page, so ordinary iframe ads add no noise.
+        """
+        lines: list[str] = []
+        page = self._live_page()
+        for frame in page.frames:
+            if frame is page.main_frame or frame.url == "about:blank":
+                continue
+            if any(skip in frame.url for skip in FRAME_SCAN_SKIP):
+                continue
+            try:
+                entries = await asyncio.wait_for(
+                    frame.evaluate(FRAME_ELEMENTS_JS), timeout=4
+                )
+            except Exception:
+                continue
+            if not entries:
+                continue
+            host = urlparse(frame.url).netloc or "frame"
+            lines.append(f"(frame {host} — its controls get refs below)")
+            for entry in entries:
+                gref = self._frame_next
+                self._frame_next += 1
+                self._frame_refs[gref] = (frame, entry["id"])
+                state = " disabled" if entry.get("disabled") else ""
+                name = f' "{entry["name"]}"' if entry["name"] else ""
+                lines.append(f"[{gref}] {entry['kind']}{name}{state}")
+        return lines
+
+    async def _observe(
+        self, *, viewport_only: bool = False, diff: bool = False, full: bool = False
+    ) -> str:
+        data = await self._raw_snapshot(viewport_only, full)
         page = self._live_page()
         url, lines = page.url, data["lines"]
+        blocking = data.get("blocking") or []
+        if data.get("pageHidden") or blocking:
+            lines = lines + await self._scan_frames()
         head = (
             f"URL: {url}\nTitle: {await page.title()}\n"
             f"Scroll: {data['scrollY']}/{data['scrollH']}px (viewport {data['vh']})\n"
         )
+        blocking = data.get("blocking") or []
+        if data.get("pageHidden"):
+            head += (
+                "(note: a blocking overlay is open: "
+                + " | ".join(blocking)
+                + " — the rest of the page is hidden until it is dismissed;"
+                " interact with the overlay above, or call snapshot with"
+                " full=true to see the page anyway)\n"
+            )
+        elif blocking:
+            head += (
+                "(note: a blocking overlay is open: "
+                + " | ".join(blocking)
+                + " — clicks underneath will not land until it is dismissed"
+                " (page shown anyway: full=true))\n"
+            )
+        elif data.get("overlays"):
+            head += (
+                "(note: overlay open on the page: "
+                + " | ".join(data["overlays"])
+                + " — dismiss it if it is in the way)\n"
+            )
         prev, self._last = self._last, (url, lines)
 
         if diff and prev and prev[0] == url:
@@ -828,15 +1157,22 @@ class BrowserSession:
                 return
             await asyncio.sleep(1.0)
 
-    async def _dismiss_cookie_banner(self) -> None:
-        """Best-effort click on a consent button, with a humanlike pause."""
+    async def _dismiss_blocking_overlays(self) -> int:
+        """Dismiss visible blocking overlays (banners, dialogs, modals).
+
+        Best-effort and silent on failure; returns how many overlays a
+        dismissal control was clicked in. Only consent-language buttons
+        and pure-dismiss controls are clicked — never Save/OK/submit.
+        """
         try:
-            clicked = await self._live_page().evaluate(COOKIE_BANNER_JS)
-            if clicked:
-                get_logger().debug("Cookie banner dismissed.")
-                await asyncio.sleep(random.uniform(0.4, 0.9))
+            dismissed = await self._live_page().evaluate(OVERLAY_DISMISS_JS)
         except Exception:
-            get_logger().debug("Cookie banner dismissal failed", exc_info=True)
+            get_logger().debug("Overlay dismissal failed", exc_info=True)
+            return 0
+        if dismissed:
+            get_logger().debug("Dismissed %d blocking overlay(s).", dismissed)
+            await asyncio.sleep(random.uniform(0.4, 0.9))
+        return dismissed
 
     async def _human_scroll(self, max_steps: int = 10) -> None:
         """Scroll gradually with random pauses to trigger lazy-loading.
@@ -879,6 +1215,23 @@ class BrowserSession:
 
     async def _el(self, ref: int):
         page = self._live_page()
+        if ref >= FRAME_REF_BASE:
+            entry = self._frame_refs.get(ref)
+            if entry is None:
+                raise ToolError(
+                    f"ref {ref} not found (page changed?). Call snapshot to refresh refs."
+                )
+            frame, local_id = entry
+            h = await frame.evaluate_handle(
+                "(id) => (window.__aiState && window.__aiState.els.get(id)) || null",
+                local_id,
+            )
+            el = h.as_element()
+            if el is None:
+                raise ToolError(
+                    f"ref {ref} not found (page changed?). Call snapshot to refresh refs."
+                )
+            return el
         h = await page.evaluate_handle(
             "(id) => (window.__aiState && window.__aiState.els.get(id)) || null",
             int(ref),
@@ -907,24 +1260,82 @@ class BrowserSession:
         page = self._live_page()
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         self._last_nav_url = url
+        self._frame_refs.clear()
         await self._settle()
         await self._wait_past_challenge()
-        await self._dismiss_cookie_banner()
+        await self._dismiss_blocking_overlays()
         await self._human_scroll()
         await self._wait_dom_stable()
         self._last = None
         return await self._observe()
 
-    async def tool_snapshot(self, viewport_only: bool = False) -> str:
-        return await self._observe(viewport_only=viewport_only)
+    async def tool_snapshot(
+        self, viewport_only: bool = False, full: bool = False
+    ) -> str:
+        return await self._observe(viewport_only=viewport_only, full=full)
+
+    async def _click_element(self, el) -> str | None:
+        """Click via Playwright, falling back to overlay dismissal, a
+        trusted coordinate click, and label/JS clicks.
+
+        Returns a short note when a fallback path was used, or None for a
+        normal click. Raises ToolError carrying the actionability reason
+        when every path fails. Overlays are dismissed only when the
+        clicked element sits outside them: if the model is working inside
+        a consent banner, auto-accepting it would override the granular
+        interaction it was attempting.
+        """
+        try:
+            await el.click(timeout=7000)
+            return None
+        except PWError as exc:
+            reason = describe_pw_error(exc)
+        try:
+            inside_overlay = await el.evaluate(
+                "(e) => {"
+                + _OVERLAY_ROOTS_FN
+                + " return __synaOverlayRoots().some(o => o.contains(e)); }"
+            )
+        except PWError:
+            inside_overlay = False
+        dismissed = 0 if inside_overlay else await self._dismiss_blocking_overlays()
+        if dismissed:
+            try:
+                await el.click(timeout=4000)
+                return (
+                    f"click worked after {dismissed} blocking"
+                    f" overlay(s) were dismissed ({reason})"
+                )
+            except PWError as exc2:
+                reason = describe_pw_error(exc2)
+        page = self._live_page()
+        try:
+            await el.evaluate(
+                "e => e.scrollIntoView({block: 'center', behavior: 'instant'})"
+            )
+            await asyncio.sleep(0.3)
+            box = await el.bounding_box()
+            if box:
+                await page.mouse.click(
+                    box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+                )
+                return f"coordinate click used ({reason})"
+        except PWError:
+            pass
+        try:
+            path = await el.evaluate(FALLBACK_CLICK_JS)
+            return f"{path} click used ({reason})"
+        except PWError:
+            raise ToolError(reason) from exc
 
     async def tool_click(self, ref: int) -> str:
         el = await self._el(ref)
         await el.scroll_into_view_if_needed(timeout=5000)
         self._last_click_at = time.monotonic()
-        await el.click(timeout=7000)
+        note = await self._click_element(el)
         await self._settle()
-        return await self._observe(diff=True)
+        view = await self._observe(diff=True)
+        return (f"(note: {note})\n{view}") if note else view
 
     async def tool_type(
         self, ref: int, text: str, clear: bool = True, submit: bool = False
@@ -937,7 +1348,7 @@ class BrowserSession:
         el = await self._el(ref)
         await el.scroll_into_view_if_needed(timeout=5000)
         self._last_click_at = time.monotonic()
-        await el.click(timeout=7000)
+        note = await self._click_element(el)
         if clear:
             await el.fill("")
         kb = self._live_page().keyboard
@@ -947,7 +1358,8 @@ class BrowserSession:
         if submit:
             await self._live_page().keyboard.press("Enter")
             await self._settle()
-        return await self._observe(diff=True)
+        view = await self._observe(diff=True)
+        return (f"(note: {note})\n{view}") if note else view
 
     async def tool_select(self, ref: int, option: str) -> str:
         el = await self._el(ref)
@@ -986,6 +1398,7 @@ class BrowserSession:
     async def tool_back(self) -> str:
         await self._live_page().go_back(wait_until="domcontentloaded", timeout=15000)
         self._last_nav_url = self._live_page().url
+        self._frame_refs.clear()
         await self._settle()
         self._last = None
         return await self._observe()
@@ -1008,6 +1421,18 @@ class BrowserSession:
                 return (
                     "(no text returned — the document is blank. It may have been"
                     " replaced by an overlay or crashed; call visit to reload it.)"
+                )
+            try:
+                scan = await page.evaluate(BLOCKING_OVERLAYS_JS)
+            except PWError:
+                scan = []
+            blocked = [o["name"] for o in scan if o.get("blocking")]
+            if blocked:
+                text = (
+                    "(note: a blocking overlay is open: "
+                    + " | ".join(blocked)
+                    + " — this text includes content that clicks cannot reach"
+                    " until the overlay is dismissed)\n" + text
                 )
         else:
             el = await self._el(ref)
