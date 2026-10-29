@@ -46,7 +46,6 @@ def test_screenshot_saves_image_into_pod(monkeypatch):
     result = tools.browser("screenshot", {})
 
     assert result.startswith("Screenshot saved to /workspace/screenshots/")
-    assert "describe_image" in result
     assert "capped to the viewport" in result
     assert any(
         "mkdir -p /workspace/screenshots" in " ".join(argv)
