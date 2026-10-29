@@ -64,8 +64,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna.config import get_project_root
+from syna.config import load_config
 from syna.conversation.session import AgentSession, shared_file_metadata
+from syna.paths import get_data_home
 from syna.state import (
     close_docker_client,
     create_container,
@@ -128,11 +129,8 @@ class ConsoleFeed:
 
 
 def _project_log_path() -> Path:
-    """Return the project log file path from the configuration."""
-    config_log = json.loads(
-        (get_project_root() / "assets" / "config.json").read_text(encoding="utf-8")
-    ).get("log_file", "syna.log")
-    return get_project_root() / config_log
+    """Return the log file path in the Syna data home from the configuration."""
+    return get_data_home() / load_config().get("log_file", "syna.log")
 
 
 def _count(events: list[dict], event_type: str, text: str | None = None) -> int:

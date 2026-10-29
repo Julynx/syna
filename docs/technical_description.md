@@ -1282,6 +1282,9 @@ All suites are plain scripts runnable with the project venv
   to start without `--i-understand-the-cost`: it prints a cost notice
   and exits with code 2 before touching Docker or the model, so an
   agent that runs every test after a change cannot start it blindly.
+  An import-and-resolve guard (`tests/test_worlds_benchmark_runner.py`)
+  imports the runner and resolves its configured log path, so refactors
+  that break it surface in the regular suite instead of mid-launch.
 - `tests/test_browser_health.py` — live browser health checks (manual run).
 - `tests/test_live_truthfulness.py` — live model evaluation scenarios
   (manual run, requires a container runtime and an API key).
