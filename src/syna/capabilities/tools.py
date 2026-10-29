@@ -360,9 +360,9 @@ def edit_file(file_path: str, operations: list[dict]):
 
 def describe_image(file_path: str, question: str):
     """
-    Get a text description of an image file, focused on your question. Useful for screenshots, charts, and photos, and for checking your own visual output (convert PDF pages to PNG first). Descriptions can be wrong about small text and exact numbers; when you need exact values, take them from the underlying data if you can.
-    - `file_path` (string, required): absolute path to an image in the pod.
-    - `question` (string, required): exactly what you need to know.
+    Get a text description of an image file, focused on your question. Useful for screenshots, charts, and photos, and for checking your own visual output (convert to PNG first). Descriptions can be wrong about small text and exact numbers; when you need exact values, take them from the underlying data if you can. Large images are downscaled before analysis; if you need to inspect fine detail (small text, icons, flags), pass a zoomed crop of that region instead of a full-page render.
+    - `file_path` (string, required): absolute path to an image file in the pod.
+    - `question` (string, required): exactly what you need to know about the image.
     """
     return v_describe_image(file_path, question)
 
