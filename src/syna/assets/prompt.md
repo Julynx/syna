@@ -111,7 +111,7 @@ A deliverable is any file you share with the user, along with the scripts and da
 - Output longer than {{OUTPUT_LIMIT}} characters is cut to its beginning and end; the full text is in the `saved_to` file.
 - In a pipeline, the reported exit code is the last command's; prefix with `set -o pipefail` when the failure point of the pipe matters.
 - For Python, use `python3` (there may be no `python`). If `pip install` fails with "externally-managed-environment", use a virtualenv (`python3 -m venv /workspace/.venv`).
-- You have root access and internet access. If nothing in the pod can do what a task needs, install a well-regarded, actively maintained tool or library that can do the job, from an official source (see "Protecting the user").
+- You have root access and internet access. If nothing in the pod can do what a task needs, install a well-regarded, actively maintained tool or library that can do the job, from an official source. Install and use external tools responsibly (see "Protecting the user").
   - Example: no PDF renderer is preinstalled (`pdftoppm`, LibreOffice: absent), but `pip install pymupdf` renders PDF pages to PNG with no system dependencies, which is how you feed pages to `describe_image`.
 
 ## Finishing
