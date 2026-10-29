@@ -37,14 +37,22 @@ const Voice = (() => {
   )
     ? settings.narration_reveal_timeout_ms
     : 30000;
+  const NARRATION_MAX_IN_FLIGHT = 2;
 
   function reset() {
-    cancelPendingNarration(false);
+    stop();
     enabled = initialEnabled;
-    stopPlayback();
     cancelRecording();
     hidePill();
     paint();
+  }
+
+  /* Cancel a narrated reply in flight and silence playback: abort every
+     in-flight synthesis, discard queued audio, and stop the current
+     chunk. Used by the composer's Stop button, new chat, and unload. */
+  function stop() {
+    cancelPendingNarration(false);
+    stopPlayback();
   }
 
   function paint() {
@@ -58,16 +66,33 @@ const Voice = (() => {
     document.body.classList.toggle("voice-off", !enabled || !STT_AVAILABLE);
   }
 
+  /**
+   * Reduce a reply to plain spoken prose: markdown structure is
+   * unwrapped, code fences and images are dropped, link labels survive
+   * without their URLs, raw URLs are removed (the synthesizer must not
+   * read "https://..."), LaTeX math is dropped (inline spans only when
+   * they carry LaTeX syntax, so "$3.50 - $5" survives) and emoji,
+   * including flags, skin tones and keycaps, are removed because the
+   * synthesizer reads them unpredictably.
+   */
   function speakableText(markdown) {
     return markdown
       .replace(/```[\s\S]*?```/g, " ")
       .replace(/`([^`]+)`/g, "$1")
       .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
       .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/\$\$[^$]*\$\$/g, " ")
+      .replace(/\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)/g, " ")
+      .replace(/\$[^$\n]*[\\^_{}][^$\n]*\$/g, " ")
+      .replace(/https?:\/\/\S+|www\.\S+/gi, " ")
       .replace(/^\s{0,3}#{1,6}\s+/gm, "")
       .replace(/^\s*[-*+]\s+/gm, "")
       .replace(/^\s*\|.*\|\s*$/gm, "")
       .replace(/(\*\*|__|\*|_|~~)/g, "")
+      .replace(
+        /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u{FE0F}\u{200D}\u{20E3}]/gu,
+        " ",
+      )
       .replace(/\s+/g, " ")
       .trim();
   }
@@ -139,16 +164,197 @@ const Voice = (() => {
     if (!pendingNarration) return;
     const pending = pendingNarration;
     pendingNarration = null;
-    clearTimeout(pending.timer);
-    pending.controller.abort();
-    if (reveal) pending.reveal();
+    pending.cancel();
+    if (reveal) pending.revealNow();
   }
 
-  /* Narrated reply flow. The response text stays hidden while speech is
-     being generated: the "Tuning up, please wait..." pill appears first,
-     and the bubble is revealed only when the audio is ready, the request
-     fails, or the reveal timeout elapses — whichever comes first. */
-  async function narrate(rawText, reveal) {
+  /* Narrated reply flow. The reply is synthesized as ordered sentence
+     chunks (SpeechChunker) with a small dispatch window of in-flight
+     requests; chunks play in order, the first one the moment its audio
+     is ready, so a long reply starts speaking in seconds instead of
+     after one long synthesis. The response text stays hidden behind the
+     "Tuning up, please wait..." pill until the first of: the first
+     chunk's audio arriving (playback starts), the first chunk failing,
+     or the reveal timeout elapsing — at which point in-flight synthesis
+     is aborted and dropped. A chunk that errors, is refused by the
+     model, or fails to decode is skipped with an event row while the
+     rest of the narration continues. */
+  function createNarration(chunks, reveal) {
+    const controller = new AbortController();
+    const audioUrls = new Array(chunks.length).fill(undefined);
+    let cursor = 0;
+    let inFlight = 0;
+    let playIndex = 0;
+    let playing = false;
+    let revealed = false;
+    let timer = 0;
+
+    /* Every closure below checks `pendingNarration !== narration` so a
+       superseded, finished, or cancelled attempt never touches state. */
+    const narration = {
+      chunks: chunks,
+      controller: controller,
+      dispatch: dispatch,
+      cancel: cancel,
+      revealNow: revealNow,
+    };
+
+    function revokeUnplayed() {
+      for (let i = playIndex; i < audioUrls.length; i++) {
+        if (audioUrls[i]) {
+          URL.revokeObjectURL(audioUrls[i]);
+          audioUrls[i] = null;
+        }
+      }
+    }
+
+    function revealNow() {
+      if (revealed) return;
+      revealed = true;
+      clearTimeout(timer);
+      hidePill(true);
+      reveal();
+    }
+
+    /* Drop the whole attempt: abort in-flight synthesis, discard every
+       not-yet-played audio, and reveal the text. Used on the reveal
+       timeout, when nothing arrived while the text was hidden. */
+    function drop() {
+      pendingNarration = null;
+      controller.abort();
+      revokeUnplayed();
+      revealNow();
+    }
+
+    function finishIfDrained() {
+      if (!playing && inFlight === 0 && playIndex >= chunks.length) {
+        pendingNarration = null;
+        voiceBtn.classList.remove("speaking");
+        setSpeaking(false);
+      }
+    }
+
+    function startPlayback(url) {
+      playing = true;
+      playbackUrl = url;
+      playback = new Audio(url);
+      playback.onended = () => {
+        URL.revokeObjectURL(url);
+        playing = false;
+        if (pendingNarration !== narration) return;
+        playNext();
+        finishIfDrained();
+      };
+      playback.onerror = () => {
+        URL.revokeObjectURL(url);
+        playing = false;
+        if (pendingNarration !== narration) return;
+        addEventRow(
+          "Speech playback failed: audio could not be decoded.",
+          true,
+        );
+        playNext();
+        finishIfDrained();
+      };
+      voiceBtn.classList.add("speaking");
+      setSpeaking(true);
+      playback.play().catch((err) => {
+        if (err.name === "AbortError") return;
+        URL.revokeObjectURL(url);
+        playing = false;
+        voiceBtn.classList.remove("speaking");
+        setSpeaking(false);
+        if (pendingNarration !== narration) return;
+        console.error(err);
+        addEventRow("Speech playback failed: " + err.message, true);
+        if (err.name === "NotAllowedError") {
+          drop();
+          return;
+        }
+        playNext();
+        finishIfDrained();
+      });
+    }
+
+    /* Play the next chunk in order, skipping failed ones; a chunk whose
+       audio has not arrived yet pauses the queue until it does. */
+    function playNext() {
+      if (playing) return;
+      while (playIndex < chunks.length) {
+        const url = audioUrls[playIndex];
+        if (url === undefined) return;
+        playIndex++;
+        if (url === null) continue;
+        startPlayback(url);
+        return;
+      }
+      finishIfDrained();
+    }
+
+    function dispatch() {
+      while (cursor < chunks.length && inFlight < NARRATION_MAX_IN_FLIGHT) {
+        inFlight++;
+        synthesize(cursor++);
+      }
+    }
+
+    async function synthesize(index) {
+      try {
+        const response = await fetch(API_BASE + "/api/speech/synthesize", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Syna-Token": window.SYNA_CONFIG?.auth_token || "",
+          },
+          body: JSON.stringify({ text: chunks[index] }),
+          signal: controller.signal,
+        });
+        const payload = response.ok
+          ? null
+          : await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(
+            (payload && payload.detail) || "HTTP " + response.status,
+          );
+        }
+        const url = URL.createObjectURL(await response.blob());
+        if (pendingNarration !== narration) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        inFlight--;
+        audioUrls[index] = url;
+        if (index === 0) revealNow();
+        playNext();
+        dispatch();
+      } catch (err) {
+        if (pendingNarration !== narration || controller.signal.aborted) return;
+        inFlight--;
+        audioUrls[index] = null;
+        console.error(err);
+        addEventRow("Speech synthesis failed: " + err.message, true);
+        if (index === 0) revealNow();
+        playNext();
+        dispatch();
+        finishIfDrained();
+      }
+    }
+
+    function cancel() {
+      controller.abort();
+      clearTimeout(timer);
+      playing = false;
+      revokeUnplayed();
+    }
+
+    timer = setTimeout(() => {
+      if (pendingNarration === narration) drop();
+    }, NARRATION_REVEAL_TIMEOUT_MS);
+
+    return narration;
+  }
+
+  function narrate(rawText, reveal) {
     const text = speakableText(String(rawText || ""));
     if (!enabled || !TTS_AVAILABLE || !text) {
       hidePill();
@@ -158,69 +364,16 @@ const Voice = (() => {
     cancelPendingNarration(true);
     stopPlayback();
     showPill("Tuning up, please wait...");
-    const controller = new AbortController();
-    const pending = { controller: controller, timer: 0, reveal: reveal };
-    pendingNarration = pending;
-    const settle = (play) => {
-      if (pendingNarration !== pending) return;
-      pendingNarration = null;
-      clearTimeout(pending.timer);
-      // The pill vanishes the moment the text is revealed, so the
-      // shrinking pill never lingers above the incoming bubble.
-      hidePill(true);
+    const chunker = window.SpeechChunker;
+    const chunks = chunker ? chunker.split(text) : [text];
+    if (!chunks.length) {
+      hidePill();
       reveal();
-      if (play) play();
-    };
-    pending.timer = setTimeout(() => {
-      if (pendingNarration !== pending) return;
-      controller.abort();
-      settle(null);
-    }, NARRATION_REVEAL_TIMEOUT_MS);
-    try {
-      const response = await fetch(API_BASE + "/api/speech/synthesize", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Syna-Token": window.SYNA_CONFIG?.auth_token || "",
-        },
-        body: JSON.stringify({ text: text }),
-        signal: controller.signal,
-      });
-      const payload = response.ok
-        ? null
-        : await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(
-          (payload && payload.detail) || "HTTP " + response.status,
-        );
-      }
-      const audioUrl = URL.createObjectURL(await response.blob());
-      if (pendingNarration !== pending) {
-        URL.revokeObjectURL(audioUrl);
-        return;
-      }
-      settle(() => {
-        playbackUrl = audioUrl;
-        playback = new Audio(playbackUrl);
-        playback.onended = () => {
-          voiceBtn.classList.remove("speaking");
-          setSpeaking(false);
-        };
-        voiceBtn.classList.add("speaking");
-        setSpeaking(true);
-        playback.play().catch((err) => {
-          voiceBtn.classList.remove("speaking");
-          setSpeaking(false);
-          console.error(err);
-          addEventRow("Speech playback failed: " + err.message, true);
-        });
-      });
-    } catch (err) {
-      if (pendingNarration !== pending) return;
-      settle(null);
-      console.error(err);
-      addEventRow("Speech playback failed: " + err.message, true);
+      return;
     }
+    const pending = createNarration(chunks, reveal);
+    pendingNarration = pending;
+    pending.dispatch();
   }
 
   function pickRecorderMime() {
@@ -376,6 +529,7 @@ const Voice = (() => {
   voiceBtn.addEventListener("click", () => {
     enabled = !enabled;
     if (!enabled) {
+      cancelPendingNarration(false);
       stopPlayback();
       cancelRecording();
     }
@@ -388,12 +542,13 @@ const Voice = (() => {
 
   addEventListener("beforeunload", () => {
     cancelRecording();
-    stopPlayback();
+    stop();
   });
 
   return {
     narrate,
     stopPlayback,
+    stop,
     reset,
     willNarrate,
     get enabled() {

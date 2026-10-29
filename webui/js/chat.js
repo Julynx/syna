@@ -962,6 +962,7 @@ function buildAskPanel(ask) {
   stop.addEventListener("click", () => {
     if (ws && ws.readyState === WebSocket.OPEN)
       ws.send(JSON.stringify({ type: "stop" }));
+    if (window.Voice) Voice.stop();
     setStatus("working", "Stopping...");
     dismissAskPanel();
   });
@@ -1548,6 +1549,7 @@ function sendMessage() {
 function sendStop() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "stop" }));
+  if (window.Voice) Voice.stop();
   setStatus("working", "Stopping...");
 }
 
@@ -1563,6 +1565,7 @@ async function newChat() {
   try {
     if (busy && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "stop" }));
+      if (window.Voice) Voice.stop();
     }
     const response = await fetch(API_BASE + "/api/new-chat/" + clientId, {
       method: "POST",

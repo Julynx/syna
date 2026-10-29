@@ -208,7 +208,7 @@ sources live in `webui/`:
   `base.css` defines a single dark palette (`color-scheme: dark`), and
   no `prefers-color-scheme` branches remain anywhere in `webui/`.
 - `webui/js/` — script blocks (`ambient`, `sfx`, `markdown`, `chat`,
-  `voice`), inlined in that order. The background light field (`ambient.js`)
+  `speech_chunker`, `voice`), inlined in that order. The background light field (`ambient.js`)
   blends three states — `idle`, `thinking`, `tool` — through per-frame
   weight easing; while the model narrates aloud, `voice.js` pins the state
   to `tool` and releases it back to the computed state when the speech
@@ -349,17 +349,41 @@ Client behavior notes:
   rebuild the dock from the event log
   (queued pill events first, their delivery event later); new chat and
   disconnects clear it. The old in-chat `.queued-tag` is gone.
-- Narrated replies no longer appear while speech is being generated.
-  When a `model_message` will be narrated, the client calls
+- Narrated replies no longer appear while their speech is being
+  generated. When a `model_message` will be narrated, the client calls
   `Voice.narrate(content, reveal)`: the "Tuning up, please wait..."
   pill appears immediately — *before* the response exists in the chat —
-  and the bubble is rendered only when TTS generation finishes (audio
-  plays), fails (error row), or the configured
-  `voice.narration_reveal_timeout_ms` (default 30 s) elapses, whichever
-  comes first; on timeout the pending audio attempt is dropped. A newer
-  narrated reply supersedes a still-waiting one by revealing its text
-  immediately. History replay is unaffected: replayed messages render
-  directly.
+  and the bubble is rendered when the first chunk's audio arrives
+  (playback starts), the first chunk fails (error row), or the
+  configured `voice.narration_reveal_timeout_ms` (default 30 s)
+  elapses, whichever comes first; on timeout every in-flight synthesis
+  is aborted and its audio dropped. A newer narrated reply supersedes
+  a still-waiting one by revealing its text immediately. History
+  replay is unaffected: replayed messages render directly.
+
+  Long replies are synthesized as chunks, not as one request:
+  `speech_chunker.js` (`window.SpeechChunker`, DOM-free, also exported
+  for Node) reduces the speakable text to ordered chunks of at most
+  ~1000 characters cut at sentence boundaries. Sentences come from the
+  ICU-backed `Intl.Segmenter` — which handles decimals, "a. m.",
+  ellipses, URLs, versions and inline enumerations natively — plus a
+  ~28-entry merge list that re-glues ICU's single weakness, a title
+  abbreviation before a capitalized word ("El Dr. García"); engines
+  without `Intl.Segmenter` fall back to terminator scanning with the
+  same merge list. `speakableText` strips what must not be spoken:
+  code fences, images, raw URLs, LaTeX math (inline `$...$` only when
+  it carries LaTeX syntax, so "$3.50 - $5" survives), and emoji
+  including flags. `voice.js` dispatches chunks through a window of 2
+  in-flight synthesis requests and plays them strictly in order, the
+  first one the moment it is ready — synthesis (~5 s per chunk) is an
+  order of magnitude faster than playback (measured on Gemini TTS:
+  ~12 s to synthesize a ~1000-char chunk against ~55 s of audio it
+  produces, so the queue cannot underrun). A chunk that errors, is
+  refused, or fails to decode is skipped with an event row while the
+  rest continues; the composer's Stop button, new chat, the ask-panel
+  stop, voice-mode off, and disconnects all call `Voice.stop()`, which
+  aborts in-flight synthesis, revokes the queued object URLs, and
+  silences playback.
 
 ## Landing page
 
@@ -1397,6 +1421,30 @@ All suites are plain scripts runnable with the project venv
   it may serve an ALTCHA challenge, which the chain treats as no
   results), broken-first-engine fall-through, and graceful degradation
   when every engine is broken.
+- `tests/js/test_speech_chunker.cjs` — zero-dependency Node suite for
+  `webui/js/speech_chunker.js` (`node tests/js/test_speech_chunker.cjs`):
+  the English and Spanish hard-case batteries (titles, decimals, "EE.
+  UU.", enumerations, "p. ej.", "pág.", "etc."), the merge list and its
+  chain behavior, the no-`Intl.Segmenter` fallback path (including its
+  documented enumeration weakness), packing invariants (size caps,
+  word-boundary hard splits, oversized single words, content and order
+  preservation), degenerate inputs, content fidelity (emoji, HTML and
+  sentinels pass through untouched), a ~6.4k-char news fixture with a
+  100 ms performance bound, determinism, and the options/API contract.
+- `tests/test_speech_chunker_js.py` — plain-script wrapper that runs the
+  Node suite and mirrors its exit code; prints a skip when Node.js is
+  not installed.
+- `mock/` — the narration lab, a manual test rig: `uv run python
+  mock/mock_server.py` serves `mock/narration_lab.html` on
+  http://127.0.0.1:8123/ together with the production
+  `webui/js/speech_chunker.js`, loads three long fixtures (the real
+  reply that failed to narrate, a markdown-heavy English report, a
+  pathological mixed text) and reproduces the app pipeline —
+  `speakableText`, chunking, the dispatch window, ordered playback,
+  reveal timing — with per-chunk status rows and an event log. Synthesis
+  runs either through a running Syna server (paste the
+  `SYNA_CONFIG.auth_token` in the page) or as locally generated rising
+  tones, so playback order is audible.
 - `tests/_runner.py` — shared harness for the plain-script suites: a
   monkeypatch (attribute/mapping overrides with automatic undo) and
   `run_suite`, which executes every test, prints per-test results, and

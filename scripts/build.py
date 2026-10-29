@@ -18,7 +18,14 @@ CSS_FILES = [
     "composer.css",
     "voice.css",
 ]
-JS_FILES = ["ambient.js", "sfx.js", "markdown.js", "chat.js", "voice.js"]
+JS_FILES = [
+    "ambient.js",
+    "sfx.js",
+    "markdown.js",
+    "chat.js",
+    "speech_chunker.js",
+    "voice.js",
+]
 SETUP_CSS_FILES = ["base.css", "setup.css"]
 SETUP_JS_FILES = ["setup.js"]
 

@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Syna narration lab</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0 auto;
+        padding: 24px;
+        max-width: 1100px;
+        background: #0f1114;
+        color: #d8dde3;
+        font:
+          14px/1.5 "Segoe UI",
+          system-ui,
+          sans-serif;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 4px;
+      }
+      h2 {
+        font-size: 15px;
+        margin: 26px 0 8px;
+        color: #9fb3c8;
+      }
+      .note {
+        color: #8a949e;
+        margin: 0 0 16px;
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin: 10px 0;
+      }
+      button,
+      select,
+      input {
+        background: #1a1f26;
+        color: #d8dde3;
+        border: 1px solid #2c3540;
+        border-radius: 8px;
+        padding: 7px 12px;
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      button.primary {
+        background: #2451b3;
+        border-color: #2f66d8;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      textarea {
+        width: 100%;
+        min-height: 160px;
+        resize: vertical;
+        background: #14181d;
+        color: #d8dde3;
+        border: 1px solid #2c3540;
+        border-radius: 10px;
+        padding: 10px;
+        font:
+          13px/1.5 Consolas,
+          monospace;
+      }
+      #pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: #1a1f26;
+        border: 1px solid #2c3540;
+        border-radius: 999px;
+        padding: 6px 14px;
+        margin: 8px 0;
+      }
+      #pill .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #e8b23c;
+      }
+      #pill.speaking .dot {
+        background: #35c26e;
+      }
+      #revealed {
+        color: #35c26e;
+        font-weight: 600;
+        margin-left: 10px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 12.5px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 5px 8px;
+        border-bottom: 1px solid #232a33;
+      }
+      th {
+        color: #9fb3c8;
+        font-weight: 600;
+      }
+      td.preview {
+        color: #8a949e;
+        max-width: 480px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .status-queued {
+        color: #8a949e;
+      }
+      .status-synthesizing {
+        color: #e8b23c;
+      }
+      .status-ready,
+      .status-playing {
+        color: #35c26e;
+      }
+      .status-played {
+        color: #6b7684;
+      }
+      .status-failed {
+        color: #e85c5c;
+      }
+      #log {
+        background: #14181d;
+        border: 1px solid #232a33;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font:
+          12px/1.7 Consolas,
+          monospace;
+        white-space: pre-wrap;
+      }
+      #log .err {
+        color: #e85c5c;
+      }
+      .summary {
+        color: #9fb3c8;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Syna narration lab</h1>
+    <p class="note">
+      Mirrors the app's voice pipeline: <code>speakableText</code> stripping →
+      <code>SpeechChunker.split</code> → dispatch window of 2 synthesis requests
+      → ordered playback, first chunk the moment it is ready → text revealed on
+      first-audio, first-chunk failure, or the reveal timeout. Loads the
+      production <code>webui/js/speech_chunker.js</code>.
+    </p>
+
+    <div class="controls">
+      <button data-fixture="0">
+        Load test 1 — the real failed reply (ES news)
+      </button>
+      <button data-fixture="1">
+        Load test 2 — tech report (EN, code/LaTeX/links)
+      </button>
+      <button data-fixture="2">Load test 3 — pathological (ES/EN mixed)</button>
+    </div>
+    <textarea
+      id="input"
+      spellcheck="false"
+      placeholder="Load a test or paste any markdown reply..."
+    ></textarea>
+
+    <div class="controls">
+      <select id="mode">
+        <option value="mock">Mock tones (local, no external calls)</option>
+        <option value="server">Syna server (real Gemini TTS)</option>
+      </select>
+      <input
+        id="target"
+        size="44"
+        value="http://127.0.0.1:8000/api/speech/synthesize"
+      />
+      <input
+        id="token"
+        size="38"
+        placeholder="Token (optional — auto-read from the server)"
+      />
+      <label
+        >reveal timeout
+        <input id="timeout" type="number" value="30000" style="width: 76px" />
+        ms</label
+      >
+      <button id="narrate" class="primary">▶ Narrate</button>
+      <button id="stop">■ Stop</button>
+    </div>
+
+    <div>
+      <span id="pill" hidden
+        ><span class="dot"></span
+        ><span id="pill-label">Tuning up, please wait...</span></span
+      >
+      <span id="revealed" hidden></span>
+    </div>
+
+    <p class="summary" id="summary"></p>
+
+    <h2>Speakable text (after stripping)</h2>
+    <pre id="speakable" style="white-space: pre-wrap"></pre>
+
+    <h2>Chunks</h2>
+    <table id="chunks">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>chars</th>
+          <th>status</th>
+          <th>synthesis</th>
+          <th>preview</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <h2>Event log</h2>
+    <div id="log"></div>
+
+    <script src="/webui/js/speech_chunker.js"></script>
+    <script src="/mock/fixtures.js"></script>
+    <script>
+      "use strict";
+
+      /* Mirrors webui/js/voice.js speakableText — keep both in sync. */
+      function speakableText(markdown) {
+        return markdown
+          .replace(/```[\s\S]*?```/g, " ")
+          .replace(/`([^`]+)`/g, "$1")
+          .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+          .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+          .replace(/\$\$[^$]*\$\$/g, " ")
+          .replace(/\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)/g, " ")
+          .replace(/\$[^$\n]*[\\^_{}][^$\n]*\$/g, " ")
+          .replace(/https?:\/\/\S+|www\.\S+/gi, " ")
+          .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+          .replace(/^\s*[-*+]\s+/gm, "")
+          .replace(/^\s*\|.*\|\s*$/gm, "")
+          .replace(/(\*\*|__|\*|_|~~)/g, "")
+          .replace(
+            /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u{FE0F}\u{200D}\u{20E3}]/gu,
+            " ",
+          )
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+
+      const input = document.getElementById("input");
+      const modeSelect = document.getElementById("mode");
+      const targetInput = document.getElementById("target");
+      const tokenInput = document.getElementById("token");
+      const timeoutInput = document.getElementById("timeout");
+      const narrateBtn = document.getElementById("narrate");
+      const stopBtn = document.getElementById("stop");
+      const pill = document.getElementById("pill");
+      const pillLabel = document.getElementById("pill-label");
+      const revealedLabel = document.getElementById("revealed");
+      const summary = document.getElementById("summary");
+      const speakablePre = document.getElementById("speakable");
+      const chunkBody = document.querySelector("#chunks tbody");
+      const logBox = document.getElementById("log");
+
+      const MAX_IN_FLIGHT = 2;
+      let narration = null;
+      let audio = null;
+      let audioUrl = null;
+      let playing = false;
+      let clockStart = 0;
+
+      function elapsed() {
+        return ((performance.now() - clockStart) / 1000).toFixed(2);
+      }
+
+      function log(message, isError) {
+        const line = document.createElement("div");
+        if (isError) line.className = "err";
+        line.textContent = "[" + elapsed() + "s] " + message;
+        logBox.appendChild(line);
+      }
+
+      function showPill(label, speakingColor) {
+        pill.hidden = false;
+        pill.classList.toggle("speaking", !!speakingColor);
+        pillLabel.textContent = label;
+      }
+
+      function hidePill() {
+        pill.hidden = true;
+      }
+
+      function stopPlayback() {
+        if (audio) {
+          audio.onended = null;
+          audio.onerror = null;
+          audio.pause();
+          audio = null;
+        }
+        if (audioUrl) {
+          URL.revokeObjectURL(audioUrl);
+          audioUrl = null;
+        }
+        playing = false;
+        setSpeaking(false);
+      }
+
+      function setSpeaking(state) {
+        if (!narration) pill.classList.toggle("speaking", state);
+      }
+
+      function preview(text) {
+        return text.length > 90 ? text.slice(0, 90) + "..." : text;
+      }
+
+      function renderStatic() {
+        const text = speakableText(input.value);
+        speakablePre.textContent = text || "(nothing speakable)";
+        const chunks = window.SpeechChunker ? SpeechChunker.split(text) : [];
+        summary.textContent =
+          speakableText.length +
+          " | speakable: " +
+          text.length +
+          " chars, chunks: " +
+          chunks.length +
+          " (max " +
+          SpeechChunker.DEFAULT_MAX_CHARS +
+          " chars, window " +
+          MAX_IN_FLIGHT +
+          ")";
+        chunkBody.innerHTML = "";
+        chunks.forEach((chunk, index) => {
+          const row = document.createElement("tr");
+          row.innerHTML =
+            "<td>" +
+            index +
+            "</td><td>" +
+            chunk.length +
+            "</td>" +
+            '<td class="status-queued">queued</td><td>—</td>' +
+            '<td class="preview"></td>';
+          row.querySelector(".preview").textContent = preview(chunk);
+          chunkBody.appendChild(row);
+        });
+        return chunks;
+      }
+
+      function rowFor(index) {
+        return chunkBody.children[index];
+      }
+
+      function setStatus(index, status, timing) {
+        const row = rowFor(index);
+        if (!row) return;
+        row.children[2].textContent = status;
+        row.children[2].className = "status-" + status;
+        if (timing !== undefined) row.children[3].textContent = timing;
+      }
+
+      function revealText(reason) {
+        if (narration.revealed) return;
+        narration.revealed = true;
+        clearTimeout(narration.timer);
+        hidePill();
+        revealedLabel.hidden = false;
+        revealedLabel.textContent =
+          "text revealed at +" + elapsed() + "s (" + reason + ")";
+        log("TEXT REVEALED (" + reason + ")");
+      }
+
+      function finishIfDrained() {
+        if (
+          narration &&
+          !playing &&
+          narration.inFlight === 0 &&
+          narration.playIndex >= narration.chunks.length
+        ) {
+          log("narration finished");
+          stopNarration(false);
+        }
+      }
+
+      function startPlayback(url, index) {
+        playing = true;
+        audioUrl = url;
+        audio = new Audio(url);
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          audioUrl = null;
+          playing = false;
+          log("chunk " + index + " ended");
+          if (narration) setStatus(index, "played");
+          playNext();
+          finishIfDrained();
+        };
+        audio.onerror = () => {
+          URL.revokeObjectURL(url);
+          audioUrl = null;
+          playing = false;
+          if (narration) {
+            log("audio decode failed on chunk " + index, true);
+            setStatus(index, "failed");
+          }
+          playNext();
+          finishIfDrained();
+        };
+        setStatus(index, "playing");
+        log("chunk " + index + " playing");
+        showPill("Reading aloud...", true);
+        audio.play().catch((err) => {
+          if (err.name === "AbortError") return;
+          URL.revokeObjectURL(url);
+          audioUrl = null;
+          playing = false;
+          log("playback refused: " + err.message, true);
+          playNext();
+          finishIfDrained();
+        });
+      }
+
+      function playNext() {
+        if (playing) return;
+        const state = narration;
+        while (state && state.playIndex < state.chunks.length) {
+          const url = state.audioUrls[state.playIndex];
+          if (url === undefined) return;
+          state.playIndex++;
+          if (url === null) continue;
+          startPlayback(url, state.playIndex - 1);
+          return;
+        }
+        finishIfDrained();
+      }
+
+      function dispatch() {
+        const state = narration;
+        while (
+          state.cursor < state.chunks.length &&
+          state.inFlight < MAX_IN_FLIGHT
+        ) {
+          state.inFlight++;
+          synthesize(state.cursor++);
+        }
+      }
+
+      async function synthesize(index) {
+        const state = narration;
+        const started = performance.now();
+        setStatus(index, "synthesizing");
+        try {
+          const response = await fetch("/api/speech/synthesize", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: state.chunks[index],
+              mode: modeSelect.value,
+              target: targetInput.value.trim(),
+              token: tokenInput.value.trim(),
+            }),
+            signal: state.controller.signal,
+          });
+          const payload = response.ok
+            ? null
+            : await response.json().catch(() => null);
+          if (!response.ok) {
+            throw new Error(
+              (payload && payload.detail) || "HTTP " + response.status,
+            );
+          }
+          const url = URL.createObjectURL(await response.blob());
+          if (narration !== state) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          state.inFlight--;
+          state.audioUrls[index] = url;
+          setStatus(
+            index,
+            "ready",
+            ((performance.now() - started) / 1000).toFixed(2) + "s",
+          );
+          log(
+            "chunk " +
+              index +
+              " ready (" +
+              state.chunks[index].length +
+              " chars)",
+          );
+          if (index === 0) revealText("first chunk audio ready");
+          playNext();
+          dispatch();
+        } catch (err) {
+          if (narration !== state || state.controller.signal.aborted) return;
+          state.inFlight--;
+          state.audioUrls[index] = null;
+          setStatus(
+            index,
+            "failed",
+            ((performance.now() - started) / 1000).toFixed(2) + "s",
+          );
+          log("chunk " + index + " failed: " + err.message, true);
+          if (index === 0) revealText("first chunk failed");
+          playNext();
+          dispatch();
+          finishIfDrained();
+        }
+      }
+
+      function stopNarration(logIt) {
+        const state = narration;
+        narration = null;
+        if (state) {
+          state.controller.abort();
+          clearTimeout(state.timer);
+          for (let i = state.playIndex; i < state.audioUrls.length; i++) {
+            if (state.audioUrls[i]) {
+              URL.revokeObjectURL(state.audioUrls[i]);
+              state.audioUrls[i] = null;
+              setStatus(i, "cancelled");
+            }
+          }
+        }
+        stopPlayback();
+        narrateBtn.disabled = false;
+        hidePill();
+        if (logIt) log("stopped by user");
+      }
+
+      function createNarration(chunks) {
+        const controller = new AbortController();
+        const state = {
+          chunks: chunks,
+          controller: controller,
+          audioUrls: new Array(chunks.length).fill(undefined),
+          cursor: 0,
+          inFlight: 0,
+          playIndex: 0,
+          revealed: false,
+        };
+        narration = state;
+        const timeoutMs = Number(timeoutInput.value) || 30000;
+        state.timer = setTimeout(() => {
+          if (narration === state) {
+            revealText("reveal timeout (" + timeoutMs + " ms)");
+            log(
+              "reveal timeout fired: aborting in-flight synthesis and dropping audio",
+              true,
+            );
+            stopNarration(false);
+          }
+        }, timeoutMs);
+        return state;
+      }
+
+      function narrate() {
+        stopNarration(false);
+        logBox.innerHTML = "";
+        revealedLabel.hidden = true;
+        clockStart = performance.now();
+        const text = speakableText(input.value);
+        const chunks = renderStatic();
+        if (!text || !chunks.length) {
+          log("nothing speakable to narrate", true);
+          return;
+        }
+        narrateBtn.disabled = true;
+        log(
+          "narrating " +
+            text.length +
+            " speakable chars as " +
+            chunks.length +
+            " chunks",
+        );
+        showPill("Tuning up, please wait...");
+        createNarration(chunks);
+        dispatch();
+      }
+
+      narrateBtn.addEventListener("click", narrate);
+      stopBtn.addEventListener("click", () => stopNarration(true));
+      input.addEventListener("input", renderStatic);
+      document.querySelectorAll("[data-fixture]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const fixtures = window.NARRATION_FIXTURES || {};
+          const labels = Object.keys(fixtures);
+          const fixture = fixtures[labels[Number(button.dataset.fixture)]];
+          if (!fixture) return;
+          input.value = fixture;
+          renderStatic();
+          log(
+            "loaded " +
+              labels[Number(button.dataset.fixture)] +
+              " (" +
+              fixture.length +
+              " raw chars)",
+          );
+        });
+      });
+      renderStatic();
+    </script>
+  </body>
+</html>
