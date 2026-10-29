@@ -59,6 +59,7 @@ wheels = [
 name = "bollard"
 version = "0.2.3"
 source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/92/ee/ad10d1cd808ade3c4b7cfb0a1ae6b02b86e16734b3368e422192785d79e9/bollard-0.2.3.tar.gz", hash = "sha256:e57a865bfbad47a06c0a96bfcaf2e43f3bab5a33a4941ab70d8bdd322b3da7c5", size = 57113, upload-time = "2026-10-25T16:30:41.344Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/1f/c841f44c77d34b90a9e8bec10c7800bdc29faab26cc1f569f5b1e5afd7ff/bollard-0.2.3-py3-none-any.whl", hash = "sha256:c364e4b2d8c550bed60cfd5a3bb61bc21edb70068c6d244e304f5826c2f823b9", size = 26732, upload-time = "2026-10-25T16:30:40.293Z" },
 ]
@@ -1213,7 +1214,7 @@ wheels = [
 
 [[package]]
 name = "syna-agent"
-version = "0.11.7"
+version = "0.11.14"
 source = { editable = "." }
 dependencies = [
     { name = "bollard" },
