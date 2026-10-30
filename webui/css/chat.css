@@ -268,9 +268,15 @@
   display: inline-block;
   max-width: 100%;
   font-size: 0;
+  margin: 6px 0;
 }
-.inline-image-frame img {
+.bubble.model .inline-image-frame img {
   max-width: 100%;
+  margin: 0;
+}
+.inline-image-frame .copy-btn {
+  top: 12px;
+  right: 12px;
 }
 .bubble.model .inline-image-frame .copy-btn {
   opacity: 0;
