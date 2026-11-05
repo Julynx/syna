@@ -417,7 +417,7 @@ def describe_image(file_path: str, question: str):
 
 def speech_to_text(file_path: str, language: str | None = None):
     """
-    Transcribe an audio file into written text. Call this tool to turn a recording, voice note, or audio clip in the pod into text you can work with.
+    Transcribe an audio file into written text. Call this tool to turn a recording, voice note, or audio clip in the pod into text you can work with. Do not call this tool when you can easily obtain the transcript by other means. For example, for YouTube videos, install yt-dlp and run `yt-dlp --skip-download --write-subs --sub-langs en --convert-subs srt "VIDEO_URL"` (or `--write-auto-subs` if the video has no real subtitles) instead of calling this tool.
     - `file_path` (string, required): absolute path to an audio file in the pod; supported formats are wav, mp3, m4a, ogg, opus, flac, aac, and webm.
     - `language` (string, optional): ISO-639-1 code of the audio's language, e.g. `en` or `de`. Some models detect the language automatically, but transcription might not provide correct results if the language is not set properly, and auto-detection is not always supported. Omit it to let the model detect the language.
 
