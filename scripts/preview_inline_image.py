@@ -13,9 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CSS_DIR = ROOT / "webui" / "css"
 FONT_DIR = ROOT / "src" / "syna" / "assets" / "vendor" / "fonts"
-OUT_DIR = Path(
-    r"C:\Users\Omega\AppData\Local\Temp\opencode\ui_preview"
-)
+OUT_DIR = Path(r"C:\Users\Omega\AppData\Local\Temp\opencode\ui_preview")
 
 CSS_FILES = [
     "base.css",
@@ -52,9 +50,7 @@ def inlined_css() -> str:
     blocks = []
     for name in CSS_FILES:
         text = (CSS_DIR / name).read_text(encoding="utf-8")
-        text = text.replace(
-            'url("vendor/fonts/', f'url("{FONT_DIR.as_uri()}/'
-        )
+        text = text.replace('url("vendor/fonts/', f'url("{FONT_DIR.as_uri()}/')
         blocks.append(f"<style>\n{text}\n</style>")
     return "\n".join(blocks)
 
