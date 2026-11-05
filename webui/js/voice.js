@@ -31,6 +31,39 @@ const Voice = (() => {
   let speaking = false;
   let pillEl = null;
   let pendingNarration = null;
+  let continuous = false;
+  let autoListenPending = false;
+  try {
+    continuous = localStorage.getItem("syna-continuous") === "on";
+  } catch (e) {}
+
+  /* Hands-free mode (settings, Voice): after a reply reaches the chat,
+     start listening again. A reply that will be narrated arms the
+     auto-listen when its text is revealed, and the mic opens when the
+     narration drains — never while Syna is still speaking, or the
+     microphone would record her own voice. */
+  function setContinuous(next) {
+    continuous = next;
+    try {
+      localStorage.setItem("syna-continuous", next ? "on" : "off");
+    } catch (e) {}
+  }
+
+  function replyDelivered() {
+    if (!continuous || !enabled || !STT_AVAILABLE) return;
+    if (recorder || micBtn.disabled) return;
+    if (speaking || pendingNarration) {
+      autoListenPending = true;
+      return;
+    }
+    startRecording();
+  }
+
+  function consumeAutoListen() {
+    if (!autoListenPending) return;
+    autoListenPending = false;
+    replyDelivered();
+  }
 
   const NARRATION_REVEAL_TIMEOUT_MS = Number.isFinite(
     settings.narration_reveal_timeout_ms,
@@ -167,6 +200,7 @@ const Voice = (() => {
     if (!pendingNarration) return;
     const pending = pendingNarration;
     pendingNarration = null;
+    if (!reveal) autoListenPending = false;
     pending.cancel();
     if (reveal) pending.revealNow();
   }
@@ -217,6 +251,7 @@ const Voice = (() => {
       clearTimeout(timer);
       hidePill(true);
       reveal();
+      if (continuous && enabled && STT_AVAILABLE) autoListenPending = true;
     }
 
     /* Drop the whole attempt: abort in-flight synthesis, discard every
@@ -227,6 +262,7 @@ const Voice = (() => {
       controller.abort();
       revokeUnplayed();
       revealNow();
+      consumeAutoListen();
     }
 
     function finishIfDrained() {
@@ -234,6 +270,7 @@ const Voice = (() => {
         pendingNarration = null;
         voiceBtn.classList.remove("speaking");
         setSpeaking(false);
+        consumeAutoListen();
       }
     }
 
@@ -362,6 +399,7 @@ const Voice = (() => {
     if (!enabled || !TTS_AVAILABLE || !text) {
       hidePill();
       reveal();
+      replyDelivered();
       return;
     }
     cancelPendingNarration(true);
@@ -372,6 +410,7 @@ const Voice = (() => {
     if (!chunks.length) {
       hidePill();
       reveal();
+      replyDelivered();
       return;
     }
     const pending = createNarration(chunks, reveal);
@@ -565,6 +604,11 @@ const Voice = (() => {
     stop,
     reset,
     willNarrate,
+    replyDelivered,
+    setContinuous,
+    get continuous() {
+      return continuous;
+    },
     get enabled() {
       return enabled;
     },

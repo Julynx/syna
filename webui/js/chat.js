@@ -1363,6 +1363,7 @@ function render(event) {
         Voice.narrate(event.content, () => addBubble(event.content, "model"));
       } else {
         addBubble(event.content, "model");
+        if (!replaying && window.Voice) Voice.replyDelivered();
       }
       break;
     case "history_done":
@@ -2008,6 +2009,33 @@ async function openSettingsModal() {
     },
   });
   cat3.appendChild(langRow);
+
+  const continuousRow = document.createElement("div");
+  continuousRow.className = "settings-row";
+  const continuousHeader = document.createElement("div");
+  continuousHeader.className = "settings-row-header";
+  const continuousLabel = document.createElement("label");
+  continuousLabel.className = "settings-label";
+  continuousLabel.textContent = "Continuous conversation";
+  continuousLabel.title =
+    "In voice mode, automatically start listening after each reply.";
+  continuousHeader.appendChild(continuousLabel);
+  continuousRow.appendChild(continuousHeader);
+  const continuousToggle = document.createElement("label");
+  continuousToggle.className = "settings-toggle";
+  continuousToggle.title = continuousLabel.title;
+  const continuousInput = document.createElement("input");
+  continuousInput.type = "checkbox";
+  continuousInput.checked = window.Voice ? Voice.continuous : false;
+  continuousInput.addEventListener("change", () => {
+    if (window.Voice) Voice.setContinuous(continuousInput.checked);
+  });
+  continuousToggle.appendChild(continuousInput);
+  const continuousText = document.createElement("span");
+  continuousText.textContent = "Enabled";
+  continuousToggle.appendChild(continuousText);
+  continuousRow.appendChild(continuousToggle);
+  cat3.appendChild(continuousRow);
 
   body.appendChild(cat3);
 

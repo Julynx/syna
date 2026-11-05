@@ -1246,6 +1246,17 @@ drops are ignored.
   Allegro runtime profile with live numbers computed from the loaded
   config. Nothing in it is editable; the mode is toggled from the
   composer.
+- The Voice settings category carries a "Continuous conversation"
+  toggle (default off, persisted in `localStorage` as `syna-continuous`,
+  a client preference like the Allegro pill): in voice mode, the
+  microphone automatically reopens after each reply reaches the chat.
+  A narrated reply arms the auto-listen when its text is revealed and
+  opens the mic only when the narration drains — never while Syna is
+  still speaking, which would record her own voice; an un-narrated
+  reply opens it immediately. User-initiated stops (composer Stop,
+  voice mode off, new chat) clear the armed auto-listen, and a reply
+  that hears nothing does not loop: with no message sent there is no
+  new reply to listen after.
 - The composer area ends with a small centered cursive disclaimer:
   "Syna is an AI agent; it can make mistakes. Review its outputs and
   files before acting on them."
