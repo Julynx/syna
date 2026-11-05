@@ -481,6 +481,7 @@ const Voice = (() => {
     micBtn.classList.add("recording");
     meterHandle = setInterval(meterLoop, 100);
     showPill("Listening...");
+    Sfx.play("micOn");
   }
 
   function stopRecording() {
@@ -494,6 +495,7 @@ const Voice = (() => {
   }
 
   async function transcribeAndSend(blob) {
+    Sfx.play("micOff");
     micBtn.disabled = true;
     micBtn.title = "Transcribing...";
     showPill("Transcribing...");
@@ -544,6 +546,7 @@ const Voice = (() => {
 
   micBtn.addEventListener("click", () => {
     if (speaking) {
+      Sfx.play("stop");
       stop();
       return;
     }

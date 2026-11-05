@@ -85,6 +85,30 @@ const Sfx = (() => {
       cat: "ui",
       gap: 0.1,
     },
+    micOn: {
+      n: [
+        [0, 0],
+        [7, 0.05],
+      ],
+      g: 0.09,
+      d: 0.18,
+      f: 3400,
+      tr: 0.05,
+      cat: "ui",
+      gap: 0.1,
+    },
+    micOff: {
+      n: [
+        [7, 0],
+        [0, 0.06],
+      ],
+      g: 0.1,
+      d: 0.2,
+      f: 3000,
+      tr: 0.05,
+      cat: "ui",
+      gap: 0.1,
+    },
     send: {
       n: [
         [0, 0],
@@ -400,7 +424,7 @@ const Sfx = (() => {
   document.addEventListener("click", (e) => {
     if (
       e.target.closest(
-        "#send-btn, #sound-btn, #allegro-btn, .see-btn, .tool-row",
+        "#send-btn, #sound-btn, #allegro-btn, #mic-btn, .see-btn, .tool-row",
       )
     )
       return;
