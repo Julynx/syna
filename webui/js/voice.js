@@ -493,6 +493,7 @@ const Voice = (() => {
   async function transcribeAndSend(blob) {
     micBtn.disabled = true;
     micBtn.title = "Transcribing...";
+    showPill("Transcribing...");
     try {
       const form = new FormData();
       form.append("file", blob, "voice-note." + extensionFor(blob.type));
@@ -511,12 +512,14 @@ const Voice = (() => {
         addEventRow("Nothing was heard in the recording.", true);
         return;
       }
+      hidePill();
       input.value = text;
       sendMessage();
     } catch (err) {
       console.error(err);
       addEventRow("Transcription failed: " + err.message, true);
     } finally {
+      hidePill();
       micBtn.disabled = false;
       micBtn.title = "Talk to Syna";
     }

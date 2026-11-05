@@ -8,10 +8,13 @@ writes re-encode the same way. Content is split on `\n` only — matching
 trailing newline are preserved on write instead of being normalized.
 """
 
+from difflib import unified_diff
 from pathlib import Path
 
 _READ_ENCODING = "utf-8"
 _ROUNDTRIP_ERRORS = "surrogateescape"
+
+DIFF_MAX_CHARS = 2000
 
 
 def _read_lines(file) -> tuple[list[str], bool, bool]:
@@ -87,6 +90,10 @@ def edit_file(file_path, operations: list[dict]):
     unknown operation types, out-of-bounds line numbers, invalid ranges,
     overlapping edit ranges, or a replace_string that matches zero or
     several times.
+
+    Returns a unified diff of the applied change (bounded to a
+    `DIFF_MAX_CHARS` head-and-tail view), empty when the file is
+    unchanged.
     """
     inserts: dict[int, list[str]] = {}
     removed: set[int] = set()
@@ -208,3 +215,21 @@ def edit_file(file_path, operations: list[dict]):
         content = content.replace(old_string, new_string)
 
     _write_content(file_path, content, uses_crlf, ends_on_newline)
+    return _applied_diff(
+        [_display_safe(line) for line in lines],
+        [_display_safe(line) for line in content.split("\n")] if content else [],
+    )
+
+
+def _applied_diff(before: list[str], after: list[str]) -> str:
+    """Render the change as a bounded unified diff; empty when unchanged."""
+    diff = "\n".join(
+        unified_diff(before, after, fromfile="before", tofile="after", lineterm="")
+    )
+    if not diff:
+        return ""
+    if len(diff) <= DIFF_MAX_CHARS:
+        return diff
+    half = DIFF_MAX_CHARS // 2
+    omitted = len(diff) - 2 * half
+    return f"{diff[:half]}\n[... {omitted} characters omitted ...]\n{diff[-half:]}"

@@ -829,7 +829,11 @@ ranges, and a `replace_string` whose `old_string` matches zero or
 several times all raise clean `ValueError`s instead of leaking internal
 `TypeError`s. `replace_string` swaps the one exact occurrence of a text
 snippet (the safer anchor for small edits in files that may have
-changed) and runs after the batch's line operations.
+changed) and runs after the batch's line operations. A successful edit
+returns a unified diff of the applied change — bounded to a head-and-tail
+view at `DIFF_MAX_CHARS` (2000), empty when the file is unchanged — so the
+model can confirm an edit landed without spending a follow-up `read_file`
+(a live session showed exactly that wasteful re-read pattern).
 
 ### `src/syna/capabilities/imaging.py`
 
@@ -913,7 +917,11 @@ current page right after a user-initiated interaction, unsolicited ones are
 closed; renderer crashes are logged and the page transparently reloaded
 (`_recover_from_crash`); `read` retries once and returns a diagnostic instead
 of an empty string when the document is blank; page errors, JS errors and
-failed requests are logged to the dev log.
+failed requests are logged to the dev log; and every tool command's duration
+is logged as it finishes through the shared `_tool` dispatch, so a wedged
+navigation (one live incident: a host-level TLS outage left `visit` hanging
+until the detach limit) is visible in the log instead of surfacing only as a
+bare tool-call timeout.
 
 Network guard: the browser runs on the host, so all its traffic is
 host-originated. A single `context.route("**/*")` handler (`_guard_route`)
@@ -1026,7 +1034,14 @@ into IP bans. Sleeps a randomized duration in `[delay_s, 1.5*delay_s)` before
 every request (fixed waits are a fingerprint of their own), holding a
 process-wide lock across the sleep and the request so searches from
 concurrent sessions or detached calls serialize and stay at least
-`delay_s` apart instead of firing together. Page visiting and conversion
+`delay_s` apart instead of firing together. Every engine attempt, result
+count, and lock wait is logged, because a silent chain is undiagnosable
+after the fact: in one live incident a host-level TLS outage made the
+first search hang, its detached call kept holding the lock, and two later
+searches timed out as opaque 30-second detaches with zero log lines — the
+lock is therefore acquired with a bounded wait (`_SEARCH_LOCK_WAIT_S`,
+15 s) that raises a clear "another web search is still running" error
+instead of silently detaching. Page visiting and conversion
 live in `browser.py` (`visit`/`read`): there is exactly one website viewer,
 so the model can move from viewing a page to acting on it in the next tool
 call.
@@ -1140,9 +1155,11 @@ sources live in `webui/`:
   activity AUDIO layer (`sfx.js` heartbeat/notes, driven by the same
   `data-ambient` attribute) stays silent while `Voice.speaking` is true —
   the voice is the only sound. Voice context pills ("Listening..." while
-  recording, "Tuning up, please wait..." while a narrated reply's speech
-  is being generated, before the reply's text is revealed) reuse the
-  `.inline-status` styling with smooth grow-in/collapse
+  recording, "Transcribing..." while the finished recording is being
+  transcribed and sent — the pill the old flow dropped, leaving the user
+  waiting in silence — and "Tuning up, please wait..." while a narrated
+  reply's speech is being generated, before the reply's text is revealed)
+  reuse the `.inline-status` styling with smooth grow-in/collapse
   transitions and are cleared on every fresh session.
 
 `python scripts/build.py` replaces each marker with the corresponding source file
@@ -1299,7 +1316,13 @@ to an audio format and `audio_format_for_path` maps a file extension to the
 same format for the `speech_to_text` tool; `transcribe_audio` takes an
 explicit `language` hint (None omits the field so the model auto-detects);
 `client_configuration` collects
-the settings the web client needs for voice mode. Failures raise
+the settings the web client needs for voice mode. `MAX_TTS_INPUT_CHARS`
+(4000) bounds one synthesis request — measured against the endpoint:
+~1000-character chunks work reliably, a ~19000-character request answered
+with an opaque provider 502 ("empty audio stream") — and `text_to_speech`
+rejects longer inputs up front with an error that says to split the file,
+converting a mysterious provider failure into a one-step self-correction.
+Failures raise
 `SpeechError` with a user-safe message.
 
 ### Narration flow
@@ -1362,7 +1385,10 @@ All suites are plain scripts runnable with the project venv
   non-UTF-8 bytes survive unrelated edits byte-exactly; line numbering
   matches `grep -n` on form-feed content; and `replace_string` swaps the
   unique match, fails cleanly on zero or several matches without touching
-  the file, and composes with line operations.
+  the file, and composes with line operations. Also covers the applied-diff
+  return: a unified diff accompanies a successful edit, a no-change edit
+  returns an empty diff, and a large diff is bounded to a head-and-tail
+  view at `DIFF_MAX_CHARS`.
 - `tests/test_tool_feedback.py` — session-level loop: history wiping after
   success, abort after 3 consecutive failures, `<tool_results>` marker
   format, parser warnings surfaced as harness notices, think+respond turns,
@@ -1487,8 +1513,10 @@ All suites are plain scripts runnable with the project venv
   origin, and CORS headers granted only to the UI origin.
 - `tests/test_web_search_pacing.py` — search rate-limit pacing: concurrent
   searches never overlap, the gap survives separate non-overlapping calls,
-  and the pacing sleep is randomized within `[delay_s, 1.5*delay_s)` rather
-  than a fixed value.
+  the pacing sleep is randomized within `[delay_s, 1.5*delay_s)` rather
+  than a fixed value, and a search that cannot acquire the lock within
+  `_SEARCH_LOCK_WAIT_S` raises a clear error instead of waiting
+  indefinitely behind a wedged call.
 - `tests/test_web_search_parsing.py` — search result post-processing:
   DuckDuckGo `uddg=` and Bing base64 `/ck/a` redirect unwrapping (including
   plain links and malformed payloads), the title/URL/snippet block
@@ -1514,6 +1542,11 @@ All suites are plain scripts runnable with the project venv
 - `tests/test_speech_chunker_js.py` — plain-script wrapper that runs the
   Node suite and mirrors its exit code; prints a skip when Node.js is
   not installed.
+- `tests/test_tts_length_guard.py` — the `text_to_speech` input-length
+  guard: text over `MAX_TTS_INPUT_CHARS` is rejected before synthesis
+  with an error naming the cap and the split instruction, an under-limit
+  text passes the guard and reaches synthesis, and the tool docstring
+  states the same limit as the guard.
 - `mock/` — the narration lab, a manual test rig: `uv run python
 mock/mock_server.py` serves `mock/narration_lab.html` on
   http://127.0.0.1:8123/ together with the production

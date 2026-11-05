@@ -43,6 +43,12 @@ PCM_SAMPLE_RATE_HZ = 24000
 PCM_SAMPLE_WIDTH_BYTES = 2
 PCM_CHANNELS = 1
 
+# Measured against the speech endpoint: ~1000-character synthesis chunks
+# work reliably, a ~19000-character request returns an opaque provider
+# error (502 "empty audio stream") instead of a clean rejection. Reject
+# longer inputs up front so the caller can split the text instead.
+MAX_TTS_INPUT_CHARS = 4000
+
 MEDIA_TYPES_BY_FORMAT = {
     "mp3": "audio/mpeg",
     "wav": "audio/wav",

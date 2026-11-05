@@ -112,6 +112,16 @@ default, 25 in Allegro), and anything longer must become
 model request, a step, and a request delay. Long builds, test suites,
 downloads, and "check back at 14:00" have no first-class tool.
 
+Live-session evidence (2026-11-05, Syna's own tool experiments): she
+named native background execution her top efficiency request — the
+`nohup` + wait + `tail` pattern costs "3 calls each time" — and the same
+session showed the failure side of the current model: three batches
+containing a deliberately slow call detached at the tool-call timeout,
+skipping the healthy calls behind them (three in the first batch, one in
+each of the others) in a single turn. A `wait` surface (or the background
+registry below) removes both the overhead and the batch-poisoning
+incentive to run slow calls alone.
+
 Proposed surface, three modes:
 
 1. `wait(seconds=N)` — sleep for N seconds.
@@ -179,6 +189,74 @@ Fit notes: Allegro should not halve waiting budgets — the wait length
 is user/model intent, not a speed knob to tune. The study should start
 by instrumenting how often real sessions do sleep-and-poll today; if
 the answer is "rarely", the tool is a nice-to-have, not a need.
+
+## Persistent Python session (kernel state between calls)
+
+A named, session-scoped Python interpreter whose variables, imports, and
+venv survive between `execute_command`-style calls (Jupyter-kernel
+shaped). Proposed surface: a `python` tool with an optional `session_id`,
+or a persistent REPL process managed per pod.
+
+Evidence: a live session (2026-11-05, Syna's own experiments) ranked this
+her #2 request after edit feedback. Her data-analysis scenario — install
+into a venv, load a CSV, clean and group, plot — re-imports, re-reads,
+and re-computes every intermediate state on each call because each
+`python3` invocation is a cold process; on top of the token cost, every
+step re-pays interpreter and import startup. The same session also
+showed the current workaround (`pip install` on every session, ~2 calls
+of setup before any real work) and the >25 s ceiling pushing analysis
+scripts into `nohup` + log + `tail`.
+
+Why backlog: the pod is per-session already, so the scoping question is
+small (one interpreter per pod), but the surface is not — process
+lifecycle across detached tool workers, memory growth over a long
+session, state visible to `execute_command` (the model must be able to
+inspect and clean up the interpreter), and interaction with the
+per-call detach semantics. The script-file pattern covers most real
+tasks at zero harness cost; instrument how often multi-call stateful
+analysis actually occurs (the Worlds benchmark's data tasks are the
+measurement ground) before building it.
+
+## Dedicated OCR (text extraction from image-heavy files)
+
+An `extract_text(file_path, pages=...)` tool for scanned PDFs and
+image-dense documents, returning text with per-block confidence.
+Today's path is `describe_image`, whose own docstring warns it can be
+wrong about small text and exact numbers, or 2-3 setup calls to install
+`tesseract` + a PDF renderer per session.
+
+Evidence: a live session (2026-11-05) tested `describe_image` against a
+PIL-rendered image with two short lines and it lost a decimal point
+(`1234.56` read as `123456`) — exactly the numeric-transcription failure
+the docstring warns about, on an easy image (crisp, 400x120, high
+contrast). Scanned legal or financial documents are strictly harder.
+
+Why backlog: real OCR needs `tesseract` (or similar) inside the pod,
+which means a custom image or per-session apt installs (slow, network-
+dependent, re-paid every session), and tesseract's own quality on
+tables/layouts is mediocre — the improvement over a zoomed-crop
+`describe_image` pass must be measured, not assumed. The crop guidance
+already in the `describe_image` docstring is the cheap mitigation;
+build the tool only if crop-then-describe still fails in practice.
+
+## `web_search` filters (recency, domain)
+
+Optional parameters on `search` — a recency window (e.g. `recency="month"`)
+and a domain restriction (`site=`) — mapped to the engine endpoints that
+support them (DuckDuckGo html accepts a `df` parameter; Bing has `qft`
+filters), ignored by engines that do not.
+
+Evidence: a live session (2026-11-05) ranked date filtering her #5
+request ("for current-facts tasks, filtering by date is almost always
+the first impulse"), but the search experiments in that same session
+never ran (host network outage), so the demand is stated, not measured.
+
+Why backlog: the engine fleet is server-rendered HTML endpoints whose
+parameters shift without notice, and unsupported-engine fallback must be
+honest (silently ignoring a recency filter returns stale results dressed
+as fresh). Instrument real sessions first: if queries about current
+facts are rare, the browser `visit` path plus a query word ("2026") is
+an adequate substitute.
 
 ## Allegro (the Turbo switch) — implemented
 

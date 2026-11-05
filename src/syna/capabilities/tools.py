@@ -56,6 +56,7 @@ from ..interaction import InteractionCancelled, InteractionError
 from ..interaction import ask as ask_interactive
 from .speech import (
     EXTENSION_BY_MEDIA_TYPE,
+    MAX_TTS_INPUT_CHARS,
     SpeechError,
     audio_format_for_path,
     load_speech_settings,
@@ -149,6 +150,8 @@ def execute_command(command: str, arguments: list[str] | None = None):
     Run a command in the pod (behavior described under Environment).
     - `command` (string, required): a full bash command line. Pipes, redirection, `&&`, and quoting work.
     - `arguments` (list of strings, optional): if present, `command` must be a bare executable name, and these are its arguments, passed without shell processing. Useful when quoting gets awkward.
+
+    One call's runtime is capped (a killed call reports the exact limit). A failed or timed-out call marks the remaining calls of the same reply as skipped, so run calls that may approach the runtime limit alone.
 
     To create a file, use a quoted heredoc so the shell expands nothing: `cat > /workspace/report/build.py <<'EOF'` … `EOF`.
 
@@ -390,7 +393,7 @@ def edit_file(file_path: str, operations: list[dict]):
       - `{"delete": {"line_num_or_range": [45, 47]}}`
       - `{"replace_string": {"old_string": "...", "new_string": "..."}}` — replaces the one exact occurrence of old_string; fails unless it matches exactly once. Prefer this for small edits: it cannot hit the wrong line.
 
-    Ranges are inclusive. Every line number in a call refers to the file as it was before that call, so several operations can be combined without recalculating; line numbers count lines exactly like `grep -n`. Afterwards, numbering has shifted: re-read the affected lines before the next edit, which also confirms the edit landed as intended. Write each line with its full indentation.
+    Ranges are inclusive. Every line number in a call refers to the file as it was before that call, so several operations can be combined without recalculating; line numbers count lines exactly like `grep -n`. The result includes a unified diff of what changed, so you can confirm the edit landed as intended without re-reading. Afterwards, numbering has shifted: re-read the affected lines before the next edit. Write each line with its full indentation.
 
     Example: edit_file(file_path="/workspace/app/config.py", operations=[{"replace_string": {"old_string": "TIMEOUT_SECONDS = 10", "new_string": "TIMEOUT_SECONDS = 30"}}])
     """
@@ -401,14 +404,17 @@ def edit_file(file_path: str, operations: list[dict]):
         if error:
             return error
         temp_file_path = Path(temp_path, basename(file_path))
-        e_edit_file(temp_file_path, operations)
+        diff = e_edit_file(temp_file_path, operations)
         container.copy_to(str(temp_file_path), dirname(file_path) or "/")
-    return f"File edited successfully ({len(operations)} operations applied)."
+    message = f"File edited successfully ({len(operations)} operations applied)."
+    if diff:
+        message += f"\n\nApplied diff:\n{diff}"
+    return message
 
 
 def describe_image(file_path: str, question: str):
     """
-    Get a text description of an image file, focused on your question. Useful for screenshots, charts, and photos, and for checking your own visual output (convert to PNG first). Descriptions can be wrong about small text and exact numbers; when you need exact values, take them from the underlying data if you can. Large images are downscaled before analysis; if you need to inspect fine detail (small text, icons, flags), pass a zoomed crop of that region instead of a full-page render.
+    Get a text description of an image file, focused on your question. This tool only reads images; it cannot create or edit them — for that, call text_to_image (original art) or script the file. Useful for screenshots, charts, and photos, and for checking your own visual output (convert to PNG first). Descriptions can be wrong about small text and exact numbers; when you need exact values, take them from the underlying data if you can. Large images are downscaled before analysis; if you need to inspect fine detail (small text, icons, flags), pass a zoomed crop of that region instead of a full-page render.
     - `file_path` (string, required): absolute path to an image file in the pod.
     - `question` (string, required): exactly what you need to know about the image.
     """
@@ -480,7 +486,7 @@ def text_to_speech(file_path: str):
     Synthesize spoken audio from a text file. Call this tool when the user wants to hear a text read out loud or asks for an audio version of a document.
     - `file_path` (string, required): absolute path to a text file in the pod.
 
-    The audio is saved into /workspace/audio; deliver it to the user with `share_file`. Very long texts take longer to synthesize and may be rejected by the speech model.
+    The audio is saved into /workspace/audio; deliver it to the user with `share_file`. A request may hold at most 4000 characters; split longer files into parts of at most 4000 characters and synthesize each part, then share all the audio files. The audio is for listening, not for lossless transport: a round-trip through speech_to_text can drop words.
     """
     settings = load_speech_settings()
     if not voice_enabled():
@@ -507,6 +513,15 @@ def text_to_speech(file_path: str):
         text = (temp_path / basename(file_path)).read_text(
             encoding="utf-8", errors="replace"
         )
+    if len(text) > MAX_TTS_INPUT_CHARS:
+        return {
+            "error": (
+                f"The file holds {len(text)} characters; one synthesis"
+                f" request accepts at most {MAX_TTS_INPUT_CHARS}. Split the"
+                f" text into parts of at most {MAX_TTS_INPUT_CHARS}"
+                " characters and call this tool for each part."
+            )
+        }
     try:
         audio = synthesize_speech(text, settings)
     except SpeechError as exc:

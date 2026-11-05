@@ -181,6 +181,10 @@ _ENGINES = (
 
 _search_lock = threading.Lock()
 
+# A queued search must not silently detach at the tool-call timeout while a
+# wedged earlier search holds the lock: fail fast with a clear error instead.
+_SEARCH_LOCK_WAIT_S = 15
+
 _browser: Browser | None = None
 
 _engine_blocked_until: dict[str, float] = {}
@@ -199,10 +203,35 @@ def search(query, delay_s=2):
     be a fingerprint. The sleep and the request share a process-wide lock,
     so searches from concurrent sessions or detached calls run one after
     another and stay at least 'delay_s' apart instead of firing together.
+    Raises ValueError instead of waiting indefinitely when another search
+    still holds the lock.
     """
-    with _search_lock:
+    logger = get_logger()
+    wait_started = time.monotonic()
+    if not _search_lock.acquire(timeout=_SEARCH_LOCK_WAIT_S):
+        logger.warning(
+            "Web search for %.100s gave up after %ss: another search still"
+            " holds the lock",
+            query,
+            _SEARCH_LOCK_WAIT_S,
+        )
+        raise ValueError(
+            "Another web search is still running and did not finish within"
+            f" {_SEARCH_LOCK_WAIT_S} seconds. Wait for its result, then"
+            " retry."
+        )
+    try:
+        waited = time.monotonic() - wait_started
+        if waited > 0.1:
+            logger.info(
+                "Web search for %.100s waited %.1fs for the search lock",
+                query,
+                waited,
+            )
         time.sleep(random.uniform(delay_s, delay_s * 1.5))
         return _search(query)
+    finally:
+        _search_lock.release()
 
 
 def _search(query):
@@ -215,6 +244,7 @@ def _search(query):
 
     results = _browser_search(query)
     if not results:
+        get_logger().warning("Web search returned no results for %.100s", query)
         return "Error performing web search"
     return _format_results(results)
 
@@ -236,15 +266,34 @@ def _browser_search(query):
                 name,
             )
             continue
+        get_logger().info("Search engine '%s': trying %.100s", name, query)
+        engine_started = time.monotonic()
         try:
             results = _search_engine(query, engine)
         except Exception:
+            get_logger().info(
+                "Search engine '%s': failed after %.1fs for query %.100s",
+                name,
+                time.monotonic() - engine_started,
+                query,
+            )
             get_logger().exception(
                 "Search engine '%s' failed for query %.100s", name, query
             )
             results = []
         if results:
+            get_logger().info(
+                "Search engine '%s': %d results in %.1fs",
+                name,
+                len(results),
+                time.monotonic() - engine_started,
+            )
             return results
+        get_logger().info(
+            "Search engine '%s': no results after %.1fs",
+            name,
+            time.monotonic() - engine_started,
+        )
         if _page_shows_challenge():
             cooldown = random.uniform(*_ENGINE_COOLDOWN_S)
             _engine_blocked_until[name] = time.monotonic() + cooldown

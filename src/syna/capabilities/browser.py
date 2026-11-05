@@ -611,7 +611,21 @@ class Browser:
 
     def _tool(self, name: str, **args: Any) -> None:
         args = {k: v for k, v in args.items() if v is not None}
-        self.last = self.run(self._s.call(name, args))
+        started = time.monotonic()
+        try:
+            self.last = self.run(self._s.call(name, args))
+        except Exception:
+            get_logger().info(
+                "Browser command '%s' failed after %.1fs",
+                name,
+                time.monotonic() - started,
+            )
+            raise
+        get_logger().info(
+            "Browser command '%s' finished in %.1fs",
+            name,
+            time.monotonic() - started,
+        )
         return self.last
 
     @property

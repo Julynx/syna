@@ -99,6 +99,32 @@ def test_pacing_delay_is_randomized():
         assert DELAY_S <= duration < DELAY_S * 1.5
 
 
+def test_lock_wait_is_bounded():
+    """A search that cannot get the lock fails fast with a clear error.
+
+    A detached wedged search holds the lock for minutes; a queued call
+    must raise instead of silently detaching at the tool-call timeout.
+    """
+    original_search = web_search._search
+    web_search._search = lambda query: "results"
+    original_wait = web_search._SEARCH_LOCK_WAIT_S
+    web_search._SEARCH_LOCK_WAIT_S = 0.1
+    if not web_search._search_lock.acquire(timeout=1):
+        web_search._SEARCH_LOCK_WAIT_S = original_wait
+        raise AssertionError("the search lock must be free for this test")
+    try:
+        try:
+            web_search.search("blocked test", delay_s=DELAY_S)
+        except ValueError as exc:
+            assert "still running" in str(exc), str(exc)
+        else:
+            raise AssertionError("expected ValueError while the lock is held")
+    finally:
+        web_search._search_lock.release()
+        web_search._SEARCH_LOCK_WAIT_S = original_wait
+        web_search._search = original_search
+
+
 def main():
     """Run every pacing test and report a summary."""
     run_suite(
@@ -106,6 +132,7 @@ def main():
             test_concurrent_searches_do_not_overlap,
             test_search_spacing_across_batches,
             test_pacing_delay_is_randomized,
+            test_lock_wait_is_bounded,
         ]
     )
 

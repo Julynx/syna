@@ -215,9 +215,106 @@ def test_replace_string_sees_the_result_of_line_operations():
     print("PASS replace_string composes with line operations")
 
 
+def test_edit_file_returns_unified_diff():
+    path = _make_file()
+    diff = edit_file(
+        path,
+        [
+            {
+                "replace": {
+                    "line_num_or_range": [2, 2],
+                    "replace_with_lines": ["LINE TWO"],
+                }
+            }
+        ],
+    )
+    assert diff.startswith("--- before"), diff
+    assert "-line two" in diff, diff
+    assert "+LINE TWO" in diff, diff
+    assert "line one" in diff and "line three" in diff, diff
+    print("PASS edit_file returns the applied unified diff")
+
+
+def test_noop_replace_string_returns_empty_diff():
+    path = _make_file()
+    diff = edit_file(
+        path,
+        [
+            {
+                "replace_string": {
+                    "old_string": "line two",
+                    "new_string": "line two",
+                }
+            }
+        ],
+    )
+    assert diff == "", diff
+    assert path.read_text(encoding="utf-8") == SAMPLE
+    print("PASS no-change edit returns an empty diff")
+
+
+def test_large_diff_is_bounded_head_and_tail():
+    path = Path(tempfile.mkdtemp(prefix="syna-editor-test-"), "large.txt")
+    path.write_text("".join(f"keep {i}\n" for i in range(1, 1001)), encoding="utf-8")
+    diff = edit_file(path, [{"delete": {"line_num_or_range": [3, 998]}}])
+    assert "[... " in diff and "characters omitted ...]" in diff, diff[-200:]
+    assert diff.startswith("--- before"), diff[:60]
+    assert "-keep 3" in diff, diff[:200]
+    assert "keep 1000" in diff, diff[-200:]
+    assert len(diff) < 2200, len(diff)
+    print("PASS large diff is bounded to a head-and-tail view")
+
+
+def test_replace_string_change_appears_in_diff():
+    path = _make_file()
+    diff = edit_file(
+        path,
+        [
+            {
+                "replace_string": {
+                    "old_string": "line two",
+                    "new_string": "LINE TWO",
+                }
+            }
+        ],
+    )
+    assert "-line two" in diff, diff
+    assert "+LINE TWO" in diff, diff
+    print("PASS replace_string change appears in the diff")
+
+
+def test_combined_diff_includes_line_and_string_operations():
+    path = _make_file()
+    diff = edit_file(
+        path,
+        [
+            {
+                "replace": {
+                    "line_num_or_range": [1, 1],
+                    "replace_with_lines": ["ONE"],
+                }
+            },
+            {
+                "replace_string": {
+                    "old_string": "line three",
+                    "new_string": "LINE THREE",
+                }
+            },
+        ],
+    )
+    assert "-line one" in diff and "+ONE" in diff, diff
+    assert "-line three" in diff and "+LINE THREE" in diff, diff
+    print("PASS combined diff includes line and string operations")
+
+
 def main():
     test_valid_edit_still_applies()
     test_valid_combined_operations_still_apply()
+    test_edit_file_returns_unified_diff()
+    test_replace_string_change_appears_in_diff()
+    test_combined_diff_includes_line_and_string_operations()
+    test_noop_replace_string_returns_empty_diff()
+    test_large_diff_is_bounded_head_and_tail()
     test_null_payload_raises_clean_value_error()
     test_non_dict_operation_raises_clean_value_error()
     test_multi_key_operation_raises_clean_value_error()
