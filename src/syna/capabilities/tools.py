@@ -636,8 +636,8 @@ def ask_user(question_text: str, choices: list):
 
 def review_work(summary: str):
     """
-    Call this tool to verify the results of a task before reporting them to the user, but only if the task was especially complicated and/or prone to error. The tool takes a summary of the results of the task as a string, no files or artifacts. No need to explain the methodology you followed: the verifier gets that information by inspecting this conversation, including your tool calls. Call it on its own, after the work is done; an adversarial reviewer model inspects the conversation and its report comes back as this call's result.
-    - `summary` (string, required): what you intend to tell the user as the result of the task, excluding deliverables to save bandwidth.
+    If the task was especially complicated and/or prone to error, call this tool on its own after the work is done to verify the results before reporting them to the user. An adversarial reviewer model inspects the conversation, and its report comes back as this call's result. No need to explain the methodology you followed; the verifier gets that information by inspecting this conversation, including your tool calls.
+    - `summary` (string, required): the final response exactly as you would have sent it to the user, excluding any files or artifacts.
     """
     if not isinstance(summary, str) or not summary.strip():
         set_last_exit_code(1)
