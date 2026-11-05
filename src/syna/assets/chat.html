@@ -2026,6 +2026,24 @@ footer {
 #mic-btn {
   position: relative;
 }
+#mic-btn .material-symbols-outlined {
+  grid-area: 1 / 1;
+  transition:
+    opacity 0.3s ease,
+    transform 0.45s var(--ease);
+}
+#mic-btn .m-off {
+  opacity: 0;
+  transform: scale(0.6) rotate(20deg);
+}
+#mic-btn.speaking .m-off {
+  opacity: 1;
+  transform: none;
+}
+#mic-btn.speaking .m-on {
+  opacity: 0;
+  transform: scale(0.6) rotate(-20deg);
+}
 #mic-btn:disabled {
   opacity: 0.35;
   cursor: default;
@@ -3027,7 +3045,8 @@ const ICONS = {
   check: GLYPH("check", "i-check"),
   download: GLYPH("download", "i-download"),
   history: GLYPH("history"),
-  mic: GLYPH("mic"),
+  mic: GLYPH("mic", "m-on"),
+  micOff: GLYPH("mic_off", "m-off"),
   think: GLYPH("psychology"),
   image: GLYPH("image"),
   help: GLYPH("help"),
@@ -5542,6 +5561,9 @@ const Voice = (() => {
   function setSpeaking(next) {
     if (speaking === next) return;
     speaking = next;
+    micBtn.classList.toggle("speaking", next);
+    micBtn.title = next ? "Stop speaking" : "Talk to Syna";
+    micBtn.setAttribute("aria-label", micBtn.title);
     if (next) hidePill();
     updateAmbient();
   }
@@ -5931,7 +5953,7 @@ const Voice = (() => {
     }
   }
 
-  micBtn.innerHTML = ICONS.mic;
+  micBtn.innerHTML = ICONS.mic + ICONS.micOff;
   voiceBtn.innerHTML = ICONS.speakerOn + ICONS.speakerOff;
   paint();
 
@@ -5945,9 +5967,14 @@ const Voice = (() => {
     paint();
   });
 
-  micBtn.addEventListener("click", () =>
-    recorder ? stopRecording() : startRecording(),
-  );
+  micBtn.addEventListener("click", () => {
+    if (speaking) {
+      stop();
+      return;
+    }
+    if (recorder) stopRecording();
+    else startRecording();
+  });
 
   addEventListener("beforeunload", () => {
     cancelRecording();

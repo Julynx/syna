@@ -136,6 +136,9 @@ const Voice = (() => {
   function setSpeaking(next) {
     if (speaking === next) return;
     speaking = next;
+    micBtn.classList.toggle("speaking", next);
+    micBtn.title = next ? "Stop speaking" : "Talk to Syna";
+    micBtn.setAttribute("aria-label", micBtn.title);
     if (next) hidePill();
     updateAmbient();
   }
@@ -525,7 +528,7 @@ const Voice = (() => {
     }
   }
 
-  micBtn.innerHTML = ICONS.mic;
+  micBtn.innerHTML = ICONS.mic + ICONS.micOff;
   voiceBtn.innerHTML = ICONS.speakerOn + ICONS.speakerOff;
   paint();
 
@@ -539,9 +542,14 @@ const Voice = (() => {
     paint();
   });
 
-  micBtn.addEventListener("click", () =>
-    recorder ? stopRecording() : startRecording(),
-  );
+  micBtn.addEventListener("click", () => {
+    if (speaking) {
+      stop();
+      return;
+    }
+    if (recorder) stopRecording();
+    else startRecording();
+  });
 
   addEventListener("beforeunload", () => {
     cancelRecording();

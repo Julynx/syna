@@ -21,6 +21,24 @@
 #mic-btn {
   position: relative;
 }
+#mic-btn .material-symbols-outlined {
+  grid-area: 1 / 1;
+  transition:
+    opacity 0.3s ease,
+    transform 0.45s var(--ease);
+}
+#mic-btn .m-off {
+  opacity: 0;
+  transform: scale(0.6) rotate(20deg);
+}
+#mic-btn.speaking .m-off {
+  opacity: 1;
+  transform: none;
+}
+#mic-btn.speaking .m-on {
+  opacity: 0;
+  transform: scale(0.6) rotate(-20deg);
+}
 #mic-btn:disabled {
   opacity: 0.35;
   cursor: default;
