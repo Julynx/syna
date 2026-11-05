@@ -2023,6 +2023,9 @@ async function openSettingsModal() {
     options: continuousOpts,
     onChange: (val) => {
       if (window.Voice) Voice.setContinuous(val === "on");
+      // Client-only preference: the env/config snapshot cannot see it,
+      // so light the save button explicitly.
+      saveBtn.disabled = false;
     },
   });
   cat3.appendChild(continuousRow);
