@@ -2017,15 +2017,12 @@ async function openSettingsModal() {
   const { row: continuousRow } = createField({
     label: "Continuous conversation",
     desc: "In voice mode, automatically start listening after each reply.",
-    value: window.Voice && Voice.continuous ? "on" : "off",
+    value: config.continuous_conversation ? "on" : "off",
     defaultValue: "off",
     isSelect: true,
     options: continuousOpts,
     onChange: (val) => {
-      if (window.Voice) Voice.setContinuous(val === "on");
-      // Client-only preference: the env/config snapshot cannot see it,
-      // so light the save button explicitly.
-      saveBtn.disabled = false;
+      config.continuous_conversation = val === "on";
     },
   });
   cat3.appendChild(continuousRow);

@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 
 from ..config import (
+    DEFAULT_CONTINUOUS_CONVERSATION,
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
@@ -318,5 +319,8 @@ def client_configuration(settings: SpeechSettings, app_config: dict) -> dict:
         ),
         "narration_reveal_timeout_ms": voice_config.get(
             "narration_reveal_timeout_ms", DEFAULT_NARRATION_REVEAL_TIMEOUT_MS
+        ),
+        "continuous_conversation": voice_flag(
+            app_config.get("continuous_conversation", DEFAULT_CONTINUOUS_CONVERSATION)
         ),
     }

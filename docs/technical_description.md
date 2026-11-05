@@ -174,6 +174,7 @@ from the canonical constants in `config.py`.
 | `enable_compaction`                 | Master switch for history compaction.                                                                                                                                                                                                                                         |
 | `max_visible_tool_calls`            | UI limit on rendered tool rows.                                                                                                                                                                                                                                               |
 | `voice_enabled`                     | Voice category toggle (default `true`): off hides the mic, disables the top-bar voice icon, and makes the speech tools report themselves as unavailable.                                                                                                                      |
+| `continuous_conversation`           | Hands-free voice mode (default `false`): in voice mode, the client reopens the microphone after each reply reaches the chat; applied through the settings GUI on Save and Restart.                                                                                            |
 | `image_generation_enabled`          | Image generation toggle (default `false`): off makes `text_to_image` report itself as unavailable; on, the model may generate images.                                                                                                                                         |
 | `log_file`                          | Log file name (written to the project root).                                                                                                                                                                                                                                  |
 | `session_dump_file`                 | Per-session message dump file name template.                                                                                                                                                                                                                                  |
@@ -1247,12 +1248,12 @@ drops are ignored.
   config. Nothing in it is editable; the mode is toggled from the
   composer.
 - The Voice settings category carries a "Continuous conversation"
-  toggle (default off, persisted in `localStorage` as `syna-continuous`,
-  a client preference like the Allegro pill): in voice mode, the
-  microphone automatically reopens after each reply reaches the chat.
-  A narrated reply arms the auto-listen when its text is revealed and
-  opens the mic only when the narration drains — never while Syna is
-  still speaking, which would record her own voice; an un-narrated
+  dropdown (server config key `continuous_conversation`, default off,
+  applied on Save and Restart like every other field): in voice mode,
+  the microphone automatically reopens after each reply reaches the
+  chat. A narrated reply arms the auto-listen when its text is revealed
+  and opens the mic only when the narration drains — never while Syna
+  is still speaking, which would record her own voice; an un-narrated
   reply opens it immediately. User-initiated stops (composer Stop,
   voice mode off, new chat) clear the armed auto-listen, and a reply
   that hears nothing does not loop: with no message sent there is no

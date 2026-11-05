@@ -75,6 +75,9 @@ def sticky_routing_fields(session_id: str | None) -> dict:
 # opt-in because it is expensive and model-initiated.
 DEFAULT_VOICE_ENABLED = True
 DEFAULT_IMAGE_GENERATION_ENABLED = False
+# Hands-free voice mode: the client reopens the microphone after each
+# reply. Opt-in like voice mode itself.
+DEFAULT_CONTINUOUS_CONVERSATION = False
 
 
 def load_output_limit_chars() -> int:

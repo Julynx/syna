@@ -48,6 +48,7 @@ from .config import (
     DEFAULT_IMAGE_GENERATION_ENABLED,
     DEFAULT_IMAGE_MODEL,
     DEFAULT_MODEL,
+    DEFAULT_CONTINUOUS_CONVERSATION,
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
@@ -948,6 +949,7 @@ def get_settings():
         "context_budget_tokens": 100000,
         "max_command_output_chars": 40000,
         "voice_enabled": DEFAULT_VOICE_ENABLED,
+        "continuous_conversation": DEFAULT_CONTINUOUS_CONVERSATION,
         "image_generation_enabled": DEFAULT_IMAGE_GENERATION_ENABLED,
     }
     current_base = (env.get("BASE_URL") or "").strip()
@@ -999,6 +1001,10 @@ def get_settings():
             ),
             "voice_enabled": runtime_cfg.get(
                 "voice_enabled", defaults["voice_enabled"]
+            ),
+            "continuous_conversation": runtime_cfg.get(
+                "continuous_conversation",
+                defaults["continuous_conversation"],
             ),
             "image_generation_enabled": runtime_cfg.get(
                 "image_generation_enabled",

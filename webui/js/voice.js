@@ -31,24 +31,16 @@ const Voice = (() => {
   let speaking = false;
   let pillEl = null;
   let pendingNarration = null;
-  let continuous = false;
+  let continuous = settings.continuous_conversation === true;
   let autoListenPending = false;
-  try {
-    continuous = localStorage.getItem("syna-continuous") === "on";
-  } catch (e) {}
 
   /* Hands-free mode (settings, Voice): after a reply reaches the chat,
      start listening again. A reply that will be narrated arms the
      auto-listen when its text is revealed, and the mic opens when the
      narration drains — never while Syna is still speaking, or the
-     microphone would record her own voice. */
-  function setContinuous(next) {
-    continuous = next;
-    try {
-      localStorage.setItem("syna-continuous", next ? "on" : "off");
-    } catch (e) {}
-  }
-
+     microphone would record her own voice. The flag is server config
+     (continuous_conversation): it changes through the settings GUI and
+     takes effect on Save and Restart. */
   function replyDelivered() {
     if (!continuous || !enabled || !STT_AVAILABLE) return;
     if (recorder || micBtn.disabled) return;
@@ -605,10 +597,6 @@ const Voice = (() => {
     reset,
     willNarrate,
     replyDelivered,
-    setContinuous,
-    get continuous() {
-      return continuous;
-    },
     get enabled() {
       return enabled;
     },
