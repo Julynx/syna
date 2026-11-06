@@ -13,6 +13,16 @@ metronomic signature. Engines that serve a captcha/challenge page are
 paused for a randomized cooldown instead of being re-requested on the
 next search. The browser is created lazily and kept warm for the process
 lifetime; searches share a process-wide pacing lock.
+
+The search is self-timed: the tool call blocks until the search completes,
+fails, or runs out of its own budget — the harness never detaches it, and
+a queued search waits for the running one instead of overlapping. Two
+budgets bound the call. Starting the stealth browser from cold gets its
+own generous launch budget: it is startup, not search work, and its
+duration varies with OS cache state. The engine chain gets a search
+budget enforced cooperatively — each navigation's timeout is capped by
+what remains of the budget, so expiry stops the chain within that
+navigation instead of abandoning it mid-flight.
 """
 
 import atexit
@@ -24,13 +34,28 @@ from base64 import urlsafe_b64decode
 from urllib.parse import parse_qs, quote_plus, urlparse
 
 from .browser import Browser
-from ..config import get_logger
+from ..config import (
+    get_logger,
+    load_browser_launch_timeout_s,
+    load_max_cancel_wait_s,
+    load_web_search_timeout_s,
+)
+from ..state import ToolCancelled, get_cancel_event
 
 _URL_PATTERN = re.compile(r"^https?://\S+$", re.IGNORECASE)
 
 _MAX_RESULTS = 10
 
 _ENGINE_COOLDOWN_S = (15 * 60, 30 * 60)
+
+_GOTO_TIMEOUT_S = 30
+
+# Slack on top of the launch and search budgets for the harness's
+# web_search deadline and the pacing lock's worst-case hold: the random
+# pacing sleep before the chain and the margin of one bounded
+# navigation. Both budgets are enforced inside the tool, so these limits
+# only fire when that enforcement has failed.
+WEB_SEARCH_DEADLINE_SLACK_S = 60
 
 _CHALLENGE_PROBE_JS = """
 () => {
@@ -181,13 +206,93 @@ _ENGINES = (
 
 _search_lock = threading.Lock()
 
-# A queued search must not silently detach at the tool-call timeout while a
-# wedged earlier search holds the lock: fail fast with a clear error instead.
-_SEARCH_LOCK_WAIT_S = 15
+_launch_lock = threading.Lock()
 
 _browser: Browser | None = None
 
+_launch: "_BrowserLaunch | None" = None
+
 _engine_blocked_until: dict[str, float] = {}
+
+
+class _BrowserLaunch:
+    """One in-flight construction of the shared search browser.
+
+    The constructor runs in a helper thread; waiters gather on `ready`,
+    each bounded by the launch budget. A caller that outlives the budget
+    abandons its wait — the helper keeps starting the browser, so when
+    it eventually lands the next call finds it warm. A constructor that
+    fails records its error here for every waiter to raise.
+    """
+
+    def __init__(self):
+        self.ready = threading.Event()
+        self.error: BaseException | None = None
+
+
+def _search_lock_wait_s() -> float:
+    """Return the lock-wait cap for a queued search.
+
+    Long enough for the running search to finish legitimately — launch
+    budget, search budget, the pacing sleep ahead of it, and the
+    harness's stop grace — so a queued search never fails one that would
+    have succeeded. Short enough that a search wedged past every budget
+    fails the waiter with a clear error instead of hanging the turn.
+    """
+    return (
+        load_browser_launch_timeout_s()
+        + load_web_search_timeout_s()
+        + WEB_SEARCH_DEADLINE_SLACK_S
+        + load_max_cancel_wait_s()
+    )
+
+
+def search_deadline_s() -> float:
+    """Return the harness deadline for one web_search tool call.
+
+    The search enforces its own budgets, so this deadline is a bug guard
+    that must only fire when that enforcement has failed. It therefore
+    outlasts every legitimate path: the pacing lock's wait cap — which
+    already embeds the launch budget, the search budget, the pacing
+    sleep, and the stop grace of the running search a queued call waits
+    behind — plus the searcher's own budget and the slack for pacing and
+    one bounded navigation.
+    """
+    return (
+        _search_lock_wait_s()
+        + load_web_search_timeout_s()
+        + WEB_SEARCH_DEADLINE_SLACK_S
+    )
+
+
+def _interruptible_sleep(seconds: float) -> None:
+    """Sleep for up to seconds, ending early when the call is cancelled."""
+    cancel_event = get_cancel_event()
+    if cancel_event is not None:
+        cancel_event.wait(seconds)
+    else:
+        time.sleep(seconds)
+
+
+def _cancelled() -> bool:
+    """Whether the harness has asked the current call to stop."""
+    cancel_event = get_cancel_event()
+    return cancel_event is not None and cancel_event.is_set()
+
+
+def _remaining_s(deadline: float) -> float:
+    """Return the seconds left of the search budget."""
+    return deadline - time.monotonic()
+
+
+def _search_budget_error() -> ValueError:
+    """The error raised when the engine chain outlives its budget."""
+    return ValueError(
+        "Web search timed out after"
+        f" {load_web_search_timeout_s():.0f} seconds without completing."
+        " The search engines were slow or unreachable; retrying usually"
+        " works because the browser is already warm."
+    )
 
 
 def search(query, delay_s=2):
@@ -201,24 +306,26 @@ def search(query, delay_s=2):
     Sleeps a randomized duration between 'delay_s' and 1.5x that before
     every search to avoid getting rate-limited; fixed waits would themselves
     be a fingerprint. The sleep and the request share a process-wide lock,
-    so searches from concurrent sessions or detached calls run one after
-    another and stay at least 'delay_s' apart instead of firing together.
-    Raises ValueError instead of waiting indefinitely when another search
-    still holds the lock.
+    so searches from concurrent sessions run one after another and stay at
+    least 'delay_s' apart instead of firing together: a queued search waits
+    for the running one, which always finishes within its budgets, instead
+    of overlapping. Raises ValueError when the wait outlasts the lock's
+    worst-case hold — the running search wedged past every budget.
     """
     logger = get_logger()
     wait_started = time.monotonic()
-    if not _search_lock.acquire(timeout=_SEARCH_LOCK_WAIT_S):
+    wait_limit = _search_lock_wait_s()
+    if not _search_lock.acquire(timeout=wait_limit):
         logger.warning(
-            "Web search for %.100s gave up after %ss: another search still"
-            " holds the lock",
+            "Web search for %.100s gave up after %.0fs: another search"
+            " still holds the lock past every budget",
             query,
-            _SEARCH_LOCK_WAIT_S,
+            wait_limit,
         )
         raise ValueError(
-            "Another web search is still running and did not finish within"
-            f" {_SEARCH_LOCK_WAIT_S} seconds. Wait for its result, then"
-            " retry."
+            "Another web search is still running and has held the lock for"
+            f" {wait_limit:.0f} seconds — past every budget, so it appears"
+            " stuck and could not be stopped. Wait a moment, then retry."
         )
     try:
         waited = time.monotonic() - wait_started
@@ -228,7 +335,7 @@ def search(query, delay_s=2):
                 query,
                 waited,
             )
-        time.sleep(random.uniform(delay_s, delay_s * 1.5))
+        _interruptible_sleep(random.uniform(delay_s, delay_s * 1.5))
         return _search(query)
     finally:
         _search_lock.release()
@@ -252,11 +359,16 @@ def _search(query):
 def _browser_search(query):
     """Run the engine chain in the stealth browser; return result dicts.
 
+    The browser is acquired before the budget clock starts: starting it
+    from cold is startup governed by the launch budget, not search work.
     Engines that recently served a challenge page are skipped for a
     randomized cooldown: re-requesting a host that demands verification
     at search frequency is the repeat-offense pattern that hardens soft
-    challenges into IP bans.
+    challenges into IP bans. The chain stops within one bounded
+    navigation when the search budget runs out.
     """
+    browser = _get_browser()
+    deadline = time.monotonic() + load_web_search_timeout_s()
     for index, engine in enumerate(_ENGINES):
         name = engine[0]
         blocked_until = _engine_blocked_until.get(name, 0.0)
@@ -266,10 +378,16 @@ def _browser_search(query):
                 name,
             )
             continue
+        if _cancelled():
+            raise ToolCancelled("the harness stopped the web search at its deadline")
+        if _remaining_s(deadline) <= 0:
+            raise _search_budget_error()
         get_logger().info("Search engine '%s': trying %.100s", name, query)
         engine_started = time.monotonic()
         try:
-            results = _search_engine(query, engine)
+            results = _search_engine(browser, query, engine, deadline)
+        except ToolCancelled:
+            raise
         except Exception:
             get_logger().info(
                 "Search engine '%s': failed after %.1fs for query %.100s",
@@ -294,7 +412,7 @@ def _browser_search(query):
             name,
             time.monotonic() - engine_started,
         )
-        if _page_shows_challenge():
+        if _page_shows_challenge(browser):
             cooldown = random.uniform(*_ENGINE_COOLDOWN_S)
             _engine_blocked_until[name] = time.monotonic() + cooldown
             get_logger().info(
@@ -302,14 +420,15 @@ def _browser_search(query):
                 name,
                 cooldown,
             )
-        if index < len(_ENGINES) - 1:
-            time.sleep(random.uniform(0.5, 1.5))
+        if index < len(_ENGINES) - 1 and _remaining_s(deadline) > 0:
+            _interruptible_sleep(
+                min(random.uniform(0.5, 1.5), max(0.0, _remaining_s(deadline)))
+            )
     return []
 
 
-def _page_shows_challenge() -> bool:
+def _page_shows_challenge(browser: Browser) -> bool:
     """Whether the current page is a captcha/challenge wall."""
-    browser = _get_browser()
     probe = browser.run(browser.page.evaluate(_CHALLENGE_PROBE_JS))
     return _is_challenge(probe)
 
@@ -321,32 +440,93 @@ def _is_challenge(probe) -> bool:
     )
 
 
-def _search_engine(query, engine):
-    """Search one engine and return its parsed results."""
+def _search_engine(browser: Browser, query, engine, deadline):
+    """Search one engine and return its parsed results.
+
+    The navigation's timeout is capped by the budget remaining, so a
+    budget that expires mid-chain stops it within that navigation.
+    """
     _name, url_template, referer, extract_js, unwrap = engine
-    browser = _get_browser()
     page = browser.page
+    goto_timeout = min(_GOTO_TIMEOUT_S, _remaining_s(deadline))
     browser.run(
         page.goto(
             url_template.format(query=quote_plus(query)),
             wait_until="domcontentloaded",
-            timeout=30000,
+            timeout=max(0.001, goto_timeout) * 1000,
             referer=referer,
         )
     )
-    time.sleep(random.uniform(0.7, 1.5))
+    _interruptible_sleep(
+        min(random.uniform(0.7, 1.5), max(0.0, _remaining_s(deadline)))
+    )
     raw = browser.run(page.evaluate(extract_js))
     results = [dict(item, href=unwrap(item["href"])) for item in raw]
     return [r for r in results if r["href"]][:_MAX_RESULTS]
 
 
 def _get_browser():
-    """Create the shared search browser on first use."""
-    global _browser
-    if _browser is None:
-        _browser = Browser(headless=True)
-        atexit.register(_close_browser)
+    """Return the shared search browser, starting it once.
+
+    Creation is serialized and governed by the launch budget, not the
+    search budget: a cold start (process spawn, fingerprint setup, cold
+    OS file caches) takes seconds to minutes and is startup, not work.
+    The constructor runs in a helper thread so the budget can bound the
+    wait: a caller that outlives it raises cleanly while the helper
+    keeps starting the browser, and when it eventually lands the next
+    call finds it warm. A constructor wedged forever is a bug the
+    harness's own deadline reports as a hung call.
+    """
+    global _browser, _launch
+    if _browser is not None:
+        return _browser
+    launch_budget_s = load_browser_launch_timeout_s()
+    started = time.monotonic()
+    with _launch_lock:
+        if _browser is not None:
+            return _browser
+        launch = _launch
+        if launch is None:
+            launch = _BrowserLaunch()
+            _launch = launch
+            threading.Thread(
+                target=_construct_browser,
+                args=(launch,),
+                name="syna-search-browser-start",
+                daemon=True,
+            ).start()
+    remaining = launch_budget_s - (time.monotonic() - started)
+    if not launch.ready.wait(max(0.0, remaining)):
+        get_logger().error(
+            "The search browser did not start within %.0fs.", launch_budget_s
+        )
+        raise ValueError(
+            f"The search browser did not start within {launch_budget_s:.0f} seconds."
+        )
+    if launch.error is not None:
+        with _launch_lock:
+            if _launch is launch:
+                _launch = None
+        raise launch.error
     return _browser
+
+
+def _construct_browser(launch: _BrowserLaunch):
+    """Build the shared search browser, publish it, and wake the waiters."""
+    global _browser
+    started = time.monotonic()
+    try:
+        browser = Browser(headless=True)
+    except BaseException as exc:
+        launch.error = exc
+        launch.ready.set()
+        return
+    with _launch_lock:
+        if _browser is None:
+            _browser = browser
+            atexit.register(_close_browser)
+    launch.ready.set()
+    get_logger().info("Search browser started in %.1fs.", time.monotonic() - started)
 
 
 def _close_browser():

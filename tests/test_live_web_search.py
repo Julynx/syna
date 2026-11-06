@@ -21,6 +21,7 @@ Run with:
 
 import base64
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -120,9 +121,11 @@ def engine_unwrap(name, href):
 
 
 def test_live_engines_return_results():
+    browser = web_search._get_browser()
+    deadline = time.monotonic() + 120
     required = ["ddg-html", "ddg-lite", "bing"]
     for engine in web_search._ENGINES:
-        results = web_search._search_engine(QUERY, engine)
+        results = web_search._search_engine(browser, QUERY, engine, deadline)
         if engine[0] == "mojeek":
             if not results:
                 print(

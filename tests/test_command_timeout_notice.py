@@ -2,10 +2,10 @@
 
 When the pod-side `timeout` wrapper kills a command (exit codes 124 and
 137), the tool result must say exactly what happened and state the
-maximum runtime of one execute_command call. The harness detach notice
-must do the same for execute_command specifically, where it must be
-clear that the command limit did not fire and the container call itself
-stopped responding.
+maximum runtime of one execute_command call. The harness hung-call
+notice must do the same for execute_command specifically, where it must
+be clear that the command limit did not fire and the container call
+itself stopped responding.
 """
 
 import sys
@@ -17,7 +17,7 @@ from _runner import MonkeyPatch, run_suite
 
 import syna.capabilities.tools as tools
 from syna.capabilities.tools import command_runtime_limit_s, execute_command
-from syna.protocol.parse import build_detached_call_notice
+from syna.protocol.parse import build_hung_call_notice
 from syna.state import pop_last_exit_code
 
 
@@ -75,7 +75,7 @@ def test_successful_command_has_no_notice(monkeypatch: MonkeyPatch):
     print("PASS successful commands carry no timeout notice")
 
 
-def test_command_runtime_limit_is_bounded_by_detach_budget(
+def test_command_runtime_limit_is_bounded_by_call_deadline(
     monkeypatch: MonkeyPatch,
 ):
     monkeypatch.setattr(tools, "load_command_timeout_s", lambda: 200)
@@ -87,27 +87,28 @@ def test_command_runtime_limit_is_bounded_by_detach_budget(
 
     monkeypatch.setattr(tools, "load_command_timeout_s", lambda: 30)
     assert command_runtime_limit_s() == 30
-    print("PASS the reported limit is the effective one, detach-bounded")
+    print("PASS the reported limit is the effective one, deadline-bounded")
 
 
-def test_detach_notice_states_execute_command_limit(monkeypatch: MonkeyPatch):
+def test_hung_call_notice_states_execute_command_limit(monkeypatch: MonkeyPatch):
     monkeypatch.setattr(tools, "load_command_timeout_s", lambda: 200)
     monkeypatch.setattr(tools, "load_tool_call_timeout_s", lambda: 60)
-    notice = build_detached_call_notice(
-        "execute_command", {"command": "sleep 100"}, 60.0
+    notice = build_hung_call_notice(
+        "execute_command", {"command": "sleep 100"}, 60.0, 10.0
     )
-    assert "harness detach limit" in notice
+    assert "hung" in notice
+    assert "may still be running" in notice
     assert "55 seconds" in notice
 
     monkeypatch.setattr(tools, "load_command_timeout_s", lambda: 50)
-    notice = build_detached_call_notice(
-        "execute_command", {"command": "sleep 100"}, 60.0
+    notice = build_hung_call_notice(
+        "execute_command", {"command": "sleep 100"}, 60.0, 10.0
     )
     assert "50 seconds" in notice
 
-    other = build_detached_call_notice("web_search", {"query": "x"}, 60.0)
-    assert "harness detach limit" not in other
-    print("PASS the detach notice gives execute_command's own limit")
+    other = build_hung_call_notice("web_search", {"query": "x"}, 60.0, 10.0)
+    assert "55 seconds" not in other
+    print("PASS the hung-call notice gives execute_command's own limit")
 
 
 def main():
@@ -116,8 +117,8 @@ def main():
             test_timeout_124_gets_explicit_notice,
             test_timeout_137_notice_hedges_the_cause,
             test_successful_command_has_no_notice,
-            test_command_runtime_limit_is_bounded_by_detach_budget,
-            test_detach_notice_states_execute_command_limit,
+            test_command_runtime_limit_is_bounded_by_call_deadline,
+            test_hung_call_notice_states_execute_command_limit,
         ]
     )
 

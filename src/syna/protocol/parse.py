@@ -9,6 +9,13 @@ exception, timeout, or non-zero command exit) stops the batch; the remaining
 calls are reported as "skipped". Every call receives a result labeled with its
 position, tool_call_id, tool name, status, and — when available — exit code and
 the pod path (/tool_outputs/) holding the full output.
+
+Timeouts are terminal, never detours: each call runs in a worker thread only
+so the harness can enforce a strict deadline. When the deadline passes the
+harness asks the call to stop through its cancel event and waits for it to
+exit; the model never sees a result while the call is still running, and a
+call that ignores the stop request is detached with an explicit hung-call
+notice.
 """
 
 import json
@@ -21,18 +28,21 @@ from pathlib import Path, PurePosixPath
 
 from ..config import (
     get_logger,
+    load_max_cancel_wait_s,
     load_output_limit_chars,
     load_tool_call_timeout_s,
 )
 from ..interaction import get_responder, register_responder, unregister_responder
 from .output import bounded_output
 from ..state import (
+    ToolCancelled,
     get_container,
     get_registered_container,
     next_call_index,
     pop_last_exit_code,
     register_container,
     set_call_output_path,
+    set_cancel_event,
     unregister_container,
 )
 from ..capabilities.tools import (
@@ -40,6 +50,7 @@ from ..capabilities.tools import (
     TOOL_REGISTRY,
     command_runtime_limit_s,
 )
+from ..capabilities.web_search import search_deadline_s
 from ..capabilities.verification import (
     REVIEW_TOOL_NAME,
     current_conversation_log_provider,
@@ -209,27 +220,75 @@ def load_tool_call_timeout() -> float:
     return load_tool_call_timeout_s()
 
 
-def build_detached_call_notice(
+def call_deadline_s(tool_name: str, tool_timeout_s: float | None) -> float | None:
+    """Return the per-call deadline in seconds, or None when untimed.
+
+    Regular tools are bounded by tool_call_timeout_s (subject to the
+    calling thread's Allegro scale). ask_user waits for the user by
+    design and review_work is bounded by the model client's own timeout
+    and retry policy, so neither gets a harness deadline. web_search
+    enforces its own phase budgets (browser launch cap, search budget);
+    its deadline is web_search's own worst-case composition — the pacing
+    lock's wait cap for any searches queued ahead of it plus its own
+    budget and slack — a bug guard that only fires when the tool's
+    internal enforcement has failed, never the routine limit.
+    """
+    if tool_name in ("ask_user", REVIEW_TOOL_NAME):
+        return None
+    if tool_name == "web_search":
+        return search_deadline_s()
+    return tool_timeout_s
+
+
+def build_stopped_call_notice(
     tool_name: str, tool_arguments: dict, timeout_s: float
 ) -> str:
-    """Compose the tool result reported to the model for a detached call."""
-    notice = (
-        f"Tool call timed out after {timeout_s} seconds:"
+    """Compose the tool result for a call stopped at its deadline.
+
+    The call honored the stop request: nothing is running in the
+    background, so the model can retry or continue without waiting.
+    """
+    return (
+        f"Tool call stopped after {timeout_s} seconds:"
         f" {build_signature(tool_name, tool_arguments)}."
-        " The call was not aborted: it is still running in the background and"
-        " its result will be discarded. Continue working without waiting for"
-        " it. If the call runs a process inside the container, you can locate"
-        " and terminate it with another execute_command (e.g. ps / kill)."
+        " The harness asked the call to stop at its deadline and it"
+        " ended; nothing is running in the background."
+    )
+
+
+def build_hung_call_notice(
+    tool_name: str, tool_arguments: dict, timeout_s: float, grace_s: float
+) -> str:
+    """Compose the tool result for a call that ignored the stop request.
+
+    The detach is the last resort after the stop grace expires: the
+    worker thread cannot be killed, so it may still be running and
+    holding its locks. This is an anomaly, not the normal timeout.
+    """
+    notice = (
+        f"Tool call hung: {build_signature(tool_name, tool_arguments)}."
+        f" Its deadline of {timeout_s} seconds passed, the stop request"
+        f" was not honored within {grace_s} seconds, and the harness"
+        " detached from it. The call may still be running in the"
+        " background and its result is lost. This is not the normal"
+        " timeout: it means the tool stopped responding."
     )
     if tool_name == "execute_command":
         notice += (
-            " This is the harness detach limit, not execute_command's own"
-            f" limit: execute_command kills its commands after"
-            f" {command_runtime_limit_s()} seconds at most, so a call that"
-            " reached this point means the container call itself stopped"
+            " This is the harness limit, not execute_command's own:"
+            " execute_command kills its commands after"
+            f" {command_runtime_limit_s()} seconds at most, so a call"
+            " that hung means the container call itself stopped"
             " responding."
         )
     return notice
+
+
+def _collect_outcome(outcome: dict) -> tuple[object, int | None]:
+    """Return (output, exit_code) from a finished worker, raising on error."""
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["output"], outcome.get("exit_code")
 
 
 def execute_tool_with_timeout(
@@ -238,21 +297,34 @@ def execute_tool_with_timeout(
     timeout_s: float | None,
     output_path: str | None = None,
 ) -> tuple[object, bool, int | None]:
-    """Run a tool in a worker thread and return (output, detached, exit_code).
+    """Run a tool in a worker thread and return (output, timed_out, exit_code).
 
-    The worker inherits the calling thread's container, question
-    responder, and conversation-log provider, and the call's output path
-    (all thread-locals), and reports back the exit code recorded by the
-    tool, if any. A None timeout waits indefinitely — used by ask_user,
-    which must outlive the configured per-call budget and block until the
-    user answers, and by review_work, whose reviewer request is bounded
-    by the model client's own timeout and retry policy.
+    The worker thread exists to enforce the call's deadline, not to let
+    the conversation move on while work continues: the model never sees
+    a result while the call is still running. When the deadline passes,
+    the harness sets the call's cancel event and waits up to the
+    configured stop grace for the worker to exit:
+
+    - A worker that exits within the grace delivers its real outcome —
+      a late completion is a result, a failure is an error — except a
+      `ToolCancelled` exception, which the harness reports as the
+      deadline notice.
+    - A worker still running after the grace is detached with the
+      hung-call notice: threads cannot be killed, so it may still be
+      running and holding its locks. This is an anomaly, not the normal
+      timeout.
+
+    A None timeout waits indefinitely — used by ask_user, which must
+    outlive any configured budget and block until the user answers, and
+    by review_work, whose reviewer request is bounded by the model
+    client's own timeout and retry policy.
     """
     tool_fn = TOOL_REGISTRY[tool_name]
     container = get_registered_container()
     responder = get_responder()
     log_provider = current_conversation_log_provider()
     finished = threading.Event()
+    cancel_event = threading.Event()
     outcome: dict = {}
 
     def worker():
@@ -263,6 +335,7 @@ def execute_tool_with_timeout(
         if log_provider is not None:
             set_conversation_log_provider(log_provider)
         set_call_output_path(output_path)
+        set_cancel_event(cancel_event)
         try:
             outcome["output"] = tool_fn(**tool_arguments)
         except BaseException as exc:
@@ -270,6 +343,7 @@ def execute_tool_with_timeout(
         finally:
             outcome["exit_code"] = pop_last_exit_code()
             set_call_output_path(None)
+            set_cancel_event(None)
             pop_conversation_log_provider()
             unregister_responder()
             if container is not None:
@@ -280,12 +354,52 @@ def execute_tool_with_timeout(
         target=worker, name=f"syna-tool-{tool_name}", daemon=True
     )
     worker_thread.start()
+
+    if timeout_s is None:
+        finished.wait()
+        output, exit_code = _collect_outcome(outcome)
+        return output, False, exit_code
+
     if finished.wait(timeout_s):
+        output, exit_code = _collect_outcome(outcome)
+        return output, False, exit_code
+
+    cancel_event.set()
+    get_logger().info(
+        "Tool call %s reached its %.0fs deadline; asking it to stop.",
+        tool_name,
+        timeout_s,
+    )
+    grace_s = load_max_cancel_wait_s()
+    if finished.wait(grace_s):
         if "error" in outcome:
-            raise outcome["error"]
+            error = outcome["error"]
+            if isinstance(error, ToolCancelled):
+                get_logger().info("Tool call %s stopped at its deadline.", tool_name)
+                return (
+                    build_stopped_call_notice(tool_name, tool_arguments, timeout_s),
+                    True,
+                    None,
+                )
+            raise error
+        get_logger().info(
+            "Tool call %s finished past its deadline within the stop"
+            " grace; delivering its result.",
+            tool_name,
+        )
         return outcome["output"], False, outcome.get("exit_code")
 
-    return build_detached_call_notice(tool_name, tool_arguments, timeout_s), True, None
+    get_logger().warning(
+        "Tool call %s ignored its stop request for %.0fs; detaching from"
+        " it. It may still be running in the background.",
+        tool_name,
+        grace_s,
+    )
+    return (
+        build_hung_call_notice(tool_name, tool_arguments, timeout_s, grace_s),
+        True,
+        None,
+    )
 
 
 def _persist_tool_output(
@@ -669,23 +783,21 @@ def parse_and_execute_tools(
         )
 
         call_output_path = f"/tool_outputs/{next_call_index():04d}_{tool_name}.txt"
-        call_timeout = (
-            None if tool_name in ("ask_user", REVIEW_TOOL_NAME) else tool_timeout_s
-        )
+        call_deadline = call_deadline_s(tool_name, tool_timeout_s)
         try:
-            output, detached, exit_code = execute_tool_with_timeout(
-                tool_name, tool_arguments, call_timeout, call_output_path
+            output, timed_out, exit_code = execute_tool_with_timeout(
+                tool_name, tool_arguments, call_deadline, call_output_path
             )
         except Exception as exc:
             if echo_errors:
                 print(f"  ! (Tool execution failed: {str(exc)[:64]})")
             output = f"Tool execution error: {exc}"
-            detached = False
+            timed_out = False
             exit_code = None
             status = "error"
             failure_occurred = True
         else:
-            if detached:
+            if timed_out:
                 status = "timeout"
                 failure_occurred = True
             elif exit_code is not None and exit_code != 0:

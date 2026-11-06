@@ -17,6 +17,18 @@ DEFAULT_COMMAND_TIMEOUT_S = 50
 DEFAULT_TOOL_CALL_TIMEOUT_S = 60
 DEFAULT_OUTPUT_LIMIT_CHARS = 40000
 
+# Web-search phase budgets. Deliberately not subject to the Allegro
+# scale: starting a stealth browser from cold (process spawn,
+# fingerprint setup, cold OS file caches) and a slow search engine do
+# not get faster because the user asked the agent to move quickly, and
+# a budget that halves with the mode reintroduces the cold-start race
+# these budgets exist to prevent.
+DEFAULT_WEB_SEARCH_TIMEOUT_S = 60
+DEFAULT_BROWSER_LAUNCH_TIMEOUT_S = 120
+# How long the harness waits after asking a call to stop before
+# detaching from it — the SIGTERM-to-SIGKILL grace.
+DEFAULT_MAX_CANCEL_WAIT_S = 10
+
 # Canonical provider model defaults. The first-run wizard, the settings
 # modal, and the runtime all read these; an unset .env value means the
 # default applies.
@@ -243,6 +255,29 @@ def _apply_timeout_scale(seconds):
     return scale_seconds(seconds, scale)
 
 
+def load_web_search_timeout_s() -> float:
+    """Return the budget for one web search's engine chain in seconds.
+
+    Not subject to the Allegro scale (see the module defaults).
+    """
+    return load_config().get("web_search_timeout_s", DEFAULT_WEB_SEARCH_TIMEOUT_S)
+
+
+def load_browser_launch_timeout_s() -> float:
+    """Return the budget for acquiring or starting the search browser.
+
+    Not subject to the Allegro scale (see the module defaults).
+    """
+    return load_config().get(
+        "browser_launch_timeout_s", DEFAULT_BROWSER_LAUNCH_TIMEOUT_S
+    )
+
+
+def load_max_cancel_wait_s() -> float:
+    """Return how long the harness waits for a stopped call to exit."""
+    return load_config().get("max_cancel_wait_s", DEFAULT_MAX_CANCEL_WAIT_S)
+
+
 DEFAULT_USER_MESSAGE_ARCHIVE_MIN_CHARS = 2000
 DEFAULT_USER_MESSAGES_DEST = "/user_messages"
 DEFAULT_ELIDE_USER_MESSAGE_HEAD_CHARS = 300
@@ -276,10 +311,13 @@ def load_verify_log_tail_chars() -> int:
 __all__ = [
     "asset_path",
     "get_data_home",
+    "load_browser_launch_timeout_s",
     "load_command_timeout_s",
     "load_config",
+    "load_max_cancel_wait_s",
     "load_output_limit_chars",
     "load_tool_call_timeout_s",
+    "load_web_search_timeout_s",
     "read_asset_text",
     "scale_seconds",
     "set_timeout_scale",

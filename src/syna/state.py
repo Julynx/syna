@@ -2,9 +2,10 @@
 
 Besides binding containers to threads, this module carries the protocol state
 of the tool call currently being dispatched: the pod path where the call's
-full output must be saved (`/tool_outputs/`), and the exit code reported by
-`execute_command`. Tools set these cooperatively so `parse.py` can build the
-`<result>` blocks without coupling every tool to the result protocol.
+full output must be saved (`/tool_outputs/`), the exit code reported by
+`execute_command`, and the cancel event the harness sets when the call
+passes its deadline. Tools set these cooperatively so `parse.py` can build
+the `<result>` blocks without coupling every tool to the result protocol.
 """
 
 import itertools
@@ -56,6 +57,33 @@ def pop_last_exit_code() -> int | None:
     exit_code = getattr(_call_context, "exit_code", None)
     _call_context.exit_code = None
     return exit_code
+
+
+class ToolCancelled(Exception):
+    """Raised by a tool that honored the harness's stop request.
+
+    The harness sets the call's cancel event when the deadline passes and
+    waits for the worker to exit. A tool that checks the event stops
+    promptly and raises this class, so the harness can report the
+    deadline notice — the harness stopped the call at its limit — rather
+    than an incidental failure message.
+    """
+
+
+def set_cancel_event(event: threading.Event | None) -> None:
+    """Record the cancel event of the tool call being dispatched."""
+    _call_context.cancel_event = event
+
+
+def get_cancel_event() -> threading.Event | None:
+    """Return the cancel event of the call being dispatched, if any.
+
+    The event is set when the call passes its deadline; sleeps and long
+    operations of the tool should end early through it and raise
+    `ToolCancelled` once they have unwound. Untimed dispatches register
+    no event.
+    """
+    return getattr(_call_context, "cancel_event", None)
 
 
 def register_container(container: Container) -> None:

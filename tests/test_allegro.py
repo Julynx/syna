@@ -168,7 +168,7 @@ def test_timeout_scale_halves_enforcement_and_does_not_leak():
             "the command timeout halves while the scale is active, half-up"
         )
         assert load_tool_call_timeout_s() == max(1, base_tool * 0.5), (
-            "the tool-call detach timeout halves while the scale is active"
+            "the tool-call timeout halves while the scale is active"
         )
 
         seen = {}

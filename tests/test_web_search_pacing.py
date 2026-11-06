@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from _runner import run_suite
+from _runner import MonkeyPatch, run_suite
 
 from syna.capabilities import web_search
 
@@ -99,30 +99,49 @@ def test_pacing_delay_is_randomized():
         assert DELAY_S <= duration < DELAY_S * 1.5
 
 
-def test_lock_wait_is_bounded():
-    """A search that cannot get the lock fails fast with a clear error.
+def test_lock_wait_is_bounded(monkeypatch: MonkeyPatch):
+    """A search that cannot get the lock fails with a clear error.
 
-    A detached wedged search holds the lock for minutes; a queued call
-    must raise instead of silently detaching at the tool-call timeout.
+    The cap outlasts every legitimate budget of the running search, so
+    exceeding it means the running search wedged past every budget and
+    could not be stopped.
     """
-    original_search = web_search._search
-    web_search._search = lambda query: "results"
-    original_wait = web_search._SEARCH_LOCK_WAIT_S
-    web_search._SEARCH_LOCK_WAIT_S = 0.1
+    monkeypatch.setattr(web_search, "_search", lambda query: "results")
+    monkeypatch.setattr(web_search, "_search_lock_wait_s", lambda: 0.1)
     if not web_search._search_lock.acquire(timeout=1):
-        web_search._SEARCH_LOCK_WAIT_S = original_wait
         raise AssertionError("the search lock must be free for this test")
     try:
         try:
             web_search.search("blocked test", delay_s=DELAY_S)
         except ValueError as exc:
-            assert "still running" in str(exc), str(exc)
+            assert "stuck" in str(exc), str(exc)
         else:
             raise AssertionError("expected ValueError while the lock is held")
     finally:
         web_search._search_lock.release()
-        web_search._SEARCH_LOCK_WAIT_S = original_wait
-        web_search._search = original_search
+
+
+def test_lock_wait_cap_covers_every_legitimate_hold():
+    """The cap exceeds the running search's worst legitimate lock hold.
+
+    A queued search must never fail one that would have succeeded: the
+    hold spans pacing, the browser launch budget, and the search budget,
+    plus the harness's stop grace for a wedged run being cancelled.
+    """
+    from syna.config import (
+        load_browser_launch_timeout_s,
+        load_max_cancel_wait_s,
+        load_web_search_timeout_s,
+    )
+
+    wait_limit = web_search._search_lock_wait_s()
+    legitimate_hold = (
+        load_browser_launch_timeout_s()
+        + load_web_search_timeout_s()
+        + load_max_cancel_wait_s()
+        + 5
+    )
+    assert wait_limit > legitimate_hold, (wait_limit, legitimate_hold)
 
 
 def main():
@@ -133,6 +152,7 @@ def main():
             test_search_spacing_across_batches,
             test_pacing_delay_is_randomized,
             test_lock_wait_is_bounded,
+            test_lock_wait_cap_covers_every_legitimate_hold,
         ]
     )
 

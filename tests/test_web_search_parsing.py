@@ -62,39 +62,35 @@ def test_is_challenge_detects_widgets_and_markers():
     assert not _is_challenge("")
 
 
-def test_engines_in_cooldown_are_skipped():
+def test_engines_in_cooldown_are_skipped(monkeypatch):
     recorded = []
     engines = web_search._ENGINES
-    original_engine_search = web_search._search_engine
-    original_page_challenge = web_search._page_shows_challenge
-    original_blocked = web_search._engine_blocked_until
-    web_search._engine_blocked_until = {engines[0][0]: time.monotonic() + 999}
-    web_search._search_engine = lambda query, engine: (
-        recorded.append(engine[0])
-        or [{"title": "t", "href": "https://example.com", "body": "b"}]
+    monkeypatch.setattr(web_search, "_get_browser", lambda: object())
+    monkeypatch.setattr(
+        web_search, "_engine_blocked_until", {engines[0][0]: time.monotonic() + 999}
     )
-    web_search._page_shows_challenge = lambda: False
-    try:
-        results = web_search._browser_search("query")
-    finally:
-        web_search._search_engine = original_engine_search
-        web_search._page_shows_challenge = original_page_challenge
-        web_search._engine_blocked_until = original_blocked
+    monkeypatch.setattr(
+        web_search,
+        "_search_engine",
+        lambda browser, query, engine, deadline: (
+            recorded.append(engine[0])
+            or [{"title": "t", "href": "https://example.com", "body": "b"}]
+        ),
+    )
+    monkeypatch.setattr(web_search, "_page_shows_challenge", lambda browser: False)
+    results = web_search._browser_search("query")
     assert results
     assert recorded == [engines[1][0]], (
         f"expected the second engine to serve, got {recorded}"
     )
 
 
-def test_challenged_engine_gets_a_cooldown():
+def test_challenged_engine_gets_a_cooldown(monkeypatch):
     calls = []
     engines = web_search._ENGINES
     test_blocked = {}
-    original_engine_search = web_search._search_engine
-    original_page_challenge = web_search._page_shows_challenge
-    original_blocked = web_search._engine_blocked_until
 
-    def _fake_engine_search(query, engine):
+    def _fake_engine_search(browser, query, engine, deadline):
         calls.append(engine[0])
         return []
 
@@ -107,17 +103,12 @@ def test_challenged_engine_gets_a_cooldown():
         def __getattr__(self, name):
             return getattr(time, name)
 
-    web_search._search_engine = _fake_engine_search
-    web_search._page_shows_challenge = lambda: True
-    web_search.time = _ShimTime()
-    web_search._engine_blocked_until = test_blocked
-    try:
-        results = web_search._browser_search("query")
-    finally:
-        web_search._search_engine = original_engine_search
-        web_search._page_shows_challenge = original_page_challenge
-        web_search.time = time
-        web_search._engine_blocked_until = original_blocked
+    monkeypatch.setattr(web_search, "_get_browser", lambda: object())
+    monkeypatch.setattr(web_search, "_search_engine", _fake_engine_search)
+    monkeypatch.setattr(web_search, "_page_shows_challenge", lambda browser: True)
+    monkeypatch.setattr(web_search, "time", _ShimTime())
+    monkeypatch.setattr(web_search, "_engine_blocked_until", test_blocked)
+    results = web_search._browser_search("query")
     assert results == []
     assert calls == [engine[0] for engine in engines]
     for engine in engines:
