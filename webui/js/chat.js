@@ -1216,6 +1216,19 @@ function finishToolRow(event) {
   updateAmbient();
 }
 
+/* The harness never lets the model see a result while a call is still
+   running, so any tool row still marked running when the model speaks or
+   the turn ends is stale — e.g. its finished event was delivered to
+   another open window. Settle it so its animation cannot run forever. */
+function finishStaleToolRows() {
+  const stale = document.querySelectorAll(".tool-row.running");
+  stale.forEach((row) => {
+    row.classList.remove("running");
+    if (runningToolRow === row) runningToolRow = null;
+  });
+  if (stale.length) updateAmbient();
+}
+
 function addFileChip(event) {
   closeFileGroup();
   const chipHost = document.createElement("div");
@@ -1359,6 +1372,7 @@ function render(event) {
       }
       break;
     case "model_message":
+      finishStaleToolRows();
       if (!replaying && window.Voice && Voice.willNarrate(event.content)) {
         Voice.narrate(event.content, () => addBubble(event.content, "model"));
       } else {
@@ -1415,6 +1429,7 @@ function render(event) {
       updateAmbient();
       break;
     case "ready":
+      finishStaleToolRows();
       busy = false;
       setStatus("ready", "Ready");
       setSendState();
@@ -1422,6 +1437,7 @@ function render(event) {
       updateAmbient();
       break;
     case "error":
+      finishStaleToolRows();
       addEventRow(event.text, true);
       setStatus("error", "Error");
       updateAmbient();

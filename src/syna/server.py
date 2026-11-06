@@ -107,9 +107,13 @@ class SessionRecord:
         # removes a specific queued item, which a Queue cannot do safely.
         self.inbox: deque = deque()
         self.inbox_ready = threading.Condition()
-        self.outbound: queue.Queue = queue.Queue()
         self.event_log: list[dict] = []
         self.event_log_lock = threading.Lock()
+        # One delivery queue per connected WebSocket: every open surface
+        # (a reloaded tab, a second window, the desktop app) receives
+        # every event, instead of a shared queue splitting them between
+        # connections.
+        self.subscribers: list[queue.Queue] = []
         self.shared: dict[str, dict] = {}
         self.pending_question = interaction.PendingQuestion()
         self.image_cache: dict[str, Path] = {}
@@ -137,13 +141,14 @@ class SessionRecord:
         self.last_activity = time.time()
 
     def push(self, event: dict, persistent: bool = True):
-        """Queue an event for delivery over the WebSocket."""
-        if persistent:
-            with self.event_log_lock:
+        """Log an event and deliver it to every connected WebSocket."""
+        with self.event_log_lock:
+            if persistent:
                 self.event_log.append(event)
                 if len(self.event_log) > EVENT_LOG_MAX_ITEMS:
                     self.event_log.pop(0)
-        self.outbound.put(event)
+            for subscriber in self.subscribers:
+                subscriber.put(event)
 
     def wait_for_container(self, timeout: float = CONTAINER_START_TIMEOUT_S):
         """Block until this session's container is running."""
@@ -560,6 +565,12 @@ async def enforce_local_origin(request: Request, call_next):
     if request.url.path == "/" and setup.setup_incomplete():
         return RedirectResponse("/setup")
     return await call_next(request)
+
+
+@app.get("/health")
+def health():
+    """Liveness probe for external monitors and the wrapping app."""
+    return {"status": "ok"}
 
 
 @app.get("/")
@@ -1149,11 +1160,11 @@ async def synthesize_speech(request: SynthesisRequest):
     return Response(content=audio.content, media_type=audio.media_type)
 
 
-async def _pump_events(record: SessionRecord, websocket: WebSocket):
-    """Forward queued session events to the connected WebSocket client."""
+async def _pump_events(subscriber: queue.Queue, websocket: WebSocket):
+    """Forward one connection's queued session events to its WebSocket."""
     while True:
         try:
-            event = await asyncio.to_thread(record.outbound.get, True, 1.0)
+            event = await asyncio.to_thread(subscriber.get, True, 1.0)
         except queue.Empty:
             continue
         try:
@@ -1188,20 +1199,28 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         )
         await websocket.close()
         return
-    record.connected = True
     record.touch()
 
+    # Register under the same lock push() holds: any event pushed from
+    # here on lands in this connection's queue, and the history snapshot
+    # carries everything before it — exactly once, no gap.
+    subscriber: queue.Queue = queue.Queue()
     with record.event_log_lock:
         history = list(record.event_log)
+        record.subscribers.append(subscriber)
+        record.connected = True
     try:
         for event in history:
             await websocket.send_json(event)
         await websocket.send_json({"type": "history_done"})
     except Exception:
-        record.connected = False
+        with record.event_log_lock:
+            if subscriber in record.subscribers:
+                record.subscribers.remove(subscriber)
+            record.connected = bool(record.subscribers)
         return
 
-    pump_task = asyncio.create_task(_pump_events(record, websocket))
+    pump_task = asyncio.create_task(_pump_events(subscriber, websocket))
     try:
         while True:
             data = await websocket.receive_json()
@@ -1256,7 +1275,10 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         pass
     finally:
         pump_task.cancel()
-        record.connected = False
+        with record.event_log_lock:
+            if subscriber in record.subscribers:
+                record.subscribers.remove(subscriber)
+            record.connected = bool(record.subscribers)
         record.touch()
 
 

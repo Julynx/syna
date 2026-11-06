@@ -83,6 +83,17 @@ def test_shell_and_vendor_stay_open(monkeypatch):
     assert vendor.status_code == 404
 
 
+def test_health_is_open_and_reports_ok(monkeypatch):
+    """The liveness probe stays open with a token in force."""
+    monkeypatch.setattr(server, "AUTH_TOKEN", "secret123")
+    client = TestClient(server.app)
+
+    response = client.get("/health", headers=LOCAL_HOST)
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 def _assert_ws_denied(client, path, headers=None, why=""):
     """Connect expecting the handshake to be denied (HTTP 403 / close 1008)."""
     try:
