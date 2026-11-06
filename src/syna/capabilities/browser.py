@@ -53,6 +53,7 @@ from ..config import (
     get_logger,
     load_browser_command_timeout_s,
     load_browser_launch_timeout_s,
+    load_max_cancel_wait_s,
 )
 from ..state import ToolCancelled, get_cancel_event
 
@@ -601,8 +602,9 @@ SNAPSHOT_JS = (
 
 
 # How often the command guard polls the stop event while the command
-# runs, and how long a cancelled command gets to acknowledge its
-# cancellation before it is abandoned running on the loop.
+# runs, and the ceiling on how long a cancelled command gets to
+# acknowledge its cancellation before it is abandoned running on the
+# loop (capped at half the harness's stop grace, see the guard).
 _CANCEL_POLL_S = 0.25
 _CANCEL_ACK_S = 5.0
 
@@ -812,6 +814,10 @@ class Browser:
             task = asyncio.ensure_future(coro)
             budget_s = load_browser_command_timeout_s()
             deadline = time.monotonic() + budget_s
+            # Never outlive the harness's own stop grace: the harness
+            # detaches from the call and reports it hung once the grace
+            # passes, so a clean cancellation must land before that.
+            ack_s = min(_CANCEL_ACK_S, load_max_cancel_wait_s() / 2)
             stopped_by_harness = False
             while True:
                 remaining = deadline - time.monotonic()
@@ -826,15 +832,20 @@ class Browser:
                     continue
                 task.cancel()
                 try:
-                    return await asyncio.wait_for(
-                        asyncio.shield(task), timeout=_CANCEL_ACK_S
-                    )
+                    return await asyncio.wait_for(asyncio.shield(task), timeout=ack_s)
                 except asyncio.TimeoutError:
+                    # Retrieve the abandoned task's eventual exception so
+                    # asyncio never logs "Task exception was never
+                    # retrieved" when the discarded session is torn down
+                    # under it.
+                    task.add_done_callback(
+                        lambda done: done.cancelled() or done.exception()
+                    )
                     get_logger().warning(
                         "Browser command '%s' ignored its cancellation for"
-                        " %.0fs; abandoning it running on the loop.",
+                        " %.1fs; abandoning it running on the loop.",
                         command_name,
-                        _CANCEL_ACK_S,
+                        ack_s,
                     )
                 except asyncio.CancelledError:
                     pass

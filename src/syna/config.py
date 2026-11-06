@@ -17,7 +17,8 @@ DEFAULT_COMMAND_TIMEOUT_S = 50
 DEFAULT_TOOL_CALL_TIMEOUT_S = 60
 DEFAULT_OUTPUT_LIMIT_CHARS = 40000
 
-# Browser phase budgets. Deliberately not subject to the Allegro
+# Timeout budgets for the browser-backed capabilities (web search and
+# the browser tool). Deliberately not subject to the Allegro
 # scale: starting a stealth browser from cold (process spawn,
 # fingerprint setup, cold OS file caches) and a slow search engine do
 # not get faster because the user asked the agent to move quickly, and

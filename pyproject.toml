@@ -59,6 +59,9 @@ module-name = "syna"
 
 [tool.ruff]
 line-length = 88
+# ruff's JSON formatting (4-space indent, trailing commas) is invalid
+# strict JSON; assets/config.json must stay loadable by the stdlib.
+extend-exclude = ["*.json"]
 
 [tool.ruff.format]
 quote-style = "double"

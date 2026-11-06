@@ -43,6 +43,7 @@ from ..state import (
     register_container,
     set_call_output_path,
     set_cancel_event,
+    set_last_exit_code,
     unregister_container,
 )
 from ..capabilities.tools import (
@@ -287,8 +288,15 @@ def build_hung_call_notice(
 
 
 def _collect_outcome(outcome: dict) -> tuple[object, int | None]:
-    """Return (output, exit_code) from a finished worker, raising on error."""
+    """Return (output, exit_code) from a finished worker, raising on error.
+
+    On error, the worker's recorded exit code is restored into the
+    caller's thread context first, so the batch pipeline can still
+    report it: a tool that set an exit code before raising keeps that
+    verdict on the rendered row.
+    """
     if "error" in outcome:
+        set_last_exit_code(outcome.get("exit_code"))
         raise outcome["error"]
     return outcome["output"], outcome.get("exit_code")
 
@@ -383,6 +391,7 @@ def execute_tool_with_timeout(
                     True,
                     None,
                 )
+            set_last_exit_code(outcome.get("exit_code"))
             raise error
         get_logger().info(
             "Tool call %s finished past its deadline within the stop"
@@ -795,7 +804,7 @@ def parse_and_execute_tools(
                 print(f"  ! (Tool execution failed: {str(exc)[:64]})")
             output = f"Tool execution error: {exc}"
             timed_out = False
-            exit_code = None
+            exit_code = pop_last_exit_code()
             status = "error"
             failure_occurred = True
         else:

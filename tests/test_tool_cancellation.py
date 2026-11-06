@@ -48,6 +48,32 @@ def test_error_from_the_tool_propagates(monkeypatch):
         raise AssertionError("the tool's exception must propagate")
 
 
+def test_error_row_keeps_the_tool_recorded_exit_code(monkeypatch):
+    """A tool that set an exit code before raising keeps it on the row."""
+
+    def failing_after_exit_code():
+        from syna.state import set_last_exit_code
+
+        set_last_exit_code(7)
+        raise ValueError("boom after exit code")
+
+    _register_tool(monkeypatch, failing_after_exit_code)
+    outcome = parse.parse_and_execute_tools(
+        [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": SLOW_TOOL, "arguments": "{}"},
+            }
+        ],
+        echo_errors=False,
+        tool_timeout_s=5.0,
+    )
+    row = outcome.outputs[0]
+    assert row["status"] == "error", row
+    assert row["exit_code"] == 7, row
+
+
 def test_cancel_event_reaches_the_worker(monkeypatch):
     seen = {}
 
@@ -198,6 +224,7 @@ def main():
         [
             test_call_finishing_before_deadline_returns_normally,
             test_error_from_the_tool_propagates,
+            test_error_row_keeps_the_tool_recorded_exit_code,
             test_cancel_event_reaches_the_worker,
             test_toolcancelled_becomes_the_deadline_notice,
             test_grace_completion_delivers_the_real_result,

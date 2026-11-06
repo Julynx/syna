@@ -134,6 +134,133 @@ def test_cancel_event_stops_the_command():
     )
 
 
+def test_late_result_during_stop_delivery_counts():
+    """A command finishing inside the acknowledgement window delivers.
+
+    The stop arrives while the command is running; it catches the
+    cancellation and lands its real result while the stop is being
+    delivered: the result is real and the call must return it, not a
+    cancellation notice.
+    """
+
+    async def stubborn(name, args):
+        try:
+            await asyncio.sleep(5.0)
+            return "never"
+        except asyncio.CancelledError:
+            await asyncio.sleep(0)
+            return "late but real"
+
+    browser = _loop_browser(_FakeSession(stubborn))
+    cancel_event = threading.Event()
+    set_cancel_event(cancel_event)
+    try:
+
+        def stop_soon():
+            time.sleep(0.3)
+            cancel_event.set()
+
+        threading.Thread(target=stop_soon, daemon=True).start()
+        started = time.monotonic()
+        view = browser._tool("visit", url="https://example.com")
+        elapsed = time.monotonic() - started
+    finally:
+        set_cancel_event(None)
+    assert view == "late but real", view
+    assert elapsed < 1.5, f"the result must arrive promptly (took {elapsed:.2f}s)"
+
+
+def test_command_ignoring_cancellation_is_abandoned(monkeypatch: MonkeyPatch):
+    """A command that swallows its cancellation is abandoned past the ack.
+
+    The acknowledgement window is capped at half the harness's stop
+    grace, so the abandonment (and the caller's error) always lands
+    before the harness would detach and report the call hung.
+    """
+    monkeypatch.setattr(browser_module, "load_browser_command_timeout_s", lambda: 0.2)
+    monkeypatch.setattr(browser_module, "_CANCEL_ACK_S", 0.2)
+    release = threading.Event()
+    abandoned_finished = threading.Event()
+
+    async def unstoptable(name, args):
+        while True:
+            try:
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                continue
+            if release.is_set():
+                abandoned_finished.set()
+                return "released"
+
+    browser = _loop_browser(_FakeSession(unstoptable))
+    started = time.monotonic()
+    try:
+        browser._tool("visit", url="https://example.com")
+    except BrowserCommandTimeout as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("the abandoned command must raise the timeout")
+    elapsed = time.monotonic() - started
+    assert "timed out" in message, message
+    assert elapsed < 1.5, (
+        f"the abandonment must land within the stop grace (took {elapsed:.2f}s)"
+    )
+    release.set()
+    assert abandoned_finished.wait(2.0), "the abandoned task must end for cleanup"
+    browser._loop.call_soon_threadsafe(browser._loop.stop)
+
+
+def test_ack_window_is_capped_by_the_harness_grace(monkeypatch: MonkeyPatch):
+    """A tiny harness grace shrinks the acknowledgement window to match.
+
+    The command swallows its cancellation, so the guard waits out the
+    acknowledgement window before abandoning it. With the window's
+    constant patched above the grace, only the min() cap keeps the
+    abandonment inside the harness's stop grace.
+    """
+    monkeypatch.setattr(browser_module, "_CANCEL_ACK_S", 3.0)
+    monkeypatch.setattr(browser_module, "load_max_cancel_wait_s", lambda: 1.0)
+    release = threading.Event()
+    abandoned_finished = threading.Event()
+
+    async def unstoptable(name, args):
+        while True:
+            try:
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                continue
+            if release.is_set():
+                abandoned_finished.set()
+                return "released"
+
+    browser = _loop_browser(_FakeSession(unstoptable))
+    cancel_event = threading.Event()
+    set_cancel_event(cancel_event)
+    try:
+
+        def stop_soon():
+            time.sleep(0.2)
+            cancel_event.set()
+
+        threading.Thread(target=stop_soon, daemon=True).start()
+        started = time.monotonic()
+        try:
+            browser._tool("visit", url="https://example.com")
+        except ToolCancelled:
+            pass
+        else:
+            raise AssertionError("the stop must end the call")
+        elapsed = time.monotonic() - started
+    finally:
+        set_cancel_event(None)
+    assert elapsed < 1.0, (
+        f"the abandonment must land inside the 1s grace (took {elapsed:.2f}s)"
+    )
+    release.set()
+    assert abandoned_finished.wait(2.0), "the abandoned task must end for cleanup"
+    browser._loop.call_soon_threadsafe(browser._loop.stop)
+
+
 def test_screenshot_is_bounded_by_the_command_budget(monkeypatch: MonkeyPatch):
     """The screenshot capture runs under the same command budget."""
     monkeypatch.setattr(browser_module, "load_browser_command_timeout_s", lambda: 0.2)
@@ -270,6 +397,9 @@ def main():
             test_command_delivers_its_result,
             test_command_budget_cancels_mid_flight,
             test_cancel_event_stops_the_command,
+            test_late_result_during_stop_delivery_counts,
+            test_command_ignoring_cancellation_is_abandoned,
+            test_ack_window_is_capped_by_the_harness_grace,
             test_screenshot_is_bounded_by_the_command_budget,
             test_timed_out_command_discards_the_session,
             test_stopped_command_discards_the_session,

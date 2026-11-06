@@ -993,8 +993,12 @@ limit arrives first cancels the Playwright task. A command that lands its
 result while the stop is being delivered still counts — the result is
 returned; the harness stop is answered with `ToolCancelled` (rendered as
 the "stopped, nothing is running" notice) and budget expiry with
-`BrowserCommandTimeout`; a command that ignores its cancellation for five
-seconds is abandoned running on the loop. Both cancellation endings
+`BrowserCommandTimeout`; a command that ignores its cancellation for the
+acknowledgement window (five seconds, capped at half the harness's stop
+grace so a clean ending always lands before the harness would detach) is
+abandoned running on the loop, with a done-callback retrieving its
+eventual exception so asyncio never logs unretrieved-task noise. Both
+cancellation endings
 discard the shared session (reset-on-cancel: a command cancelled mid-flight
 leaves the page in an unknown state a later command could land on), so the
 next browser call starts a clean browser through the launch budget. The
