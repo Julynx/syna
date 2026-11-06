@@ -158,7 +158,8 @@ from the canonical constants in `config.py`.
 | `max_command_output_chars`          | Character limit at which tool output is cut to its beginning and end (the system prompt's `{{OUTPUT_LIMIT}}`). The full output always remains available at the `saved_to` path.                                                                                               |
 | `tool_call_timeout_s`               | Per-tool-call deadline (default 60). At the deadline the harness asks the call to stop through its cancel event and waits `max_cancel_wait_s` for it to exit; a call that ignores the stop is detached with a hung-call notice. See `parse.py`.                                                                                                |
 | `web_search_timeout_s`              | Budget for one web search's engine chain (default 60, not Allegro-scaled). Enforced cooperatively: each navigation's timeout is capped by what remains of the budget, so expiry stops the chain within that navigation.                                                                                                                       |
-| `browser_launch_timeout_s`          | Budget for waiting on the search browser's cold start (default 120, not Allegro-scaled): a cold start is startup, not search work. The constructor runs in a helper thread, so an expired budget abandons the wait, not the launch — the helper keeps starting the browser for the next call.                                                                                                                 |
+| `browser_launch_timeout_s`          | Budget for waiting on a stealth browser's cold start — the search browser and the tool browser alike (default 120, not Allegro-scaled): a cold start is startup, not tool work. The constructor runs in a helper thread, so an expired budget abandons the wait, not the launch — the helper keeps starting the browser for the next call.                                                                                                                  |
+| `browser_command_timeout_s`         | Aggregate budget for one `browser` tool command (default 90, not Allegro-scaled): the command runs on the browser's loop raced against the harness's stop event, is cancelled when either limit arrives, and its session is discarded (reset-on-cancel) so the next call starts clean.                                                                                                                           |
 | `max_cancel_wait_s`                 | Stop grace after a call's deadline (default 10): how long the harness waits for a stopped worker to exit before detaching from it.                                                                                                                                                                                                            |
 | `command_timeout_s`                 | Per-`execute_command` timeout (default 50, kept below `tool_call_timeout_s`). The command is wrapped in `timeout -k 5` inside the pod so hangs are killed inside the pod, before the harness deadline; long-running work belongs in background jobs (`nohup ... &`), as the system prompt documents.                                          |
 | `pod_memory_mb`                     | Pod memory ceiling in MB (default 8192). Protects the host from runaway processes inside the pod; does not restrict what the model may do inside it.                                                                                                                          |
@@ -356,10 +357,13 @@ Global Docker client plus per-thread container registry and per-call context.
   output path, and reports the tool-recorded exit code back to the parser.
 - Web: each session has one worker thread that owns its container and runs
   turns sequentially; tools inside a turn run in per-call daemon threads that
-  inherit the session's container binding and responder. Detached (timed-out)
-  tool threads keep running until the call completes; since container
-  commands run as real processes inside the pod, the model can terminate
-  them with a follow-up `execute_command`. A pending `ask_user` question
+  inherit the session's container binding and responder. A call that honors
+  its stop request ends within the stop grace and delivers its real outcome;
+  only a worker that ignores the stop is detached and keeps running until
+  the call completes (for container commands the model can terminate them
+  with a follow-up `execute_command` since they run as real processes inside
+  the pod; the browser tool answers a mid-flight cancellation by discarding
+  its shared session instead). A pending `ask_user` question
   blocks both the tool worker and the turn thread indefinitely — by design —
   until the user answers or stop/new-chat/teardown releases the pending
   question with a cancellation sentinel. "Send now" crosses threads in the
@@ -529,11 +533,13 @@ output_path)` — runs the tool in a daemon worker thread, propagating the
   model client's own timeout/retry policy instead.
 - `call_deadline_s(tool_name, tool_timeout_s)` — the per-call deadline:
   `tool_call_timeout_s` for regular tools (subject to the thread's Allegro
-  scale), `None` for `ask_user`/`review_work`, and for `web_search` the
-  tool's own worst-case composition (`web_search.search_deadline_s()`: the
-  pacing lock's wait cap for any searches queued ahead of it plus its own
-  budget and slack) — a bug guard that only fires when the tool's internal
-  enforcement has failed, never the routine limit.
+  scale), `None` for `ask_user`/`review_work`, and for the self-timed tools
+  their own worst-case composition — `web_search.search_deadline_s()` (the
+  pacing lock's wait cap for any searches queued ahead of it plus the
+  searcher's own budget and slack) and `browser.browser_deadline_s()` (the
+  launch budget plus the command budget and slack) — bug guards that only
+  fire when the tool's internal enforcement has failed, never the routine
+  limit.
 - `_persist_tool_output(output_text, saved_to, persist_outputs)` — saves
   host-side tool output (web tools, file tools, ...) into the pod at
   `/tool_outputs/` via `copy_to` and chmods the file read-only;
@@ -811,14 +817,18 @@ dumps are deliberately not read-only: their writers rewrite them in place
 (os.replace over a read-only target fails on Windows).
 
 Blocking-operation boundedness (audited when the harness moved to
-terminal, cancel-based timeouts): every network and model request carries
-an explicit timeout — the speech and image-generation endpoints use
+terminal, cancel-based timeouts; updated when the browser tool got the
+same treatment): every network and model request carries an explicit
+timeout — the speech and image-generation endpoints use
 `httpx.post(timeout=timeout_ms)` and the vision and reviewer requests go
 through the model client's configured timeout and retry policy — so those
 calls honor the harness deadline or finish just past it, within the stop
 grace. The browser's Playwright operations each carry their own timeouts
-(navigation 30 s, clicks 4-7 s, selects 3 s, reload 20 s); their aggregate
-budget is the browser tool's remaining work. The bollard `exec` and
+(navigation 30 s, clicks 4-7 s, selects 3 s, reload 20 s), and their
+aggregate is now bounded too: each browser tool command runs under
+`browser_command_timeout_s`, raced against the harness cancel event, so
+a wedged command is cancelled mid-flight and reported as a timeout
+instead of leaning on the harness deadline. The bollard `exec` and
 `copy_to`/`copy_from` calls behind `execute_command`, the file tools, and
 `share_file` carry no client-side timeout parameter — `execute_command`
 bounds itself with the pod-side `timeout -k` kill, and the rest are
@@ -963,6 +973,34 @@ is logged as it finishes through the shared `_tool` dispatch, so a wedged
 navigation (one live incident: a host-level TLS outage left `visit` hanging
 until the call's deadline) is visible in the log instead of surfacing only as a
 bare tool-call timeout.
+
+Budgets and cancellation (the same terminal-timeout treatment as
+`web_search`): the tool browser and the search browser are both
+`SharedBrowser` instances — the cold Camoufox start runs in a helper thread
+bounded by `browser_launch_timeout_s`, so a caller that outlives the budget
+abandons the wait, not the start, and the next call finds the browser warm;
+concurrent first callers join one construction, a failed constructor is
+raised to every waiter with a fresh attempt on the next call, and
+`invalidate` drops the instance with a best-effort teardown in its own
+helper thread (a session that wedged mid-command cannot be trusted to close
+promptly, and no caller may block on it). Each session command — and the
+screenshot capture — runs under `browser_command_timeout_s` (default 90,
+not Allegro-scaled; a visit's worst legitimate path is a 30 s navigation
+plus challenge waiting), raced against the harness's cancel event inside
+the browser's own loop (`Browser._bounded`): the event is read in the
+calling thread, where the per-call event is thread-local, and whichever
+limit arrives first cancels the Playwright task. A command that lands its
+result while the stop is being delivered still counts — the result is
+returned; the harness stop is answered with `ToolCancelled` (rendered as
+the "stopped, nothing is running" notice) and budget expiry with
+`BrowserCommandTimeout`; a command that ignores its cancellation for five
+seconds is abandoned running on the loop. Both cancellation endings
+discard the shared session (reset-on-cancel: a command cancelled mid-flight
+leaves the page in an unknown state a later command could land on), so the
+next browser call starts a clean browser through the launch budget. The
+harness deadline for the tool call (`browser_deadline_s`, consumed by
+`call_deadline_s` in `parse.py`) is launch budget + command budget + slack
+— a bug guard that only fires when the internal enforcement has failed.
 
 Network guard: the browser runs on the host, so all its traffic is
 host-originated. A single `context.route("**/*")` handler (`_guard_route`)
@@ -1492,6 +1530,15 @@ All suites are plain scripts runnable with the project venv
   `ERROR:` format, clips long DOM dump lines, caps the output, drops
   separator and "Call log:" header lines, and degrades to a placeholder
   on empty errors.
+- `tests/test_browser_budgets.py` — the browser tool's own budgets and
+  cancellation: a command within its budget returns its view, one slower
+  than `browser_command_timeout_s` is cancelled mid-flight with a clear
+  error, the harness's stop event cancels the in-flight command promptly,
+  the screenshot capture runs under the same budget, both cancellation
+  endings discard the shared session while a clean completion never does,
+  the launch budget abandons the wait while the helper starts the browser,
+  `invalidate` tears down off the callers' path and the next get starts
+  clean, and the harness deadline composes launch + command + slack.
 - `tests/test_request_payload.py` — verifies the request payload sent to
   OpenRouter carries the system prompt with real quote characters (no
   escaping-layer artifacts) and survives a JSON roundtrip unchanged.

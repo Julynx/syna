@@ -14,6 +14,7 @@
   "command_timeout_s": 50,
   "web_search_timeout_s": 60,
   "browser_launch_timeout_s": 120,
+  "browser_command_timeout_s": 90,
   "max_cancel_wait_s": 10,
   "pod_memory_mb": 8192,
   "pod_pids_limit": 512,

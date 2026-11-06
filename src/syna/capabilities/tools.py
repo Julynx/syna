@@ -37,9 +37,17 @@ from typing import Any
 
 from bollard import DockerException
 
-from .browser import Browser, PWError, ToolError, describe_pw_error
+from .browser import (
+    Browser,
+    BrowserCommandTimeout,
+    PWError,
+    SharedBrowser,
+    ToolError,
+    describe_pw_error,
+)
 from ..config import (
     get_logger,
+    load_browser_launch_timeout_s,
     load_command_timeout_s,
     load_output_limit_chars,
     load_tool_call_timeout_s,
@@ -64,12 +72,21 @@ from .speech import (
     transcribe_audio,
     voice_enabled,
 )
-from ..state import get_call_output_path, get_container, set_last_exit_code
+from ..state import (
+    ToolCancelled,
+    get_call_output_path,
+    get_container,
+    set_last_exit_code,
+)
 from .verification import run_verification as v_run_verification
 from .vision import describe_image as v_describe_image
 from .web_search import search
 
-BROWSER = None
+SHARED_BROWSER = SharedBrowser(
+    lambda: Browser(),
+    thread_name="syna-tool-browser-start",
+    log_label="Tool browser",
+)
 
 _artifact_counter = itertools.count(1)
 
@@ -317,11 +334,6 @@ def browser(command: str, args: dict[str, Any]):
 
     Example: browser(command="type", args={"ref": 7, "text": "debian 13 release notes", "submit": True})
     """
-    global BROWSER
-
-    if not BROWSER:
-        BROWSER = Browser()
-
     if not args:
         args = {}
 
@@ -332,10 +344,21 @@ def browser(command: str, args: dict[str, Any]):
             f"ERROR: unknown browser command '{command}'. Available commands:"
             f" {', '.join(sorted(BROWSER_COMMANDS))}"
         )
-    if command == "screenshot":
-        view = _capture_screenshot(function, BROWSER, args)
-    else:
-        view = function(BROWSER, **args)
+    browser_instance = SHARED_BROWSER.get(load_browser_launch_timeout_s())
+    try:
+        if command == "screenshot":
+            view = _capture_screenshot(function, browser_instance, args)
+        else:
+            view = function(browser_instance, **args)
+    except ToolCancelled:
+        _discard_browser_session("the harness stopped a browser command")
+        raise
+    except BrowserCommandTimeout:
+        _discard_browser_session(
+            "a timed-out browser command left the session in an unknown state"
+        )
+        set_last_exit_code(1)
+        raise
     if isinstance(view, str) and view.startswith("ERROR:"):
         set_last_exit_code(1)
     return view
@@ -649,21 +672,29 @@ def review_work(summary: str):
     return result
 
 
+def _discard_browser_session(reason: str) -> None:
+    """Drop the shared tool browser after a command was abandoned mid-flight.
+
+    Reset-on-cancel: a command cancelled mid-flight leaves the shared
+    session's page in an unknown state that a later command could land
+    on. The teardown runs off the timed path, and the next browser call
+    starts a clean browser through the launch budget.
+    """
+    if SHARED_BROWSER.invalidate():
+        get_logger().info("Discarded the tool browser session: %s.", reason)
+
+
 def _reset_browser():
     """Close the shared browser so the next browser call starts a clean one.
 
     Called by the server when a chat is reset: the browser lives on the host
-    (outside the pod), so it must be torn down separately from the VM.
+    (outside the pod), so it must be torn down separately from the VM. The
+    teardown runs in a helper thread — a session that wedged mid-command
+    cannot be trusted to close promptly, and the reset must not block.
     """
-    global BROWSER
-    if BROWSER is None:
-        return "No browser session was open."
-    browser, BROWSER = BROWSER, None
-    try:
-        browser.close()
-    except Exception:
-        get_logger().exception("Failed to close the browser during reset")
-    return "Browser session closed."
+    if SHARED_BROWSER.invalidate():
+        return "Browser session closed."
+    return "No browser session was open."
 
 
 TOOL_REGISTRY = {

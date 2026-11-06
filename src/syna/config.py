@@ -17,14 +17,17 @@ DEFAULT_COMMAND_TIMEOUT_S = 50
 DEFAULT_TOOL_CALL_TIMEOUT_S = 60
 DEFAULT_OUTPUT_LIMIT_CHARS = 40000
 
-# Web-search phase budgets. Deliberately not subject to the Allegro
+# Browser phase budgets. Deliberately not subject to the Allegro
 # scale: starting a stealth browser from cold (process spawn,
 # fingerprint setup, cold OS file caches) and a slow search engine do
 # not get faster because the user asked the agent to move quickly, and
 # a budget that halves with the mode reintroduces the cold-start race
-# these budgets exist to prevent.
+# these budgets exist to prevent. The command budget bounds one browser
+# tool command in aggregate (a visit's worst legitimate path is a 30 s
+# navigation plus challenge waiting, so 90 s keeps late successes).
 DEFAULT_WEB_SEARCH_TIMEOUT_S = 60
 DEFAULT_BROWSER_LAUNCH_TIMEOUT_S = 120
+DEFAULT_BROWSER_COMMAND_TIMEOUT_S = 90
 # How long the harness waits after asking a call to stop before
 # detaching from it — the SIGTERM-to-SIGKILL grace.
 DEFAULT_MAX_CANCEL_WAIT_S = 10
@@ -264,12 +267,23 @@ def load_web_search_timeout_s() -> float:
 
 
 def load_browser_launch_timeout_s() -> float:
-    """Return the budget for acquiring or starting the search browser.
+    """Return the budget for starting a shared stealth browser.
+
+    Applies to the search browser and the tool browser alike. Not
+    subject to the Allegro scale (see the module defaults).
+    """
+    return load_config().get(
+        "browser_launch_timeout_s", DEFAULT_BROWSER_LAUNCH_TIMEOUT_S
+    )
+
+
+def load_browser_command_timeout_s() -> float:
+    """Return the aggregate budget for one browser tool command.
 
     Not subject to the Allegro scale (see the module defaults).
     """
     return load_config().get(
-        "browser_launch_timeout_s", DEFAULT_BROWSER_LAUNCH_TIMEOUT_S
+        "browser_command_timeout_s", DEFAULT_BROWSER_COMMAND_TIMEOUT_S
     )
 
 

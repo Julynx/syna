@@ -36,6 +36,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import atexit
 import random
 import re
 import sys
@@ -48,7 +49,12 @@ from camoufox.async_api import AsyncCamoufox
 from playwright.async_api import Error as PWError
 
 from . import net_guard
-from ..config import get_logger
+from ..config import (
+    get_logger,
+    load_browser_command_timeout_s,
+    load_browser_launch_timeout_s,
+)
+from ..state import ToolCancelled, get_cancel_event
 
 ALLOWED_SCHEMES = {"http", "https"}
 
@@ -594,6 +600,182 @@ SNAPSHOT_JS = (
 )
 
 
+# How often the command guard polls the stop event while the command
+# runs, and how long a cancelled command gets to acknowledge its
+# cancellation before it is abandoned running on the loop.
+_CANCEL_POLL_S = 0.25
+_CANCEL_ACK_S = 5.0
+
+# Slack on top of the launch and command budgets for the harness's
+# browser deadline: the margin of one bounded pod copy and any leftover
+# bookkeeping. Both budgets are enforced inside the tool, so this limit
+# only fires when that enforcement has failed.
+BROWSER_DEADLINE_SLACK_S = 60
+
+
+class BrowserCommandTimeout(ValueError):
+    """A session command outlived browser_command_timeout_s.
+
+    The command was cancelled mid-flight, which leaves the shared
+    session's page state unknown; the tool layer discards the session
+    (reset-on-cancel) so the next call starts a clean browser.
+    """
+
+
+class _LaunchAttempt:
+    """One in-flight SharedBrowser construction (see SharedBrowser.get)."""
+
+    def __init__(self):
+        self.ready = threading.Event()
+        self.error: BaseException | None = None
+
+
+class SharedBrowser:
+    """A process-wide browser instance, started once, in a helper thread.
+
+    Constructing the stealth browser from cold (process spawn,
+    fingerprint setup, cold OS file caches) takes seconds to minutes and
+    is startup, not tool work. The constructor therefore runs in a
+    helper thread and `get` waits bounded by the launch budget: a caller
+    that outlives the budget abandons the wait — never the work — and
+    when the construction eventually lands, the next call finds the
+    browser warm. Concurrent first callers join one construction, and a
+    failed constructor is raised to every waiter with a fresh attempt on
+    the next call.
+
+    `invalidate` drops the instance and tears it down in its own helper
+    thread, because a session that wedged mid-command cannot be trusted
+    to close promptly and no caller may block on it.
+    """
+
+    def __init__(self, factory, thread_name: str, log_label: str):
+        self._factory = factory
+        self._thread_name = thread_name
+        self._log_label = log_label
+        self._lock = threading.Lock()
+        self._instance = None
+        self._attempt: _LaunchAttempt | None = None
+        atexit.register(self._close)
+
+    def get(self, launch_budget_s: float):
+        """Return the shared instance, starting it once, within the budget.
+
+        Raises ValueError when the budget runs out — either against a
+        launch still running (the helper keeps going; a later call finds
+        the browser warm) or against a construction wedged forever,
+        which is a bug the harness's own deadline reports as a hung call.
+        """
+        overall = time.monotonic() + launch_budget_s
+        while True:
+            with self._lock:
+                if self._instance is not None:
+                    return self._instance
+                attempt = self._attempt
+                if attempt is None:
+                    attempt = _LaunchAttempt()
+                    self._attempt = attempt
+                    threading.Thread(
+                        target=self._construct,
+                        args=(attempt,),
+                        name=self._thread_name,
+                        daemon=True,
+                    ).start()
+            remaining = overall - time.monotonic()
+            if not attempt.ready.wait(max(0.0, remaining)):
+                get_logger().error(
+                    "The %s did not start within %.0fs.",
+                    self._log_label.lower(),
+                    launch_budget_s,
+                )
+                raise ValueError(
+                    f"The {self._log_label.lower()} did not start within"
+                    f" {launch_budget_s:.0f} seconds."
+                )
+            if attempt.error is not None:
+                with self._lock:
+                    if self._attempt is attempt:
+                        self._attempt = None
+                raise attempt.error
+            if self._instance is not None:
+                return self._instance
+            with self._lock:
+                if self._attempt is attempt:
+                    self._attempt = None
+            # A concurrent invalidate dropped the instance this attempt
+            # had published; loop and start a fresh one, still bounded
+            # by the same overall budget.
+
+    def _construct(self, attempt: _LaunchAttempt) -> None:
+        """Build the instance, publish it, and wake the waiters."""
+        started = time.monotonic()
+        try:
+            instance = self._factory()
+        except BaseException as exc:
+            attempt.error = exc
+            attempt.ready.set()
+            return
+        with self._lock:
+            if self._instance is None:
+                self._instance = instance
+        attempt.ready.set()
+        get_logger().info(
+            "%s started in %.1fs.", self._log_label, time.monotonic() - started
+        )
+
+    def invalidate(self) -> bool:
+        """Drop the instance and tear it down off the callers' path.
+
+        Called after a command was cancelled mid-flight — the session's
+        page state is unknown — and by the chat reset. Returns whether
+        an instance existed.
+        """
+        with self._lock:
+            instance, self._instance = self._instance, None
+        if instance is None:
+            return False
+        threading.Thread(
+            target=self._teardown,
+            args=(instance,),
+            name=f"{self._thread_name}-stop",
+            daemon=True,
+        ).start()
+        return True
+
+    def _teardown(self, instance) -> None:
+        """Close a dropped instance without letting failures escape."""
+        try:
+            instance.close()
+        except Exception:
+            get_logger().info(
+                "Could not close the %s during teardown.",
+                self._log_label.lower(),
+                exc_info=True,
+            )
+
+    def _close(self) -> None:
+        """Shut the instance down during interpreter exit."""
+        with self._lock:
+            instance, self._instance = self._instance, None
+        if instance is not None:
+            self._teardown(instance)
+
+
+def browser_deadline_s() -> float:
+    """Return the harness deadline for one browser tool call.
+
+    The tool enforces its own budgets, so this deadline is a bug guard
+    that must only fire when that enforcement has failed. It outlasts
+    every legitimate path: the launch budget for the shared browser's
+    cold start, the command budget, and slack for the bounded pod copy
+    a screenshot adds.
+    """
+    return (
+        load_browser_launch_timeout_s()
+        + load_browser_command_timeout_s()
+        + BROWSER_DEADLINE_SLACK_S
+    )
+
+
 class Browser:
     def __init__(self, **session_kwargs: Any):
         self._loop = asyncio.new_event_loop()
@@ -609,11 +791,87 @@ class Browser:
         """
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
+    def _bounded(self, coro, command_name: str, cancel_event):
+        """Wrap a session command with the command budget and the stop event.
+
+        Returns a coroutine for `run`: the command runs as a task raced
+        against a poller, and whichever limit arrives first — the
+        `browser_command_timeout_s` budget, or the harness's cancel
+        event, read in the calling thread where the per-call event is
+        thread-local — cancels the command task. A command that lands a
+        result while the stop is being delivered still counts: the
+        result is real and is returned. A command that acknowledges its
+        cancellation ends the call with the matching ending
+        (`ToolCancelled` for the harness stop, `BrowserCommandTimeout`
+        for the budget); one that ignores its cancellation for the
+        acknowledgement window is abandoned running, and the caller
+        answers by discarding the session.
+        """
+
+        async def guard():
+            task = asyncio.ensure_future(coro)
+            budget_s = load_browser_command_timeout_s()
+            deadline = time.monotonic() + budget_s
+            stopped_by_harness = False
+            while True:
+                remaining = deadline - time.monotonic()
+                if cancel_event is not None and cancel_event.is_set():
+                    stopped_by_harness = True
+                elif remaining > 0:
+                    done, _ = await asyncio.wait(
+                        {task}, timeout=min(_CANCEL_POLL_S, remaining)
+                    )
+                    if done:
+                        return task.result()
+                    continue
+                task.cancel()
+                try:
+                    return await asyncio.wait_for(
+                        asyncio.shield(task), timeout=_CANCEL_ACK_S
+                    )
+                except asyncio.TimeoutError:
+                    get_logger().warning(
+                        "Browser command '%s' ignored its cancellation for"
+                        " %.0fs; abandoning it running on the loop.",
+                        command_name,
+                        _CANCEL_ACK_S,
+                    )
+                except asyncio.CancelledError:
+                    pass
+                if stopped_by_harness:
+                    raise ToolCancelled(
+                        "the harness stopped the browser command at its deadline"
+                    )
+                raise BrowserCommandTimeout(
+                    f"Browser command '{command_name}' timed out after"
+                    f" {budget_s:.0f} seconds without completing; it was"
+                    " stopped mid-flight and the browser session was"
+                    " discarded — the next call starts a clean one."
+                )
+
+        return guard()
+
     def _tool(self, name: str, **args: Any) -> None:
         args = {k: v for k, v in args.items() if v is not None}
         started = time.monotonic()
         try:
-            self.last = self.run(self._s.call(name, args))
+            self.last = self.run(
+                self._bounded(self._s.call(name, args), name, get_cancel_event())
+            )
+        except ToolCancelled:
+            get_logger().info(
+                "Browser command '%s' stopped at the harness's deadline after %.1fs.",
+                name,
+                time.monotonic() - started,
+            )
+            raise
+        except BrowserCommandTimeout:
+            get_logger().info(
+                "Browser command '%s' outlived its budget after %.1fs.",
+                name,
+                time.monotonic() - started,
+            )
+            raise
         except Exception:
             get_logger().info(
                 "Browser command '%s' failed after %.1fs",
@@ -662,7 +920,9 @@ class Browser:
 
     def screenshot(self) -> bytes:
         """Capture the current viewport as PNG bytes; tools.py copies it into the pod."""
-        return self.run(self._s.screenshot_bytes())
+        return self.run(
+            self._bounded(self._s.screenshot_bytes(), "screenshot", get_cancel_event())
+        )
 
     def close(self) -> None:
         self.run(self._s.close())
@@ -1339,7 +1599,7 @@ class BrowserSession:
         try:
             path = await el.evaluate(FALLBACK_CLICK_JS)
             return f"{path} click used ({reason})"
-        except PWError:
+        except PWError as exc:
             raise ToolError(reason) from exc
 
     async def tool_click(self, ref: int) -> str:

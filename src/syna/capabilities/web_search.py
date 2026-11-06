@@ -25,7 +25,6 @@ what remains of the budget, so expiry stops the chain within that
 navigation instead of abandoning it mid-flight.
 """
 
-import atexit
 import random
 import re
 import threading
@@ -33,7 +32,7 @@ import time
 from base64 import urlsafe_b64decode
 from urllib.parse import parse_qs, quote_plus, urlparse
 
-from .browser import Browser
+from .browser import Browser, SharedBrowser
 from ..config import (
     get_logger,
     load_browser_launch_timeout_s,
@@ -206,28 +205,13 @@ _ENGINES = (
 
 _search_lock = threading.Lock()
 
-_launch_lock = threading.Lock()
-
-_browser: Browser | None = None
-
-_launch: "_BrowserLaunch | None" = None
+_search_browser = SharedBrowser(
+    lambda: Browser(headless=True),
+    thread_name="syna-search-browser-start",
+    log_label="Search browser",
+)
 
 _engine_blocked_until: dict[str, float] = {}
-
-
-class _BrowserLaunch:
-    """One in-flight construction of the shared search browser.
-
-    The constructor runs in a helper thread; waiters gather on `ready`,
-    each bounded by the launch budget. A caller that outlives the budget
-    abandons its wait — the helper keeps starting the browser, so when
-    it eventually lands the next call finds it warm. A constructor that
-    fails records its error here for every waiter to raise.
-    """
-
-    def __init__(self):
-        self.ready = threading.Event()
-        self.error: BaseException | None = None
 
 
 def _search_lock_wait_s() -> float:
@@ -468,76 +452,13 @@ def _search_engine(browser: Browser, query, engine, deadline):
 def _get_browser():
     """Return the shared search browser, starting it once.
 
-    Creation is serialized and governed by the launch budget, not the
-    search budget: a cold start (process spawn, fingerprint setup, cold
-    OS file caches) takes seconds to minutes and is startup, not work.
-    The constructor runs in a helper thread so the budget can bound the
-    wait: a caller that outlives it raises cleanly while the helper
-    keeps starting the browser, and when it eventually lands the next
-    call finds it warm. A constructor wedged forever is a bug the
-    harness's own deadline reports as a hung call.
+    The construction runs in a helper thread bounded by the launch
+    budget — a cold start is startup, not search work — so a caller
+    that outlives the budget abandons the wait, not the start, and a
+    constructor wedged forever is a bug the harness's own deadline
+    reports as a hung call.
     """
-    global _browser, _launch
-    if _browser is not None:
-        return _browser
-    launch_budget_s = load_browser_launch_timeout_s()
-    started = time.monotonic()
-    with _launch_lock:
-        if _browser is not None:
-            return _browser
-        launch = _launch
-        if launch is None:
-            launch = _BrowserLaunch()
-            _launch = launch
-            threading.Thread(
-                target=_construct_browser,
-                args=(launch,),
-                name="syna-search-browser-start",
-                daemon=True,
-            ).start()
-    remaining = launch_budget_s - (time.monotonic() - started)
-    if not launch.ready.wait(max(0.0, remaining)):
-        get_logger().error(
-            "The search browser did not start within %.0fs.", launch_budget_s
-        )
-        raise ValueError(
-            f"The search browser did not start within {launch_budget_s:.0f} seconds."
-        )
-    if launch.error is not None:
-        with _launch_lock:
-            if _launch is launch:
-                _launch = None
-        raise launch.error
-    return _browser
-
-
-def _construct_browser(launch: _BrowserLaunch):
-    """Build the shared search browser, publish it, and wake the waiters."""
-    global _browser
-    started = time.monotonic()
-    try:
-        browser = Browser(headless=True)
-    except BaseException as exc:
-        launch.error = exc
-        launch.ready.set()
-        return
-    with _launch_lock:
-        if _browser is None:
-            _browser = browser
-            atexit.register(_close_browser)
-    launch.ready.set()
-    get_logger().info("Search browser started in %.1fs.", time.monotonic() - started)
-
-
-def _close_browser():
-    """Shut the shared search browser down during interpreter exit."""
-    global _browser
-    browser, _browser = _browser, None
-    if browser is not None:
-        try:
-            browser.close()
-        except Exception:
-            pass
+    return _search_browser.get(load_browser_launch_timeout_s())
 
 
 def _format_results(results) -> str:

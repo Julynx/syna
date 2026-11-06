@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from _runner import MonkeyPatch, run_suite
 
 from syna.capabilities import web_search
+from syna.capabilities.browser import SharedBrowser
 
 
 class _FakePage:
@@ -62,6 +63,15 @@ class _CountingBrowser:
         self.page = _FakePage()
 
 
+def _fresh_shared_browser(monkeypatch: MonkeyPatch, factory) -> SharedBrowser:
+    """Install an isolated SharedBrowser in web_search and return it."""
+    shared = SharedBrowser(
+        factory, thread_name="test-search-browser", log_label="Test browser"
+    )
+    monkeypatch.setattr(web_search, "_search_browser", shared)
+    return shared
+
+
 def test_search_budget_expires_mid_chain(monkeypatch: MonkeyPatch):
     """A chain slower than its budget stops with a clear timeout error."""
 
@@ -90,13 +100,11 @@ def test_launch_budget_expires_while_the_constructor_runs(monkeypatch: MonkeyPat
     """
 
     class _SlowBrowser:
-        def __init__(self, **kwargs):
+        def __init__(self):
             time.sleep(0.3)
             self.page = _FakePage()
 
-    monkeypatch.setattr(web_search, "_browser", None)
-    monkeypatch.setattr(web_search, "_launch", None)
-    monkeypatch.setattr(web_search, "Browser", _SlowBrowser)
+    shared = _fresh_shared_browser(monkeypatch, _SlowBrowser)
     monkeypatch.setattr(web_search, "load_browser_launch_timeout_s", lambda: 0.1)
     try:
         web_search._get_browser()
@@ -105,12 +113,12 @@ def test_launch_budget_expires_while_the_constructor_runs(monkeypatch: MonkeyPat
     else:
         raise AssertionError("the exhausted launch budget must raise")
     deadline = time.monotonic() + 2.0
-    while web_search._browser is None and time.monotonic() < deadline:
+    while shared._instance is None and time.monotonic() < deadline:
         time.sleep(0.01)
-    assert web_search._browser is not None, (
+    assert shared._instance is not None, (
         "the abandoned helper must finish and publish the browser"
     )
-    assert web_search._get_browser() is web_search._browser
+    assert web_search._get_browser() is shared._instance
 
 
 def test_constructor_failure_propagates_and_the_next_call_retries(
@@ -121,15 +129,14 @@ def test_constructor_failure_propagates_and_the_next_call_retries(
     class _FlakyBrowser:
         instances = 0
 
-        def __init__(self, **kwargs):
+        def __init__(self):
             _FlakyBrowser.instances += 1
             if _FlakyBrowser.instances == 1:
                 raise RuntimeError("boom")
             self.page = _FakePage()
 
-    monkeypatch.setattr(web_search, "_browser", None)
-    monkeypatch.setattr(web_search, "_launch", None)
-    monkeypatch.setattr(web_search, "Browser", _FlakyBrowser)
+    _FlakyBrowser.instances = 0
+    _fresh_shared_browser(monkeypatch, _FlakyBrowser)
     monkeypatch.setattr(web_search, "load_browser_launch_timeout_s", lambda: 2.0)
     try:
         web_search._get_browser()
@@ -144,8 +151,8 @@ def test_constructor_failure_propagates_and_the_next_call_retries(
 
 def test_browser_is_created_exactly_once_under_a_race(monkeypatch: MonkeyPatch):
     """Concurrent first searches share one browser instead of racing."""
-    monkeypatch.setattr(web_search, "_browser", None)
-    monkeypatch.setattr(web_search, "Browser", _CountingBrowser)
+    _CountingBrowser.instances = 0
+    shared = _fresh_shared_browser(monkeypatch, _CountingBrowser)
     monkeypatch.setattr(web_search, "load_browser_launch_timeout_s", lambda: 5.0)
     barrier = threading.Barrier(8)
     browsers = []
@@ -169,6 +176,7 @@ def test_browser_is_created_exactly_once_under_a_race(monkeypatch: MonkeyPatch):
     assert not errors, errors
     assert len(browsers) == 8
     assert all(browser is browsers[0] for browser in browsers)
+    assert shared._instance is browsers[0]
     assert _CountingBrowser.instances == 1, (
         "the creation lock must serialize the cold start"
     )

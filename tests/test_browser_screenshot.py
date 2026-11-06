@@ -37,10 +37,27 @@ def _copied_bytes(container) -> bytes:
     return Path(destination, Path(source).name).read_bytes()
 
 
+class StubSharedBrowser:
+    """Hands back a warm browser without starting one."""
+
+    def __init__(self, instance):
+        self._instance = instance
+
+    def get(self, launch_budget_s):
+        return self._instance
+
+
+def _warm_browser(monkeypatch, instance) -> StubSharedBrowser:
+    """Install a warm-browser stub so no real browser is started."""
+    stub = StubSharedBrowser(instance)
+    monkeypatch.setattr(tools, "SHARED_BROWSER", stub)
+    return stub
+
+
 def test_screenshot_saves_image_into_pod(monkeypatch):
     container = FakeContainer()
     monkeypatch.setattr(tools, "get_container", lambda: container)
-    monkeypatch.setattr(tools, "BROWSER", object())
+    _warm_browser(monkeypatch, object())
     monkeypatch.setitem(tools.BROWSER_COMMANDS, "screenshot", lambda browser: FAKE_PNG)
 
     result = tools.browser("screenshot", {})
@@ -61,7 +78,7 @@ def test_screenshot_saves_image_into_pod(monkeypatch):
 def test_screenshot_filenames_are_unique(monkeypatch):
     container = FakeContainer()
     monkeypatch.setattr(tools, "get_container", lambda: container)
-    monkeypatch.setattr(tools, "BROWSER", object())
+    _warm_browser(monkeypatch, object())
     monkeypatch.setitem(tools.BROWSER_COMMANDS, "screenshot", lambda browser: FAKE_PNG)
 
     first = tools.browser("screenshot", {})
@@ -75,7 +92,7 @@ def test_screenshot_filenames_are_unique(monkeypatch):
 def test_browser_errors_follow_the_error_convention(monkeypatch):
     container = FakeContainer()
     monkeypatch.setattr(tools, "get_container", lambda: container)
-    monkeypatch.setattr(tools, "BROWSER", object())
+    _warm_browser(monkeypatch, object())
 
     def raise_pw_error(browser):
         raise PWError("page crashed mid-capture")
@@ -92,7 +109,7 @@ def test_browser_errors_follow_the_error_convention(monkeypatch):
 def test_bad_arguments_follow_the_error_convention(monkeypatch):
     container = FakeContainer()
     monkeypatch.setattr(tools, "get_container", lambda: container)
-    monkeypatch.setattr(tools, "BROWSER", object())
+    _warm_browser(monkeypatch, object())
 
     def reject_args(browser, **kwargs):
         raise TypeError("unexpected keyword argument 'format'")
@@ -108,7 +125,7 @@ def test_bad_arguments_follow_the_error_convention(monkeypatch):
 def test_screenshot_without_container_raises(monkeypatch):
     """Without a pod the call must fail loudly, not silently lose the image."""
     monkeypatch.setattr(tools, "get_container", lambda: None)
-    monkeypatch.setattr(tools, "BROWSER", object())
+    _warm_browser(monkeypatch, object())
     monkeypatch.setitem(tools.BROWSER_COMMANDS, "screenshot", lambda browser: FAKE_PNG)
 
     try:

@@ -50,6 +50,7 @@ from ..capabilities.tools import (
     TOOL_REGISTRY,
     command_runtime_limit_s,
 )
+from ..capabilities.browser import browser_deadline_s
 from ..capabilities.web_search import search_deadline_s
 from ..capabilities.verification import (
     REVIEW_TOOL_NAME,
@@ -226,17 +227,18 @@ def call_deadline_s(tool_name: str, tool_timeout_s: float | None) -> float | Non
     Regular tools are bounded by tool_call_timeout_s (subject to the
     calling thread's Allegro scale). ask_user waits for the user by
     design and review_work is bounded by the model client's own timeout
-    and retry policy, so neither gets a harness deadline. web_search
-    enforces its own phase budgets (browser launch cap, search budget);
-    its deadline is web_search's own worst-case composition — the pacing
-    lock's wait cap for any searches queued ahead of it plus its own
-    budget and slack — a bug guard that only fires when the tool's
-    internal enforcement has failed, never the routine limit.
+    and retry policy, so neither gets a harness deadline. web_search and
+    browser enforce their own phase budgets (browser launch cap, search
+    or command budget); their deadlines are each tool's own worst-case
+    composition — a bug guard that only fires when the tool's internal
+    enforcement has failed, never the routine limit.
     """
     if tool_name in ("ask_user", REVIEW_TOOL_NAME):
         return None
     if tool_name == "web_search":
         return search_deadline_s()
+    if tool_name == "browser":
+        return browser_deadline_s()
     return tool_timeout_s
 
 
