@@ -166,7 +166,7 @@ def execute_command(command: str, arguments: list[str] | None = None):
     - `command` (string, required): a full bash command line. Pipes, redirection, `&&`, and quoting work.
     - `arguments` (list of strings, optional): if present, `command` must be a bare executable name, and these are its arguments, passed without shell processing. Useful when quoting gets awkward.
 
-    One call's runtime is capped (a killed call reports the exact limit); a failed or timed-out call skips the remaining calls of the same reply, so run calls that may approach the cap alone.
+    One call's runtime is capped (a killed call reports the exact limit); a failed or timed-out call skips the remaining calls of the same reply, so run calls that may approach the cap alone. The pod resolves DNS over HTTPS and curl upgrades to HTTP/3 where a site offers it, so resolver poisoning and SNI-level connection resets are handled without special flags.
 
     To create a file, use a quoted heredoc so the shell expands nothing: `cat > /workspace/report/build.py <<'EOF'` … `EOF`.
 

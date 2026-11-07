@@ -16,6 +16,7 @@ from contextlib import ExitStack
 
 from bollard import Container, DockerClient
 
+from . import pod_init
 from .config import get_logger, load_config
 
 CONTAINER_IMAGE = "python:3.14-trixie"
@@ -181,7 +182,7 @@ def create_container() -> Container:
     if client is None:
         init_docker_client()
     try:
-        return client.run_container(
+        container = client.run_container(
             CONTAINER_IMAGE,
             command="sleep infinity",
             HostConfig=build_pod_host_config(),
@@ -196,11 +197,13 @@ def create_container() -> Container:
         )
         _reset_dead_client()
         init_docker_client()
-        return client.run_container(
+        container = client.run_container(
             CONTAINER_IMAGE,
             command="sleep infinity",
             HostConfig=build_pod_host_config(),
         )
+    pod_init.run_pod_init_steps(container)
+    return container
 
 
 def get_container() -> Container:

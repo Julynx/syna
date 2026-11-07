@@ -18,10 +18,10 @@ from syna.capabilities import browser as browser_module
 from syna.capabilities.browser import BrowserSession
 from syna.config import load_browser_doh_bootstrap, load_browser_doh_uri
 
-QUAD9 = "https://dns.quad9.net/dns-query"
+QUAD9 = "https://dns10.quad9.net/dns-query"
 
 
-def _session(monkeypatch, uri=QUAD9, bootstrap="9.9.9.9"):
+def _session(monkeypatch, uri=QUAD9, bootstrap="9.9.9.10"):
     """A session built with the DoH loaders pinned to known values."""
     monkeypatch.setattr(browser_module, "load_browser_doh_uri", lambda: uri)
     monkeypatch.setattr(browser_module, "load_browser_doh_bootstrap", lambda: bootstrap)
@@ -32,14 +32,16 @@ def test_doh_enabled_maps_to_trr_prefs(monkeypatch):
     prefs = _session(monkeypatch)._kw["firefox_user_prefs"]
     assert prefs["network.trr.mode"] == 2
     assert prefs["network.trr.uri"] == QUAD9
-    assert prefs["network.trr.bootstrapAddr"] == "9.9.9.9"
+    assert prefs["network.trr.bootstrapAddr"] == "9.9.9.10"
     assert prefs["network.dns.use_https_rr_as_altsvc"] is True
     assert prefs["network.dns.echconfig.enabled"] is True
     assert prefs["media.peerconnection.enabled"] is False
 
 
 def test_empty_uri_disables_doh(monkeypatch):
-    prefs = _session(monkeypatch, uri="", bootstrap="9.9.9.9")._kw["firefox_user_prefs"]
+    prefs = _session(monkeypatch, uri="", bootstrap="9.9.9.10")._kw[
+        "firefox_user_prefs"
+    ]
     assert not any(key.startswith("network.trr.") for key in prefs)
     assert not any(key.startswith("network.dns.") for key in prefs)
     assert prefs["media.peerconnection.enabled"] is False
@@ -55,7 +57,7 @@ def test_bootstrap_optional(monkeypatch):
 
 def test_bundled_default_is_quad9():
     assert load_browser_doh_uri() == QUAD9
-    assert load_browser_doh_bootstrap() == "9.9.9.9"
+    assert load_browser_doh_bootstrap() == "9.9.9.10"
 
 
 def main():

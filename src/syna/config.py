@@ -33,16 +33,25 @@ DEFAULT_BROWSER_COMMAND_TIMEOUT_S = 90
 # detaching from it: the SIGTERM-to-SIGKILL grace.
 DEFAULT_MAX_CANCEL_WAIT_S = 10
 
-# The stealth browser's DNS-over-HTTPS resolver. Quad9 by default: it
-# bypasses DNS poisoning used by national content filters, and Firefox
-# reads HTTPS DNS records through it, which upgrades navigation to
-# HTTP/3 where the site offers it (bypassing TCP SNI filtering) and
-# applies ECH configs where published. TRR mode 2 keeps native DNS as
-# a fallback when the resolver is unreachable. Empty disables DoH.
-# The bootstrap IP resolves the resolver's own hostname so a poisoning
-# middlebox cannot redirect the DoH connection itself.
-DEFAULT_BROWSER_DOH_URI = "https://dns.quad9.net/dns-query"
-DEFAULT_BROWSER_DOH_BOOTSTRAP = "9.9.9.9"
+# The stealth browser's DNS-over-HTTPS resolver. Quad9's unfiltered
+# endpoint by default: it bypasses DNS poisoning used by national
+# content filters, and Firefox reads HTTPS DNS records through it,
+# which upgrades navigation to HTTP/3 where the site offers it
+# (bypassing TCP SNI filtering) and applies ECH configs where
+# published. TRR mode 2 keeps native DNS as a fallback when the
+# resolver is unreachable. Empty disables DoH. The bootstrap IP
+# resolves the resolver's own hostname so a poisoning middlebox
+# cannot redirect the DoH connection itself. The filtered 9.9.9.9
+# endpoint is deliberately avoided: its threat lists block domains
+# (Anna's Archive and others) that filtering opponents need.
+DEFAULT_BROWSER_DOH_URI = "https://dns10.quad9.net/dns-query"
+DEFAULT_BROWSER_DOH_BOOTSTRAP = "9.9.9.10"
+
+# The pod resolves DNS over HTTPS through the same unfiltered resolver,
+# so shell tools (curl, pip, apt, git) are immune to resolver poisoning
+# too; the bootstrap runs once on container creation and fails open.
+DEFAULT_POD_DOH_URI = DEFAULT_BROWSER_DOH_URI
+DEFAULT_POD_DOH_BOOTSTRAP = DEFAULT_BROWSER_DOH_BOOTSTRAP
 
 # Canonical provider model defaults. The first-run wizard, the settings
 # modal, and the runtime all read these; an unset .env value means the
@@ -312,6 +321,16 @@ def load_browser_doh_uri() -> str:
 def load_browser_doh_bootstrap() -> str:
     """Return the IP that bootstraps resolution of the DoH resolver name."""
     return load_config().get("browser_doh_bootstrap", DEFAULT_BROWSER_DOH_BOOTSTRAP)
+
+
+def load_pod_doh_uri() -> str:
+    """Return the pod's DoH resolver URI; empty leaves the pod on native DNS."""
+    return load_config().get("pod_doh_uri", DEFAULT_POD_DOH_URI)
+
+
+def load_pod_doh_bootstrap() -> str:
+    """Return the IP pinning the pod's DoH connection away from poisoned DNS."""
+    return load_config().get("pod_doh_bootstrap", DEFAULT_POD_DOH_BOOTSTRAP)
 
 
 DEFAULT_USER_MESSAGE_ARCHIVE_MIN_CHARS = 2000

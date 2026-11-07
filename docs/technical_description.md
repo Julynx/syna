@@ -158,11 +158,12 @@ from the canonical constants in `config.py`.
 | `max_command_output_chars`          | Character limit at which tool output is cut to its beginning and end (the system prompt's `{{OUTPUT_LIMIT}}`). The full output always remains available at the `saved_to` path.                                                                                               |
 | `tool_call_timeout_s`               | Per-tool-call deadline (default 60). At the deadline the harness asks the call to stop through its cancel event and waits `max_cancel_wait_s` for it to exit; a call that ignores the stop is detached with a hung-call notice. See `parse.py`.                                                                                                |
 | `web_search_timeout_s`              | Budget for one web search's engine chain (default 60, not Allegro-scaled). Enforced cooperatively: each navigation's timeout is capped by what remains of the budget, so expiry stops the chain within that navigation.                                                                                                                       |
-| `browser_doh_uri`                   | The stealth browser's DNS-over-HTTPS resolver (default `https://dns.quad9.net/dns-query`, empty disables): encrypted DNS is immune to resolver-level poisoning, and Firefox reads HTTPS DNS records through it, so navigation upgrades to HTTP/3 where the site offers it (bypassing networks that reset TCP TLS by SNI) and ECH configs apply where published. `browser_doh_bootstrap` (default `9.9.9.9`) resolves the resolver's own hostname so a poisoning middlebox cannot redirect the DoH connection. TRR mode 2 falls back to native DNS when the resolver is unreachable. |
+| `browser_doh_uri`                   | The stealth browser's DNS-over-HTTPS resolver (default `https://dns10.quad9.net/dns-query`, Quad9's unfiltered endpoint; empty disables): encrypted DNS is immune to resolver-level poisoning, and Firefox reads HTTPS DNS records through it, so navigation upgrades to HTTP/3 where the site offers it (bypassing networks that reset TCP TLS by SNI) and ECH configs apply where published. `browser_doh_bootstrap` (default `9.9.9.10`) resolves the resolver's own hostname so a poisoning middlebox cannot redirect the DoH connection. TRR mode 2 falls back to native DNS when the resolver is unreachable. |
 | `browser_launch_timeout_s`          | Budget for waiting on a stealth browser's cold start, the search browser and the tool browser alike (default 120, not Allegro-scaled): a cold start is startup, not tool work. The constructor runs in a helper thread, so an expired budget abandons the wait, not the launch; the helper keeps starting the browser for the next call.                                                                                                                  |
 | `browser_command_timeout_s`         | Aggregate budget for one `browser` tool command (default 90, not Allegro-scaled): the command runs on the browser's loop raced against the harness's stop event, is cancelled when either limit arrives, and its session is discarded (reset-on-cancel) so the next call starts clean.                                                                                                                           |
 | `max_cancel_wait_s`                 | Stop grace after a call's deadline (default 10): how long the harness waits for a stopped worker to exit before detaching from it.                                                                                                                                                                                                            |
 | `command_timeout_s`                 | Per-`execute_command` timeout (default 50, kept below `tool_call_timeout_s`). The command is wrapped in `timeout -k 5` inside the pod so hangs are killed inside the pod, before the harness deadline; long-running work belongs in background jobs (`nohup ... &`), as the system prompt documents.                                          |
+| `pod_doh_uri`                       | The pod's DNS-over-HTTPS resolver (default `https://dns10.quad9.net/dns-query`, Quad9's unfiltered endpoint; empty disables): a bootstrap script runs once on container creation, installs `dnscrypt-proxy`, points `resolv.conf` at it (the pre-DoH resolvers stay as fallbacks), and gives curl transparent HTTP/3 via `/root/.curlrc`, which races QUIC against TCP and falls back automatically for sites without h3. `pod_doh_bootstrap` (default `9.9.9.10`) is pinned inside the resolver stamp so a poisoning middlebox cannot redirect the DoH connection; a custom `pod_doh_uri` needs its provider's own bootstrap IP or an empty `pod_doh_bootstrap`. Any bootstrap failure leaves the pod on native DNS. |
 | `pod_memory_mb`                     | Pod memory ceiling in MB (default 8192). Protects the host from runaway processes inside the pod; does not restrict what the model may do inside it.                                                                                                                          |
 | `pod_pids_limit`                    | Pod process-count ceiling (default 512), guarding against fork bombs.                                                                                                                                                                                                         |
 | `max_steps_per_turn`                | Model requests allowed per turn (default 100). Before the cap, the model receives a wrap-up warning; past it, the turn ends with one final request reserved for a `respond` status report.                                                                                    |
@@ -236,9 +237,10 @@ protocol limits the prompt and tools consume: `load_output_limit_chars()`
 (head-and-tail cut), `load_command_timeout_s()` and
 `load_tool_call_timeout_s()` (both subject to the Allegro scale), and the
 unscaled web-search budgets `load_web_search_timeout_s()`,
-`load_browser_launch_timeout_s()`, and `load_max_cancel_wait_s()`, and
-the browser's encrypted-DNS settings `load_browser_doh_uri()` and
-`load_browser_doh_bootstrap()`.
+`load_browser_launch_timeout_s()`, and `load_max_cancel_wait_s()`, the
+browser's encrypted-DNS settings `load_browser_doh_uri()` and
+`load_browser_doh_bootstrap()`, and the pod's `load_pod_doh_uri()` and
+`load_pod_doh_bootstrap()`.
 
 ## 4. Architecture
 
@@ -308,7 +310,14 @@ Global Docker client plus per-thread container registry and per-call context.
   `build_pod_host_config()`: the init process (`Init`) reaps orphaned
   background processes, and `Memory` / `PidsLimit` ceilings (`pod_memory_mb`,
   `pod_pids_limit`) protect the host from runaway work inside the pod
-  without restricting what the model may do there.
+  without restricting what the model may do there. Right after start,
+  `pod_init.run_pod_init_steps()` runs the pod's initialization scripts
+  (one asset script per entry in the step registry): the DoH step
+  installs `dnscrypt-proxy`, points the pod resolver at Quad9's
+  unfiltered endpoint over HTTPS (`pod_doh_uri`, `pod_doh_bootstrap`,
+  pinned inside a dnscrypt stamp), and enables transparent HTTP/3 for
+  curl. Steps fail open: a failure is logged and the pod is handed over
+  on its native DNS.
 - Self-heal: a connection-level failure from `run_container` (dead pipe,
   closed socket; the engine quit or the host slept mid-session) triggers
   one client reset (`_reset_dead_client`, also the body of
