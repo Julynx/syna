@@ -175,6 +175,10 @@ def create_container() -> Container:
     HostConfig Init runs the container's init process (tini equivalent) so
     orphaned background processes started by model commands are reaped.
 
+    Pod initialization steps (`pod_init`) run right after start in a
+    background thread: the pod is handed over immediately on its native
+    DNS, and each step logs its own duration and fails open.
+
     A connection-level failure triggers one client reset and retry: a
     mid-session engine death (endpoint gone stale) self-heals through
     bollard's discovery instead of failing every call until restart.
@@ -202,7 +206,13 @@ def create_container() -> Container:
             command="sleep infinity",
             HostConfig=build_pod_host_config(),
         )
-    pod_init.run_pod_init_steps(container)
+    pod_init_run = threading.Thread(
+        target=pod_init.run_pod_init_steps,
+        args=(container,),
+        name="pod-init",
+        daemon=True,
+    )
+    pod_init_run.start()
     return container
 
 

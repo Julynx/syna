@@ -10,6 +10,7 @@ each step on its configuration keys and fails open.
 
 import base64
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -17,7 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from _runner import run_suite
 
 from syna import pod_init, state
-from syna.config import load_pod_doh_bootstrap, load_pod_doh_uri
+from syna.config import (
+    load_pod_doh_bootstrap,
+    load_pod_doh_bootstrap_alt,
+    load_pod_doh_uri,
+)
 
 OFFICIAL_DNS10_STAMP = (
     "sdns://AgcAAAAAAAAACDkuOS45LjEwILAZIHRLu3bJqwU-AeB7fgUORz0g95976kNfr-Q8nSQ"
@@ -97,6 +102,7 @@ def test_non_https_uri_is_rejected():
 def test_bundled_pod_defaults():
     assert load_pod_doh_uri() == "https://dns10.quad9.net/dns-query"
     assert load_pod_doh_bootstrap() == "9.9.9.10"
+    assert load_pod_doh_bootstrap_alt() == "149.112.112.10"
 
 
 def test_doh_step_configured_from_keys(monkeypatch):
@@ -106,27 +112,50 @@ def test_doh_step_configured_from_keys(monkeypatch):
         pod_init, "load_pod_doh_uri", lambda: "https://dns10.quad9.net/dns-query"
     )
     monkeypatch.setattr(pod_init, "load_pod_doh_bootstrap", lambda: "9.9.9.10")
+    monkeypatch.setattr(
+        pod_init, "load_pod_doh_bootstrap_alt", lambda: "149.112.112.10"
+    )
     step = pod_init.pod_init_steps()[0]
     assert step.enabled is True
     assert step.env["DOH_STAMP"].startswith("sdns://")
+    props, addr, _, provider, _, _ = decode_doh_stamp(step.env["DOH_STAMP_ALT"])
+    assert addr == b"149.112.112.10"
+    assert provider == b"dns10.quad9.net:443"
+    assert "DOH_NEEDS_BOOTSTRAP" not in step.env
+
+
+def test_doh_step_without_bootstrap_pin_requests_bootstrap_resolvers(monkeypatch):
+    monkeypatch.setattr(
+        pod_init, "load_pod_doh_uri", lambda: "https://dns.example.com:5353/query"
+    )
+    monkeypatch.setattr(pod_init, "load_pod_doh_bootstrap", lambda: "")
+    monkeypatch.setattr(pod_init, "load_pod_doh_bootstrap_alt", lambda: "")
+    step = pod_init.pod_init_steps()[0]
+    assert step.env["DOH_NEEDS_BOOTSTRAP"] == "1"
+    assert "DOH_STAMP_ALT" not in step.env
 
 
 def test_step_command_carries_script_and_stamp():
     step = pod_init.PodInitStep(
         name="doh",
         asset="pod_doh_setup.sh",
-        env={"DOH_STAMP": "sdns://abc"},
+        env={"DOH_STAMP": "sdns://abc", "DOH_STAMP_ALT": "sdns://def"},
         enabled=True,
     )
     command = pod_init.step_command(step)
     assert command[0] == "bash" and command[1] == "-c"
     inner = command[2]
-    assert "base64 -d" in inner and "DOH_STAMP='sdns://abc'" in inner
+    assert (
+        "base64 -d" in inner
+        and "DOH_STAMP='sdns://abc'" in inner
+        and "DOH_STAMP_ALT='sdns://def'" in inner
+    )
     b64 = inner.split("echo ")[1].split(" |")[0]
     script = base64.b64decode(b64).decode()
     assert script == pod_init.asset_path(step.asset).read_text(encoding="utf-8")
     assert "dnscrypt-proxy" in script
     assert "/root/.curlrc" in script and "http3" in script
+    assert "syna-doh-alt" in script and "bootstrap_resolvers" in script
 
 
 class _SentinelContainer:
@@ -171,16 +200,18 @@ def test_create_container_runs_init_steps(monkeypatch):
             seen["argv"] = argv
             return pod_init.SUCCESS_MARKER
 
-    monkeypatch.setattr(state, "client", None)
-
     class FakeClient:
         def run_container(self, *args, **kwargs):
             seen["args"] = args
             return FakeContainer()
 
+    monkeypatch.setattr(state, "client", None)
     monkeypatch.setattr(state, "init_docker_client", lambda: None)
     monkeypatch.setattr(state, "client", FakeClient())
     container = state.create_container()
+    for thread in threading.enumerate():
+        if thread.name == "pod-init":
+            thread.join(timeout=5)
     assert seen["args"][0] == state.CONTAINER_IMAGE
     assert "base64 -d" in seen["argv"][2]
     assert container.exec(["true"]) == pod_init.SUCCESS_MARKER
@@ -195,6 +226,7 @@ def main():
             test_non_https_uri_is_rejected,
             test_bundled_pod_defaults,
             test_doh_step_configured_from_keys,
+            test_doh_step_without_bootstrap_pin_requests_bootstrap_resolvers,
             test_step_command_carries_script_and_stamp,
             test_disabled_step_never_touches_the_pod,
             test_steps_fail_open,

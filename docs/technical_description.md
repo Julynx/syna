@@ -164,6 +164,9 @@ from the canonical constants in `config.py`.
 | `max_cancel_wait_s`                 | Stop grace after a call's deadline (default 10): how long the harness waits for a stopped worker to exit before detaching from it.                                                                                                                                                                                                            |
 | `command_timeout_s`                 | Per-`execute_command` timeout (default 50, kept below `tool_call_timeout_s`). The command is wrapped in `timeout -k 5` inside the pod so hangs are killed inside the pod, before the harness deadline; long-running work belongs in background jobs (`nohup ... &`), as the system prompt documents.                                          |
 | `pod_doh_uri`                       | The pod's DNS-over-HTTPS resolver (default `https://dns10.quad9.net/dns-query`, Quad9's unfiltered endpoint; empty disables): a bootstrap script runs once on container creation, installs `dnscrypt-proxy`, points `resolv.conf` at it (the pre-DoH resolvers stay as fallbacks), and gives curl transparent HTTP/3 via `/root/.curlrc`, which races QUIC against TCP and falls back automatically for sites without h3. `pod_doh_bootstrap` (default `9.9.9.10`) is pinned inside the resolver stamp so a poisoning middlebox cannot redirect the DoH connection; a custom `pod_doh_uri` needs its provider's own bootstrap IP or an empty `pod_doh_bootstrap`. Any bootstrap failure leaves the pod on native DNS. |
+| `net_guard_doh_uri`                 | The browser guard's poison-check resolver (default `https://dns.google/resolve`, JSON DoH over HTTP/1.1; empty uses the system resolver): destination checks resolve through it first so a poisoning resolver cannot tilt the decision, with the system resolver as fallback, which is also the view the browser's TRR mode 2 falls back to. Its job is classification (private vs public vs unresolvable), not IP equality with the browser's own resolver. |
+| `pod_doh_uri`                       | The pod's DNS-over-HTTPS resolver (default `https://dns10.quad9.net/dns-query`, Quad9's unfiltered endpoint; empty disables): a bootstrap script runs once on container creation, installs `dnscrypt-proxy`, points `resolv.conf` at it (the pre-DoH resolvers stay as fallbacks), and gives curl transparent HTTP/3 via `/root/.curlrc`, which races QUIC against TCP and falls back automatically for sites without h3. `pod_doh_bootstrap` (default `9.9.9.10`) is pinned inside the resolver stamp so a poisoning middlebox cannot redirect the DoH connection; a custom `pod_doh_uri` needs its provider's own bootstrap IP or an empty `pod_doh_bootstrap` (which makes the script emit a `bootstrap_resolvers` line instead). Any bootstrap failure leaves the pod on native DNS. |
+| `pod_doh_bootstrap_alt`             | Secondary bootstrap IP (default `149.112.112.10`) registered as a second resolver entry on the same provider, so dnscrypt-proxy fails over when the primary anycast address is unreachable. Must belong to the provider in `pod_doh_uri`; empty disables the second entry. |
 | `pod_memory_mb`                     | Pod memory ceiling in MB (default 8192). Protects the host from runaway processes inside the pod; does not restrict what the model may do inside it.                                                                                                                          |
 | `pod_pids_limit`                    | Pod process-count ceiling (default 512), guarding against fork bombs.                                                                                                                                                                                                         |
 | `max_steps_per_turn`                | Model requests allowed per turn (default 100). Before the cap, the model receives a wrap-up warning; past it, the turn ends with one final request reserved for a `respond` status report.                                                                                    |
@@ -312,12 +315,13 @@ Global Docker client plus per-thread container registry and per-call context.
   `pod_pids_limit`) protect the host from runaway work inside the pod
   without restricting what the model may do there. Right after start,
   `pod_init.run_pod_init_steps()` runs the pod's initialization scripts
-  (one asset script per entry in the step registry): the DoH step
-  installs `dnscrypt-proxy`, points the pod resolver at Quad9's
-  unfiltered endpoint over HTTPS (`pod_doh_uri`, `pod_doh_bootstrap`,
-  pinned inside a dnscrypt stamp), and enables transparent HTTP/3 for
-  curl. Steps fail open: a failure is logged and the pod is handed over
-  on its native DNS.
+  in a background thread (one asset script per entry in the step
+  registry; the pod is usable on native DNS immediately, and each step
+  logs its duration and fails open): the DoH step installs
+  `dnscrypt-proxy`, points the pod resolver at Quad9's unfiltered
+  endpoint over HTTPS (`pod_doh_uri`, `pod_doh_bootstrap`,
+  `pod_doh_bootstrap_alt`, pinned inside dnscrypt stamps), and enables
+  transparent HTTP/3 for curl.
 - Self-heal: a connection-level failure from `run_container` (dead pipe,
   closed socket; the engine quit or the host slept mid-session) triggers
   one client reset (`_reset_dead_client`, also the body of
@@ -1096,7 +1100,11 @@ literals with the WHATWG URL IPv4 semantics browsers actually apply
 (decimal, hex, octal, mixed, trailing dot, shortened dotted forms where
 the last label carries the remaining bits, e.g. "127.65535" is
 127.0.255.255), and resolves hostnames at decision time
-with a short-lived cache, blocking names that resolve to any private
+through the guard's own DoH endpoint (`net_guard_doh_uri`, default
+dns.google's JSON API over HTTP/1.1) so a poisoning resolver cannot tilt
+the decision, with the system resolver as fallback (the view the
+browser's TRR mode 2 falls back to as well) and a short-lived cache,
+blocking names that resolve to any private
 address, which closes casual DNS rebinding; a fast-flip rebinding
 adversary can still race the browser's own second resolution, which is
 why the Syna server independently validates the Host header, Origin, and

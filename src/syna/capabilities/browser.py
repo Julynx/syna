@@ -1034,15 +1034,22 @@ class BrowserSession:
     it bypasses HTTP-layer routing entirely and is a standard
     fingerprinting/IP-leak surface.
 
-    DNS resolution runs over HTTPS (`browser_doh_uri`, Quad9 by
-    default): encrypted DNS is immune to resolver-level poisoning, and
-    Firefox reads HTTPS DNS records through it, which upgrades
-    navigation to HTTP/3 where the site offers it (a network that
-    resets TCP TLS by SNI is bypassed entirely, QUIC being a different
-    protocol) and carries ECH configs that hide the SNI where
-    published. TRR mode 2 falls back to native DNS when the resolver
-    is unreachable, so losing the resolver degrades to plain DNS
-    instead of breaking browsing.
+    DNS resolution runs over HTTPS (`browser_doh_uri`, Quad9's
+    unfiltered endpoint by default): encrypted DNS is immune to
+    resolver-level poisoning, and Firefox reads HTTPS DNS records
+    through it, which upgrades navigation to HTTP/3 where the site
+    offers it (a network that resets TCP TLS by SNI is bypassed
+    entirely, QUIC being a different protocol) and carries ECH configs
+    that hide the SNI where published. TRR mode 2 falls back to native
+    DNS when the resolver is unreachable, so losing the resolver
+    degrades to plain DNS instead of breaking browsing.
+
+    Mode 2 is a deliberate availability choice with an observable
+    consequence: while the resolver answers, ECH outer SNIs and HTTP/3
+    are visible on the wire (matching Firefox users with encrypted
+    DNS), and on ECH domains the ClientHello carries the ECH public
+    name instead of the real one; when it is unreachable, the view
+    degrades to plaintext SNI over TCP.
     """
 
     def __init__(

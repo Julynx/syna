@@ -1,6 +1,7 @@
 """Unit tests for the browser network guard: public internet only."""
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -113,6 +114,7 @@ def test_hostname_resolving_private_is_blocked(monkeypatch):
     def fake_getaddrinfo(host, port):
         return [(2, 1, 6, "", ("127.0.0.1", 0))]
 
+    monkeypatch.setattr(net_guard, "load_config", lambda: {})
     monkeypatch.setattr(net_guard.socket, "getaddrinfo", fake_getaddrinfo)
     net_guard._dns_cache.clear()
 
@@ -125,6 +127,7 @@ def test_hostname_resolving_public_is_allowed(monkeypatch):
     def fake_getaddrinfo(host, port):
         return [(2, 1, 6, "", ("93.184.216.34", 0))]
 
+    monkeypatch.setattr(net_guard, "load_config", lambda: {})
     monkeypatch.setattr(net_guard.socket, "getaddrinfo", fake_getaddrinfo)
     net_guard._dns_cache.clear()
 
@@ -135,6 +138,7 @@ def test_unresolvable_hostname_is_allowed(monkeypatch):
     def fake_getaddrinfo(host, port):
         raise OSError("name resolution failed")
 
+    monkeypatch.setattr(net_guard, "load_config", lambda: {})
     monkeypatch.setattr(net_guard.socket, "getaddrinfo", fake_getaddrinfo)
     net_guard._dns_cache.clear()
 
@@ -148,6 +152,7 @@ def test_resolution_is_cached(monkeypatch):
         calls.append(host)
         return [(2, 1, 6, "", ("93.184.216.34", 0))]
 
+    monkeypatch.setattr(net_guard, "load_config", lambda: {})
     monkeypatch.setattr(net_guard.socket, "getaddrinfo", fake_getaddrinfo)
     net_guard._dns_cache.clear()
 
@@ -168,6 +173,169 @@ def test_allowed_hosts_override(monkeypatch):
     assert not net_guard.check_destination("127.0.0.1").allowed
 
 
+class _FakeDohResponse:
+    """A urlopen stand-in returning one canned JSON DoH payload."""
+
+    def __init__(self, payload):
+        self._payload = json.dumps(payload).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return self._payload
+
+
+PUBLIC_DOH_JSON = {"Status": 0, "Answer": [{"type": 1, "data": "93.184.216.34"}]}
+PRIVATE_DOH_JSON = {"Status": 0, "Answer": [{"type": 1, "data": "10.0.0.5"}]}
+NXDOMAIN_DOH_JSON = {"Status": 3}
+SERVFAIL_DOH_JSON = {"Status": 2}
+
+
+def _stub_doh(monkeypatch, payloads):
+    """Serve the payloads in order; record the requested URLs."""
+    urls = []
+    queue = list(payloads)
+
+    def fake_urlopen(request, timeout=None):
+        urls.append(request.full_url)
+        return _FakeDohResponse(queue.pop(0))
+
+    monkeypatch.setattr(net_guard.urllib.request, "urlopen", fake_urlopen)
+    return urls
+
+
+def test_doh_lookup_keeps_addresses_and_drops_cnames(monkeypatch):
+    payload = {
+        "Status": 0,
+        "Answer": [
+            {"type": 5, "data": "real.example."},
+            {"type": 1, "data": "93.184.216.34"},
+            {"type": 28, "data": "2606:4700::1111"},
+        ],
+    }
+    urls = _stub_doh(monkeypatch, [payload])
+    monkeypatch.setattr(
+        net_guard,
+        "load_config",
+        lambda: {"net_guard_doh_uri": "https://dns.google/resolve"},
+    )
+    net_guard._dns_cache.clear()
+
+    assert net_guard.check_destination("example.com").allowed
+    assert urls[0].startswith("https://dns.google/resolve?name=example.com&")
+
+
+def test_doh_lookup_maps_failures_and_negatives(monkeypatch):
+    monkeypatch.setattr(
+        net_guard,
+        "load_config",
+        lambda: {"net_guard_doh_uri": "https://dns.google/resolve"},
+    )
+    _stub_doh(monkeypatch, [NXDOMAIN_DOH_JSON, SERVFAIL_DOH_JSON])
+    net_guard._dns_cache.clear()
+
+    assert net_guard._doh_ips("gone.example", "https://dns.google/resolve") == []
+    assert net_guard._doh_ips("down.example", "https://dns.google/resolve") is None
+
+
+def test_doh_poisoned_private_system_answer_is_overruled(monkeypatch):
+    """ISP poison (loopback answer) must not block a site DoH can reach."""
+    monkeypatch.setattr(
+        net_guard,
+        "load_config",
+        lambda: {"net_guard_doh_uri": "https://dns.google/resolve"},
+    )
+
+    def fake_getaddrinfo(host, port):
+        return [(2, 1, 6, "", ("127.0.0.1", 0))]
+
+    urls = _stub_doh(monkeypatch, [PUBLIC_DOH_JSON])
+    monkeypatch.setattr(net_guard.socket, "getaddrinfo", fake_getaddrinfo)
+    net_guard._dns_cache.clear()
+
+    assert net_guard.check_destination("poisoned.example").allowed
+    assert urls
+
+
+def test_doh_confirms_private_answers_block(monkeypatch):
+    """When DoH itself sees a private address, the guard still blocks."""
+    monkeypatch.setattr(
+        net_guard,
+        "load_config",
+        lambda: {"net_guard_doh_uri": "https://dns.google/resolve"},
+    )
+    urls = _stub_doh(monkeypatch, [PRIVATE_DOH_JSON])
+    net_guard._dns_cache.clear()
+
+    decision = net_guard.check_destination("rebind.evil.example")
+    assert not decision.allowed
+    assert "10.0.0.5" in decision.reason
+    assert urls
+
+
+def test_doh_nxdomain_allows_like_the_browser(monkeypatch):
+    """A definitive NXDOMAIN is what the browser sees too: allow."""
+    monkeypatch.setattr(
+        net_guard,
+        "load_config",
+        lambda: {"net_guard_doh_uri": "https://dns.google/resolve"},
+    )
+    _stub_doh(monkeypatch, [NXDOMAIN_DOH_JSON])
+    net_guard._dns_cache.clear()
+
+    assert net_guard.check_destination("poisoned-nxdomain.example").allowed
+
+
+def test_doh_failure_falls_back_to_system_and_blocks(monkeypatch):
+    """SERVFAIL sends the guard to the system resolver; old behavior holds."""
+    monkeypatch.setattr(
+        net_guard,
+        "load_config",
+        lambda: {"net_guard_doh_uri": "https://dns.google/resolve"},
+    )
+
+    def fake_getaddrinfo(host, port):
+        return [(2, 1, 6, "", ("127.0.0.1", 0))]
+
+    _stub_doh(monkeypatch, [SERVFAIL_DOH_JSON])
+    monkeypatch.setattr(net_guard.socket, "getaddrinfo", fake_getaddrinfo)
+    net_guard._dns_cache.clear()
+
+    decision = net_guard.check_destination("rebind.evil.example")
+    assert not decision.allowed
+    assert "127.0.0.1" in decision.reason
+
+
+def test_native_names_skip_doh(monkeypatch):
+    """localhost and single-label names resolve natively in the browser
+    too: the guard must classify them with the system resolver, because
+    public DNS answers NXDOMAIN for localhost."""
+    monkeypatch.setattr(
+        net_guard,
+        "load_config",
+        lambda: {"net_guard_doh_uri": "https://dns.google/resolve"},
+    )
+
+    def fake_getaddrinfo(host, port):
+        if host == "localhost":
+            return [(2, 1, 6, "", ("127.0.0.1", 0))]
+        raise OSError("name resolution failed")
+
+    def forbidden_urlopen(request, timeout=None):
+        raise AssertionError(f"DoH consulted for a native name: {request.full_url}")
+
+    monkeypatch.setattr(net_guard.socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(net_guard.urllib.request, "urlopen", forbidden_urlopen)
+    net_guard._dns_cache.clear()
+
+    assert not net_guard.check_destination("localhost").allowed
+    assert net_guard.check_destination("printer.local").allowed
+
+
 def test_allow_private_networks_toggle(monkeypatch):
     monkeypatch.setattr(
         net_guard,
@@ -178,7 +346,9 @@ def test_allow_private_networks_toggle(monkeypatch):
     assert net_guard.check_destination("127.0.0.1").allowed
 
 
-def test_check_url_scheme_handling():
+def test_check_url_scheme_handling(monkeypatch):
+    monkeypatch.setattr(net_guard, "load_config", lambda: {})
+    net_guard._dns_cache.clear()
     blocked = net_guard.check_url("http://127.0.0.1:8000/")
     assert not blocked.allowed
 
@@ -214,7 +384,9 @@ def test_guard_route_neutralizes_public_script_hosts():
     assert route.fulfilled and not route.aborted and not route.continued
 
 
-def test_guard_route_neutralizes_wildcard_host_and_scoped_path():
+def test_guard_route_neutralizes_wildcard_host_and_scoped_path(monkeypatch):
+    monkeypatch.setattr(net_guard, "load_config", lambda: {})
+    net_guard._dns_cache.clear()
     session = BrowserSession()
     wildcard = FakeRoute("https://tracker.id5-sync.com/frame.js")
     scoped_hit = FakeRoute(
@@ -231,8 +403,10 @@ def test_guard_route_neutralizes_wildcard_host_and_scoped_path():
     assert scoped_miss.continued and not scoped_miss.fulfilled
 
 
-def test_guard_route_leaves_lookalike_urls_alone():
+def test_guard_route_leaves_lookalike_urls_alone(monkeypatch):
     """A query-string lookalike must not neutralize an innocent page."""
+    monkeypatch.setattr(net_guard, "load_config", lambda: {})
+    net_guard._dns_cache.clear()
     session = BrowserSession()
     route = FakeRoute("https://bank.com/?x=http://sub.id5-sync.com/y")
 
@@ -241,7 +415,9 @@ def test_guard_route_leaves_lookalike_urls_alone():
     assert route.continued and not route.fulfilled and not route.aborted
 
 
-def test_guard_route_continues_public_and_aborts_private():
+def test_guard_route_continues_public_and_aborts_private(monkeypatch):
+    monkeypatch.setattr(net_guard, "load_config", lambda: {})
+    net_guard._dns_cache.clear()
     session = BrowserSession()
     public = FakeRoute("https://example.com/style.css")
     private = FakeRoute("http://127.0.0.1:8000/api/files/x/y")
@@ -265,7 +441,9 @@ def test_websocket_observer_kills_private_connections():
     assert asyncio.run(scenario()).closed
 
 
-def test_websocket_observer_leaves_public_connections():
+def test_websocket_observer_leaves_public_connections(monkeypatch):
+    monkeypatch.setattr(net_guard, "load_config", lambda: {})
+    net_guard._dns_cache.clear()
     session = BrowserSession()
 
     async def scenario():
@@ -290,6 +468,13 @@ def main():
             test_hostname_resolving_public_is_allowed,
             test_unresolvable_hostname_is_allowed,
             test_resolution_is_cached,
+            test_doh_lookup_keeps_addresses_and_drops_cnames,
+            test_doh_lookup_maps_failures_and_negatives,
+            test_doh_poisoned_private_system_answer_is_overruled,
+            test_doh_confirms_private_answers_block,
+            test_doh_nxdomain_allows_like_the_browser,
+            test_doh_failure_falls_back_to_system_and_blocks,
+            test_native_names_skip_doh,
             test_allowed_hosts_override,
             test_allow_private_networks_toggle,
             test_check_url_scheme_handling,

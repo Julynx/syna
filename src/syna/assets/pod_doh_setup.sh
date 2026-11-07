@@ -28,9 +28,15 @@ DCP_BIN="$(command -v dnscrypt-proxy || true)"
 # stamp pins the bootstrap IP, so the provider hostname is never resolved
 # through the system resolver and a poisoning middlebox cannot redirect
 # the DoH connection itself.
+SERVER_NAMES_ALT=""
+[ -n "${DOH_STAMP_ALT:-}" ] && SERVER_NAMES_ALT=", 'syna-doh-alt'"
+BOOTSTRAP_LINE=""
+[ "${DOH_NEEDS_BOOTSTRAP:-}" = "1" ] &&
+  BOOTSTRAP_LINE="bootstrap_resolvers = ['9.9.9.10:53', '149.112.112.10:53']"
+
 cat > /etc/dnscrypt-proxy/dnscrypt-proxy.toml <<TOML
 listen_addresses = ['${LISTEN}']
-server_names = ['syna-doh']
+server_names = ['syna-doh'${SERVER_NAMES_ALT}]
 max_clients = 250
 ipv4_servers = true
 ipv6_servers = false
@@ -38,6 +44,7 @@ timeout = 5000
 keepalive = 30
 cert_refresh_delay = 240
 ignore_system_dns = true
+${BOOTSTRAP_LINE}
 cache = true
 cache_size = 4096
 cache_min_ttl = 2400
@@ -47,6 +54,14 @@ log_level = 2
 [static.'syna-doh']
 stamp = '${DOH_STAMP}'
 TOML
+
+if [ -n "${DOH_STAMP_ALT:-}" ]; then
+cat >> /etc/dnscrypt-proxy/dnscrypt-proxy.toml <<TOML
+
+[static.'syna-doh-alt']
+stamp = '${DOH_STAMP_ALT}'
+TOML
+fi
 
 nohup "$DCP_BIN" -config /etc/dnscrypt-proxy/dnscrypt-proxy.toml >/var/log/dnscrypt-proxy.log 2>&1 &
 

@@ -41,6 +41,8 @@
   "browser_doh_bootstrap": "9.9.9.10",
   "pod_doh_uri": "https://dns10.quad9.net/dns-query",
   "pod_doh_bootstrap": "9.9.9.10",
+  "pod_doh_bootstrap_alt": "149.112.112.10",
+  "net_guard_doh_uri": "https://dns.google/resolve",
   "session_idle_timeout_min": 15,
   "upload_dest": "/home/user/uploads",
   "voice": {

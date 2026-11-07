@@ -7,19 +7,29 @@ public internet targets only. Loopback, private, link-local (including
 the cloud metadata service), and other non-routable ranges are blocked.
 
 Hostname checks resolve DNS at decision time (with a short-lived cache)
-so names that currently resolve into those ranges are caught. That closes
-casual rebinding; a determined rebinder can still race the browser's own
-second resolution, which is why the Syna server independently validates
-the Host header, Origin, and a per-process token; the browser guard is
-one layer, not the whole defense. Resolution failures allow the request
-through: there is no reachable target, and the browser surfaces the
-connection error it would show anyway.
+so names that currently resolve into those ranges are caught. When
+`net_guard_doh_uri` is configured, the resolution goes through the
+guard's own DoH endpoint first, sharing the browser's poison-free view:
+a resolver that poisons a name into a private range cannot make the
+guard block a site the browser would reach, and a name poisoned into
+NXDOMAIN cannot smuggle a private address past a guard that never
+resolved it. When the DoH lookup fails, the system resolver answers,
+which is also the view the browser's TRR mode 2 falls back to, so the
+two stay consistent. That closes casual rebinding; a determined
+rebinder can still race the browser's own second resolution, which is
+why the Syna server independently validates the Host header, Origin,
+and a per-process token; the browser guard is one layer, not the whole
+defense. Resolution failures allow the request through: there is no
+reachable target, and the browser surfaces the connection error it
+would show anyway.
 """
 
 import ipaddress
+import json
 import socket
 import threading
 import time
+import urllib.request
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -27,6 +37,10 @@ from ..config import load_config
 
 DNS_CACHE_TTL_S = 60
 DNS_CACHE_MAX = 4096
+
+# One JSON DoH round-trip; a slow endpoint must not stall navigation
+# decisions, and any failure falls back to the system resolver.
+GUARD_DOH_TIMEOUT_S = 3
 
 HTTP_SCHEMES = ("http", "https")
 WEBSOCKET_SCHEMES = ("ws", "wss")
@@ -144,19 +158,80 @@ def _parse_literal_ip(host: str):
     return None
 
 
+def _doh_ips(host: str, endpoint: str) -> list | None:
+    """One JSON DoH lookup; None when the lookup itself failed.
+
+    A definitive negative answer (NXDOMAIN, or NOERROR with no records)
+    is an empty list: the name genuinely does not resolve, which is what
+    the browser sees through the same view.
+    """
+    separator = "&" if "?" in endpoint else "?"
+    request = urllib.request.Request(
+        f"{endpoint}{separator}name={host}&type=A",
+        headers={"accept": "application/dns-json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=GUARD_DOH_TIMEOUT_S) as response:
+            payload = json.loads(response.read())
+    except Exception:
+        return None
+    status = payload.get("Status", 0)
+    if status != 0:
+        return [] if status == 3 else None
+    try:
+        return [
+            ipaddress.ip_address(answer["data"])
+            for answer in payload.get("Answer", [])
+            if answer.get("type") in (1, 28)
+        ]
+    except (ValueError, TypeError, KeyError):
+        return None
+
+
+def _resolves_natively(host: str) -> bool:
+    """Whether the browser resolves this name natively, never through TRR.
+
+    Firefox excludes these from TRR (the default excluded domains plus
+    its single-label rule), so the guard must classify them with the
+    system resolver too: asking public DNS about 'localhost' answers
+    NXDOMAIN, which would let loopback destinations slip through.
+    """
+    if "." not in host:
+        return True
+    return (
+        host == "localhost"
+        or host.endswith(".localhost")
+        or host == "local"
+        or host.endswith(".local")
+    )
+
+
 def _resolve(host: str) -> list:
-    """Resolve a hostname to every address it currently points at."""
+    """Resolve a hostname the way the browser will see it.
+
+    The guard's DoH endpoint (`net_guard_doh_uri`) answers first when
+    configured; the system resolver is the fallback, which is also the
+    view the browser's TRR mode 2 falls back to when its own resolver
+    is unreachable, so guard and browser stay consistent. Names the
+    browser resolves natively (localhost, single-label) skip the DoH
+    path for the same reason.
+    """
     now = time.monotonic()
     with _dns_lock:
         cached = _dns_cache.get(host)
         if cached and cached[0] > now:
             return cached[1]
-    try:
-        answers = socket.getaddrinfo(host, None)
-        ips = [ipaddress.ip_address(answer[4][0]) for answer in answers]
-        ips = list(dict.fromkeys(ips))
-    except OSError:
-        ips = []
+    endpoint = load_config().get("net_guard_doh_uri") or ""
+    if _resolves_natively(host):
+        endpoint = ""
+    ips = _doh_ips(host, endpoint) if endpoint else None
+    if ips is None:
+        try:
+            answers = socket.getaddrinfo(host, None)
+            ips = [ipaddress.ip_address(answer[4][0]) for answer in answers]
+            ips = list(dict.fromkeys(ips))
+        except OSError:
+            ips = []
     with _dns_lock:
         if len(_dns_cache) >= DNS_CACHE_MAX:
             _dns_cache.clear()

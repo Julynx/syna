@@ -14,11 +14,17 @@ previous behavior intact.
 
 import base64
 import struct
+import time
 from urllib.parse import urlparse
 
 from bollard import Container
 
-from .config import get_logger, load_pod_doh_bootstrap, load_pod_doh_uri
+from .config import (
+    get_logger,
+    load_pod_doh_bootstrap,
+    load_pod_doh_bootstrap_alt,
+    load_pod_doh_uri,
+)
 from .paths import asset_path
 
 SUCCESS_MARKER = "pod-init: step OK"
@@ -73,12 +79,26 @@ def doh_stamp(doh_uri: str, bootstrap: str) -> str:
 
 
 def _doh_step() -> PodInitStep:
-    """The DoH step, configured from the pod_doh_* configuration keys."""
+    """The DoH step, configured from the pod_doh_* configuration keys.
+
+    The primary stamp pins `pod_doh_bootstrap`; `pod_doh_bootstrap_alt`
+    registers a second entry on the same provider for resolver
+    failover. Both pins must belong to the provider in `pod_doh_uri`.
+    When no bootstrap IP is configured, the primary stamp carries no
+    address pin and the script gets a bootstrap_resolvers line so
+    dnscrypt-proxy can still resolve the provider hostname without the
+    poisoned system resolver.
+    """
     doh_uri = load_pod_doh_uri()
     bootstrap = load_pod_doh_bootstrap()
+    bootstrap_alt = load_pod_doh_bootstrap_alt()
     env = {}
     if doh_uri:
         env["DOH_STAMP"] = doh_stamp(doh_uri, bootstrap)
+        if bootstrap_alt and bootstrap_alt != bootstrap:
+            env["DOH_STAMP_ALT"] = doh_stamp(doh_uri, bootstrap_alt)
+        if not bootstrap:
+            env["DOH_NEEDS_BOOTSTRAP"] = "1"
     return PodInitStep(
         name="doh",
         asset="pod_doh_setup.sh",
@@ -120,6 +140,7 @@ def run_pod_init_steps(container: Container) -> dict[str, bool]:
         if not step.enabled:
             results[step.name] = False
             continue
+        started = time.monotonic()
         try:
             output = container.exec(step_command(step))
         except Exception as exc:
@@ -130,16 +151,18 @@ def run_pod_init_steps(container: Container) -> dict[str, bool]:
             )
             results[step.name] = False
             continue
+        elapsed = time.monotonic() - started
         if SUCCESS_MARKER not in output:
             tail = " ".join(output.split())[-300:]
             get_logger().warning(
-                "Pod init step '%s' did not activate; the pod continues"
-                " without it (%s).",
+                "Pod init step '%s' did not activate after %.1fs; the pod"
+                " continues without it (%s).",
                 step.name,
+                elapsed,
                 tail,
             )
             results[step.name] = False
             continue
-        get_logger().info("Pod init step '%s' active.", step.name)
+        get_logger().info("Pod init step '%s' active in %.1fs.", step.name, elapsed)
         results[step.name] = True
     return results

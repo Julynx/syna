@@ -52,6 +52,10 @@ DEFAULT_BROWSER_DOH_BOOTSTRAP = "9.9.9.10"
 # too; the bootstrap runs once on container creation and fails open.
 DEFAULT_POD_DOH_URI = DEFAULT_BROWSER_DOH_URI
 DEFAULT_POD_DOH_BOOTSTRAP = DEFAULT_BROWSER_DOH_BOOTSTRAP
+# Secondary bootstrap IP on the same provider, registered as a second
+# resolver entry so dnscrypt-proxy fails over when the primary anycast
+# address is unreachable. Must belong to the provider in pod_doh_uri.
+DEFAULT_POD_DOH_BOOTSTRAP_ALT = "149.112.112.10"
 
 # Canonical provider model defaults. The first-run wizard, the settings
 # modal, and the runtime all read these; an unset .env value means the
@@ -331,6 +335,11 @@ def load_pod_doh_uri() -> str:
 def load_pod_doh_bootstrap() -> str:
     """Return the IP pinning the pod's DoH connection away from poisoned DNS."""
     return load_config().get("pod_doh_bootstrap", DEFAULT_POD_DOH_BOOTSTRAP)
+
+
+def load_pod_doh_bootstrap_alt() -> str:
+    """Return the secondary bootstrap IP for the pod's resolver failover."""
+    return load_config().get("pod_doh_bootstrap_alt", DEFAULT_POD_DOH_BOOTSTRAP_ALT)
 
 
 DEFAULT_USER_MESSAGE_ARCHIVE_MIN_CHARS = 2000
