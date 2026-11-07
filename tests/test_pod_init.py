@@ -10,7 +10,6 @@ each step on its configuration keys and fails open.
 
 import base64
 import sys
-import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -209,9 +208,6 @@ def test_create_container_runs_init_steps(monkeypatch):
     monkeypatch.setattr(state, "init_docker_client", lambda: None)
     monkeypatch.setattr(state, "client", FakeClient())
     container = state.create_container()
-    for thread in threading.enumerate():
-        if thread.name == "pod-init":
-            thread.join(timeout=5)
     assert seen["args"][0] == state.CONTAINER_IMAGE
     assert "base64 -d" in seen["argv"][2]
     assert container.exec(["true"]) == pod_init.SUCCESS_MARKER

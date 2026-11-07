@@ -315,11 +315,10 @@ Global Docker client plus per-thread container registry and per-call context.
   `pod_pids_limit`) protect the host from runaway work inside the pod
   without restricting what the model may do there. Right after start,
   `pod_init.run_pod_init_steps()` runs the pod's initialization scripts
-  in a background thread (one asset script per entry in the step
-  registry; the pod is usable on native DNS immediately, and each step
-  logs its duration and fails open): the DoH step installs
-  `dnscrypt-proxy`, points the pod resolver at Quad9's unfiltered
-  endpoint over HTTPS (`pod_doh_uri`, `pod_doh_bootstrap`,
+  and blocks until they finish (one asset script per entry in the step
+  registry; each step logs its duration and fails open): the DoH step
+  installs `dnscrypt-proxy`, points the pod resolver at Quad9's
+  unfiltered endpoint over HTTPS (`pod_doh_uri`, `pod_doh_bootstrap`,
   `pod_doh_bootstrap_alt`, pinned inside dnscrypt stamps), and enables
   transparent HTTP/3 for curl.
 - Self-heal: a connection-level failure from `run_container` (dead pipe,
