@@ -158,6 +158,7 @@ from the canonical constants in `config.py`.
 | `max_command_output_chars`          | Character limit at which tool output is cut to its beginning and end (the system prompt's `{{OUTPUT_LIMIT}}`). The full output always remains available at the `saved_to` path.                                                                                               |
 | `tool_call_timeout_s`               | Per-tool-call deadline (default 60). At the deadline the harness asks the call to stop through its cancel event and waits `max_cancel_wait_s` for it to exit; a call that ignores the stop is detached with a hung-call notice. See `parse.py`.                                                                                                |
 | `web_search_timeout_s`              | Budget for one web search's engine chain (default 60, not Allegro-scaled). Enforced cooperatively: each navigation's timeout is capped by what remains of the budget, so expiry stops the chain within that navigation.                                                                                                                       |
+| `browser_doh_uri`                   | The stealth browser's DNS-over-HTTPS resolver (default `https://dns.quad9.net/dns-query`, empty disables): encrypted DNS is immune to resolver-level poisoning, and Firefox reads HTTPS DNS records through it, so navigation upgrades to HTTP/3 where the site offers it (bypassing networks that reset TCP TLS by SNI) and ECH configs apply where published. `browser_doh_bootstrap` (default `9.9.9.9`) resolves the resolver's own hostname so a poisoning middlebox cannot redirect the DoH connection. TRR mode 2 falls back to native DNS when the resolver is unreachable. |
 | `browser_launch_timeout_s`          | Budget for waiting on a stealth browser's cold start, the search browser and the tool browser alike (default 120, not Allegro-scaled): a cold start is startup, not tool work. The constructor runs in a helper thread, so an expired budget abandons the wait, not the launch; the helper keeps starting the browser for the next call.                                                                                                                  |
 | `browser_command_timeout_s`         | Aggregate budget for one `browser` tool command (default 90, not Allegro-scaled): the command runs on the browser's loop raced against the harness's stop event, is cancelled when either limit arrives, and its session is discarded (reset-on-cancel) so the next call starts clean.                                                                                                                           |
 | `max_cancel_wait_s`                 | Stop grace after a call's deadline (default 10): how long the harness waits for a stopped worker to exit before detaching from it.                                                                                                                                                                                                            |
@@ -235,7 +236,9 @@ protocol limits the prompt and tools consume: `load_output_limit_chars()`
 (head-and-tail cut), `load_command_timeout_s()` and
 `load_tool_call_timeout_s()` (both subject to the Allegro scale), and the
 unscaled web-search budgets `load_web_search_timeout_s()`,
-`load_browser_launch_timeout_s()`, and `load_max_cancel_wait_s()`.
+`load_browser_launch_timeout_s()`, and `load_max_cancel_wait_s()`, and
+the browser's encrypted-DNS settings `load_browser_doh_uri()` and
+`load_browser_doh_bootstrap()`.
 
 ## 4. Architecture
 

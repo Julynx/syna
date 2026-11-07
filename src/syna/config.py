@@ -33,6 +33,17 @@ DEFAULT_BROWSER_COMMAND_TIMEOUT_S = 90
 # detaching from it: the SIGTERM-to-SIGKILL grace.
 DEFAULT_MAX_CANCEL_WAIT_S = 10
 
+# The stealth browser's DNS-over-HTTPS resolver. Quad9 by default: it
+# bypasses DNS poisoning used by national content filters, and Firefox
+# reads HTTPS DNS records through it, which upgrades navigation to
+# HTTP/3 where the site offers it (bypassing TCP SNI filtering) and
+# applies ECH configs where published. TRR mode 2 keeps native DNS as
+# a fallback when the resolver is unreachable. Empty disables DoH.
+# The bootstrap IP resolves the resolver's own hostname so a poisoning
+# middlebox cannot redirect the DoH connection itself.
+DEFAULT_BROWSER_DOH_URI = "https://dns.quad9.net/dns-query"
+DEFAULT_BROWSER_DOH_BOOTSTRAP = "9.9.9.9"
+
 # Canonical provider model defaults. The first-run wizard, the settings
 # modal, and the runtime all read these; an unset .env value means the
 # default applies.
@@ -291,6 +302,16 @@ def load_browser_command_timeout_s() -> float:
 def load_max_cancel_wait_s() -> float:
     """Return how long the harness waits for a stopped call to exit."""
     return load_config().get("max_cancel_wait_s", DEFAULT_MAX_CANCEL_WAIT_S)
+
+
+def load_browser_doh_uri() -> str:
+    """Return the browser's DoH resolver URI; empty disables DoH."""
+    return load_config().get("browser_doh_uri", DEFAULT_BROWSER_DOH_URI)
+
+
+def load_browser_doh_bootstrap() -> str:
+    """Return the IP that bootstraps resolution of the DoH resolver name."""
+    return load_config().get("browser_doh_bootstrap", DEFAULT_BROWSER_DOH_BOOTSTRAP)
 
 
 DEFAULT_USER_MESSAGE_ARCHIVE_MIN_CHARS = 2000

@@ -52,6 +52,8 @@ from . import net_guard
 from ..config import (
     get_logger,
     load_browser_command_timeout_s,
+    load_browser_doh_bootstrap,
+    load_browser_doh_uri,
     load_browser_launch_timeout_s,
     load_max_cancel_wait_s,
 )
@@ -1031,6 +1033,16 @@ class BrowserSession:
     rejects foreign Origins as the second layer. WebRTC is disabled:
     it bypasses HTTP-layer routing entirely and is a standard
     fingerprinting/IP-leak surface.
+
+    DNS resolution runs over HTTPS (`browser_doh_uri`, Quad9 by
+    default): encrypted DNS is immune to resolver-level poisoning, and
+    Firefox reads HTTPS DNS records through it, which upgrades
+    navigation to HTTP/3 where the site offers it (a network that
+    resets TCP TLS by SNI is bypassed entirely, QUIC being a different
+    protocol) and carries ECH configs that hide the SNI where
+    published. TRR mode 2 falls back to native DNS when the resolver
+    is unreachable, so losing the resolver degrades to plain DNS
+    instead of breaking browsing.
     """
 
     def __init__(
@@ -1048,6 +1060,15 @@ class BrowserSession:
         camoufox_kwargs.setdefault("os", detect_host_os())
         prefs = camoufox_kwargs.setdefault("firefox_user_prefs", {})
         prefs.setdefault("media.peerconnection.enabled", False)
+        doh_uri = load_browser_doh_uri()
+        if doh_uri:
+            prefs["network.trr.mode"] = 2
+            prefs["network.trr.uri"] = doh_uri
+            doh_bootstrap = load_browser_doh_bootstrap()
+            if doh_bootstrap:
+                prefs["network.trr.bootstrapAddr"] = doh_bootstrap
+            prefs["network.dns.use_https_rr_as_altsvc"] = True
+            prefs["network.dns.echconfig.enabled"] = True
         self._kw = dict(
             headless=headless, humanize=humanize, geoip=geoip, **camoufox_kwargs
         )
