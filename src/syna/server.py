@@ -77,6 +77,10 @@ from .capabilities.tools import _reset_browser
 CONTAINER_START_TIMEOUT_S = 120
 EVENT_LOG_MAX_ITEMS = 500
 JANITOR_INTERVAL_S = 15
+CONTAINER_STARTING_TEXT = (
+    "Starting the container engine... (the first start installs the pod's"
+    " DNS resolver and can take a minute)"
+)
 NEW_CHAT_STOP_TIMEOUT_S = 20
 IMAGE_CACHE_LIMIT = 32
 SERVER_ENTRY_POINT = "syna-server"
@@ -121,6 +125,7 @@ class SessionRecord:
         self.tmp_dir = Path(tempfile.mkdtemp(prefix=f"syna-{client_id[:8]}-"))
         self.container = None
         self.container_ready = threading.Event()
+        self.container_starting = False
         self.busy = threading.Event()
         self.connected = False
         self.shutdown = threading.Event()
@@ -340,25 +345,29 @@ class SessionRecord:
     def _start_container(self):
         """Create the session container, reporting failures as an event.
 
+        The starting flag lets a WebSocket connecting mid-initialization
+        show the status pill: the event pushed here races the
+        subscriber's registration (the worker starts before the
+        WebSocket handler registers), so it is not relied upon for the
+        first connection. Non-persistent, so reconnects never replay a
+        stale status; the connect path re-pushes it while it is true.
+
         The worker stays alive when creation fails, so the user's next
         message retries bringing the engine up instead of the session
         going silent forever.
         """
-        self.push(
-            {
-                "type": "status",
-                "text": "Starting the container engine...",
-            },
-            persistent=False,
-        )
+        self.container_starting = True
+        self.push({"type": "status", "text": CONTAINER_STARTING_TEXT}, persistent=False)
         try:
             self.container = create_container()
         except Exception as exc:
             logger.exception("Container creation failed for session %s", self.client_id)
+            self.container_starting = False
             self.push({"type": "error", "text": f"Could not start container: {exc}"})
             return
         register_container(self.container)
         self.container_ready.set()
+        self.container_starting = False
         logger.info("Container ready for session %s", self.client_id)
         self.push({"type": "ready"}, persistent=False)
 
@@ -1240,6 +1249,10 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         return
 
     pump_task = asyncio.create_task(_pump_events(subscriber, websocket))
+    if record.container_starting:
+        record.push(
+            {"type": "status", "text": CONTAINER_STARTING_TEXT}, persistent=False
+        )
     try:
         while True:
             data = await websocket.receive_json()
