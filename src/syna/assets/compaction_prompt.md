@@ -20,7 +20,7 @@ You receive the conversation as a transcript of labeled blocks:
 - `[assistant]:` messages written by the agent, containing its JSON tool calls.
 - `[previous summary]:` the summary produced by an earlier compaction.
   Merge it with the newer messages into one updated summary. Do not treat
-  it as fresh transcript, and do not lose information it contains.
+  it as fresh transcript.
 
 # What to preserve
 
@@ -28,9 +28,7 @@ Everything needed to resume the work seamlessly without the original
 messages:
 
 - The user's requests and goals, including every refinement, correction, and
-  constraint they stated. Represent the pinned first request faithfully:
-  quote it verbatim when it is short; when it is long, summarize it without
-  losing any of its goals, constraints, or emphasis.
+  constraint they stated.
 - Facts learned during the conversation: configuration values, versions,
   paths, URLs, names, and any other literal data worth keeping.
 - Files and directories created, modified, or deleted, with their absolute

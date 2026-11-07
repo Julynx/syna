@@ -149,13 +149,11 @@ def _command_timeout_notice(exit_code: int, timeout_s: int) -> str:
 
 def think(thought: str):
     """
-    Record reasoning in the conversation. It does not affect the pod, and the call returns "(noted)".
+    Record reasoning in the conversation. It does not affect the pod.
 
-    Your private reasoning may not carry over between turns, but `think` entries stay visible for the rest of the task. Use it for things you will need later: a plan for multi-step work, a conclusion from a surprising or failed result, a decision and its reason, or a check of your claims against the evidence before giving your final answer. Skip it for routine steps you act on immediately.
+    Your private reasoning may not carry over between turns, but `think` entries stay visible for the rest of the task. Use it for things you will need later: a plan for multi-step work, a conclusion from a surprising or failed result, or a check of your claims against the evidence before your final answer.
 
-    Call `think` alongside other tool calls when planning multi-step work.
-
-    This is not a message to the user; your final answer is delivered directly in your response.
+    Call `think` alongside other tool calls when planning multi-step work. This is not a message to the user.
 
     - `thought` (string, required): The note to record.
     """
@@ -168,7 +166,7 @@ def execute_command(command: str, arguments: list[str] | None = None):
     - `command` (string, required): a full bash command line. Pipes, redirection, `&&`, and quoting work.
     - `arguments` (list of strings, optional): if present, `command` must be a bare executable name, and these are its arguments, passed without shell processing. Useful when quoting gets awkward.
 
-    One call's runtime is capped (a killed call reports the exact limit). A failed or timed-out call marks the remaining calls of the same reply as skipped, so run calls that may approach the runtime limit alone.
+    One call's runtime is capped (a killed call reports the exact limit); a failed or timed-out call skips the remaining calls of the same reply, so run calls that may approach the cap alone.
 
     To create a file, use a quoted heredoc so the shell expands nothing: `cat > /workspace/report/build.py <<'EOF'` … `EOF`.
 
@@ -253,7 +251,7 @@ def _reader_script(output_path: str, exit_path: str) -> str:
 
 def web_search(query: str):
     """
-    Search the web. Returns the top 10 results with title, description, and URL. Snippets can be outdated or out of context: visit the page before relying on a claim. URLs are not search queries — to open a page, use the `browser` tool with command `visit`.
+    Search the web. Returns the top 10 results with title, description, and URL. Snippets can be outdated or out of context: visit the page before relying on a claim. To open a page, use the `browser` tool with command `visit`.
 
     - `query` (string, required): what to search for.
 
@@ -319,7 +317,7 @@ def browser(command: str, args: dict[str, Any]):
     - `command` (string, required): browser command to run; see the list below.
     - `args` (object, required): parameters for that command; see the list below.
 
-    * `visit`: `url` (string, required). Opens a page and returns a compact view; tables come back one line per row with cells separated by ` | `. Interactive elements appear like `[12] button "Buy"`; pass the number as `ref`. Anti-bot challenges are waited out; if one persists, the view shows it and you can retry or report the block.
+    * `visit`: `url` (string, required). Opens a page and returns a compact view. Interactive elements appear like `[12] button "Buy"`; pass the number as `ref`. Anti-bot challenges are waited out; if one persists, the view shows it.
     * `snapshot`: `viewport_only` (boolean), `full` (boolean). Re-reads the current page.
     * `click`: `ref` (integer, required). Returns what changed.
     * `type`: `ref` (integer, required), `text` (string, required), `clear` (boolean, default true), `submit` (boolean; presses Enter after typing).
@@ -328,9 +326,9 @@ def browser(command: str, args: dict[str, Any]):
     * `scroll`: `direction` (`down`, `up`, `top`, or `bottom`), `amount` (fraction of viewport height, default 0.8). Returns the visible viewport.
     * `back`: no arguments.
     * `read`: `ref` (integer; omit for the whole page), `max_chars` (integer). Full plain text, for when a view truncated something you need. Tables come back one line per row with cells separated by ` | `.
-    * `screenshot`: no arguments. Takes a screenshot of the current viewport, saves it into the pod, and returns its path. You may inspect it with `describe_image` if you need to, and share it with `share_file` if the user wants to see it. The screenshot is capped to the viewport, scroll and take another one to see further. Use this tool when the user requests a screenshot, or when you are having trouble performing a browser task and a visual description could help.
+    * `screenshot`: no arguments. Takes a screenshot of the current viewport, saves it into the pod, and returns its path. You may inspect it with `describe_image` if you need to, and share it with `share_file` if the user wants to see it. Use it when the user asks for a screenshot or when a look at the page would help you debug a browser task.
 
-    Refs belong to the page state they came from; after navigation or large page changes, use refs from the newest output. Submitting forms that send, post, or buy something needs approval (see Protecting the user).
+    Refs belong to the page state they came from; after navigation or large page changes, use refs from the newest output.
 
     Example: browser(command="type", args={"ref": 7, "text": "debian 13 release notes", "submit": True})
     """
@@ -387,7 +385,7 @@ def _copy_from_pod(container, pod_path: str, host_dir: Path) -> str | None:
 
 def read_file(file_path: str, start: int = 1, limit: int = 200):
     """
-    Read a text file with line numbers. Prefer this to `cat`.
+    Read a text file with line numbers.
     - `file_path` (string, required): absolute path.
     - `start` (integer, required): first line to read, counting from 1.
     - `limit` (integer, required): number of lines. Keep it small; in large files, find the relevant lines first with `grep -n`.
@@ -437,7 +435,7 @@ def edit_file(file_path: str, operations: list[dict]):
 
 def describe_image(file_path: str, question: str):
     """
-    Get a text description of an image file, focused on your question. This tool only reads images; it cannot create or edit them — for that, call text_to_image (original art) or script the file. Useful for screenshots, charts, and photos, and for checking your own visual output (convert to PNG first). Descriptions can be wrong about small text and exact numbers; when you need exact values, take them from the underlying data if you can. Large images are downscaled before analysis; if you need to inspect fine detail (small text, icons, flags), pass a zoomed crop of that region instead of a full-page render.
+    Get a text description of an image file, focused on your question. To create or edit images, call text_to_image or script the file. Useful for checking your own visual output (convert to PNG first). Descriptions can be wrong about small text and exact numbers; when you need exact values, take them from the underlying data if you can. Large images are downscaled before analysis; if you need to inspect fine detail (small text, icons, flags), pass a zoomed crop of that region instead of a full-page render.
     - `file_path` (string, required): absolute path to an image file in the pod.
     - `question` (string, required): exactly what you need to know about the image.
     """
@@ -446,9 +444,9 @@ def describe_image(file_path: str, question: str):
 
 def speech_to_text(file_path: str, language: str | None = None):
     """
-    Transcribe an audio file into written text. Call this tool to turn a recording, voice note, or audio clip in the pod into text you can work with. Do not call this tool when you can easily obtain the transcript by other means. For example, for YouTube videos, install yt-dlp and run `yt-dlp --skip-download --write-subs --sub-langs en --convert-subs srt "VIDEO_URL"` (or `--write-auto-subs` if the video has no real subtitles) instead of calling this tool.
+    Transcribe an audio file into written text. Call this tool to turn a recording, voice note, or audio clip in the pod into text you can work with. Do not call this tool when you can easily obtain the transcript by other means. For example, for YouTube videos, install yt-dlp and run `yt-dlp --skip-download --write-subs --sub-langs en --convert-subs srt "VIDEO_URL"` instead of calling this tool.
     - `file_path` (string, required): absolute path to an audio file in the pod; supported formats are wav, mp3, m4a, ogg, opus, flac, aac, and webm.
-    - `language` (string, optional): ISO-639-1 code of the audio's language, e.g. `en` or `de`. Some models detect the language automatically, but transcription might not provide correct results if the language is not set properly, and auto-detection is not always supported. Omit it to let the model detect the language.
+    - `language` (string, optional): ISO-639-1 code of the audio's language, e.g. `en` or `de`. Omit it to let the model detect the language; auto-detection is not always supported and can hurt accuracy.
 
     The full transcript is saved as a text file in /workspace/transcripts and its text is returned. Transcription quality drops with heavy background noise; the transcript may mishear names and numbers.
     """
@@ -506,7 +504,7 @@ def speech_to_text(file_path: str, language: str | None = None):
 
 def text_to_speech(file_path: str):
     """
-    Synthesize spoken audio from a text file. Call this tool when the user wants to hear a text read out loud or asks for an audio version of a document.
+    Synthesize spoken audio from a text file. Call it when the user wants to hear a text read out loud.
     - `file_path` (string, required): absolute path to a text file in the pod.
 
     The audio is saved into /workspace/audio; deliver it to the user with `share_file`. A request may hold at most 4000 characters; split longer files into parts of at most 4000 characters and synthesize each part, then share all the audio files. The audio is for listening, not for lossless transport: a round-trip through speech_to_text can drop words.
@@ -569,11 +567,10 @@ def text_to_image(prompt: str):
       * To depict a real-world subject, object or location creatively or artistically rather than exactly, and a script can't easily do it (e.g., the Eiffel Tower made of pizza).
 
     Do not use this tool:
-      * To depict real-world events, people, places, species, animals, plants, products or objects as they exist in the world. Source an image from a reliable online source instead; accuracy prevails.
-      * To assemble images and text into an infographic, a grid with labels, or similar structures. This tool cannot source images from the pod or the web, and cannot reliably generate structured documents like that. Source the base images and compose them using a script or markup rendered to an image instead.
+      * To depict real-world events, people, places, species, animals, plants, products or objects as they exist in the world. Source an image from a reliable online source instead.
+      * To assemble images and text into an infographic, a grid with labels, or similar composites: this tool cannot source images from the pod or the web, so source the base images and compose them with a script or markup rendered to an image.
       * For diagrams, charts, and other visualizations based on quantitative data. Use a script that parses such data and outputs the diagram instead of calling this tool.
 
-    If this tool is unavailable or unsuitable, and images are still needed for the task, fall back to downloading from online sources or using a script.
     - `prompt` (string, required): description of the image to generate; mention subject, style, composition, lighting, and mood concretely.
     """
     settings = load_image_settings()
@@ -608,7 +605,7 @@ def text_to_image(prompt: str):
 
 def share_file(file_path: str):
     """
-    Make a file or directory available to the user; directories are sent as one zip. Files you don't share are invisible to the user. Share each deliverable before finishing your turn, and check the result to confirm it worked. Don't share bulky or irrelevant content (virtualenvs, `node_modules`, caches); copy deliverables into a clean folder first if needed.
+    Make a file or directory available to the user; directories are sent as one zip. Files you don't share are invisible to the user. Share each deliverable before finishing your turn. Don't share bulky or irrelevant content (virtualenvs, `node_modules`, caches); copy deliverables into a clean folder first if needed.
     - `file_path` (string, required): absolute path to an existing file or directory.
     """
     container = get_container()
@@ -634,9 +631,9 @@ def share_file(file_path: str):
 
 def ask_user(question_text: str, choices: list):
     """
-    Ask the user a question and wait for their answer. The conversation pauses until they respond. Call this tool when you need information from the user to complete a task, and you cannot reasonably assume or deduce the answer yourself (e.g., a key fact is missing and/or there are competing options and none is generally better than the others). Note: tool calls in the same response as this one might not execute until later.
+    Ask the user a question and wait for their answer. The conversation pauses until they respond. Call this tool when you need information from the user to complete a task, and you cannot reasonably assume or deduce the answer yourself (a key fact is missing, or options compete and none is clearly better). Note: tool calls in the same response as this one might not execute until later.
     - `question_text` (string, required): the question itself, clear and self-contained.
-    - `choices` (array of strings, required): short answer options to show, each a self-contained phrase. An "Other: Type your own response" option is always added automatically, so users can always answer outside your choices. Never include your own "Other" option. For open-ended questions, pass an empty array and a text field will be shown instead.
+    - `choices` (array of strings, required): short answer options to show, each a self-contained phrase. An "Other: Type your own response" option is always added automatically; never include your own "Other" option. For open-ended questions, pass an empty array and a text field will be shown instead.
     """
     if not isinstance(question_text, str) or not question_text.strip():
         set_last_exit_code(1)
@@ -659,7 +656,7 @@ def ask_user(question_text: str, choices: list):
 
 def review_work(summary: str):
     """
-    If the task was especially complicated and/or prone to error, call this tool on its own after the work is done to verify the results before reporting them to the user. An adversarial reviewer model inspects the conversation, and its report comes back as this call's result. No need to explain the methodology you followed; the verifier gets that information by inspecting this conversation, including your tool calls.
+    If the task was especially complicated and/or prone to error, call this tool on its own after the work is done to verify the results before reporting them to the user. An adversarial reviewer model inspects the conversation, and its report comes back as this call's result. No need to explain your methodology; the verifier inspects this conversation, including your tool calls.
     - `summary` (string, required): the final response exactly as you would have sent it to the user, excluding any files or artifacts.
     """
     if not isinstance(summary, str) or not summary.strip():
