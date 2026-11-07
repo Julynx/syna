@@ -4,8 +4,8 @@ Two mechanisms keep the conversation within the model's context budget:
 
 1. Eliding old tool outputs: every executed call's full output is saved in
    the pod (`saved_to`), so old outputs in history can be replaced by a
-   one-line pointer without losing information. Only recoverable outputs —
-   those carrying a `saved_to` path — are elided. Archived large user
+   one-line pointer without losing information. Only recoverable outputs,
+   those carrying a `saved_to` path, are elided. Archived large user
    messages (user_messages.py) are elided the same way: head excerpt plus
    a pointer to the verbatim file.
 2. Summarization (compaction, in `session.py`): the lossy fallback that
@@ -81,7 +81,7 @@ def elide_tool_outputs(messages: list[dict], keep_recent: int) -> int:
 
     Message contents are updated in place. The system message and the most
     recent `keep_recent` history messages are left untouched. Only results
-    carrying a `saved_to` path are elided — anything unrecoverable stays.
+    carrying a `saved_to` path are elided; anything unrecoverable stays.
     Already-elided messages are skipped, making the pass idempotent.
 
     Returns the number of results elided.

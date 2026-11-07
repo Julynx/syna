@@ -1,4 +1,4 @@
-"""Unit tests for eval scoring — no Docker, no model, no live session."""
+"""Unit tests for eval scoring: no Docker, no model, no live session."""
 
 import sys
 from pathlib import Path

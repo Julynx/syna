@@ -1,7 +1,7 @@
 """First-run setup: dependency detection, installation, and configuration.
 
 The wizard is part of the web server app (routes under /setup) so the
-first run of `syna-server` — or a manual `syna-setup` — walks the user
+first run of `syna-server`, or a manual `syna-setup`, walks the user
 through dependencies (WSL2, Podman/Docker), the provider endpoint and
 API key, and a sanity check, writing the result to the Syna data home.
 
@@ -60,6 +60,7 @@ PROVIDERS = {
         "tts_voice": DEFAULT_TTS_VOICE,
         "image_model": DEFAULT_IMAGE_MODEL,
         "needs_key": True,
+        "key_prefix": "sk-or-",
     },
     "openai": {
         "name": "OpenAI",
@@ -67,6 +68,7 @@ PROVIDERS = {
         "keys_url": "https://platform.openai.com/api-keys",
         "model": "gpt-4o-mini",
         "needs_key": True,
+        "key_prefix": "sk-",
     },
     "google": {
         "name": "Google Gemini",
@@ -74,6 +76,7 @@ PROVIDERS = {
         "keys_url": "https://aistudio.google.com/apikey",
         "model": "gemini-2.5-flash",
         "needs_key": True,
+        "key_prefix": "AIza",
     },
     "ollama": {
         "name": "Ollama (local)",
@@ -81,6 +84,7 @@ PROVIDERS = {
         "keys_url": "",
         "model": "llama3.2",
         "needs_key": False,
+        "key_prefix": "",
     },
 }
 
@@ -231,8 +235,8 @@ def _windows_engine_install(package_id: str, probe) -> tuple[bool, str]:
 
     winget exits non-zero when the package is already installed and no
     update exists (with a localized message), so the verdict comes from
-    a fresh detection — which also picks up the registry PATH the
-    installer just wrote — instead of from the exit code.
+    a fresh detection, which also picks up the registry PATH the
+    installer just wrote, instead of from the exit code.
     """
     found, tail = _winget(package_id)
     detected = probe()
@@ -376,6 +380,28 @@ def setup_incomplete() -> bool:
     return not detect_engine().found
 
 
+def _friendly_endpoint_error(detail: str) -> str:
+    """Translate a provider rejection into short, actionable guidance.
+
+    Providers word their 401s confusingly: OpenRouter answers a request
+    whose Bearer token does not parse as one of its keys with "Missing
+    Authentication header", which sends the user chasing a header that
+    was actually sent. The concise sentence goes to the modal text; the
+    caller keeps the raw provider response for the diagnostics box.
+    """
+    lowered = detail.lower()
+    rejected_markers = (
+        "missing authentication header",
+        "no auth credentials",
+        "invalid api key",
+        "api key not valid",
+        "invalid_request_error",
+    )
+    if any(marker in lowered for marker in rejected_markers) or " 401" in lowered:
+        return "the API key, please review it and try again."
+    return detail
+
+
 def sanity_check() -> dict:
     """Verify the engine and the configured endpoint actually work.
 
@@ -423,10 +449,11 @@ def sanity_check() -> dict:
             "detail": f"{load_base_url()} answered via {model}",
         }
     except Exception as exc:
-        results["endpoint"] = {
-            "ok": False,
-            "detail": f"{exc}",
-        }
+        raw = f"{exc}"
+        entry = {"ok": False, "detail": _friendly_endpoint_error(raw)}
+        if entry["detail"] != raw:
+            entry["raw"] = raw
+        results["endpoint"] = entry
     return results
 
 

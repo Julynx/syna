@@ -337,7 +337,7 @@ test("fidelity: emoji, html and sentinels pass through untouched", () => {
 });
 
 test("fidelity: accents and symbols survive packing", () => {
-  const source = "Costó 50€, ¿no? ¡Sí! Terminó «bien» — más o menos.";
+  const source = "Costó 50€, ¿no? ¡Sí! Terminó «bien», más o menos.";
   const chunks = SpeechChunker.split(source, { maxChars: 30 });
   assertPacking(chunks, source, 30);
 });

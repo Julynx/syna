@@ -94,7 +94,7 @@ async def phase_stealth() -> None:
 
 async def main() -> None:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"Browser health check — {stamp}\n")
+    print(f"Browser health check: {stamp}\n")
 
     problems = await phase_read_workflow()
 

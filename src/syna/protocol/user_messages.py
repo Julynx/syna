@@ -41,7 +41,9 @@ def archive_user_message(text: str, container, seq: int) -> str | None:
     Uses the same host-temporary-file-and-copy mechanism as the other pod
     writes. Any failure is logged and reported as None so a broken archive
     never blocks the turn; the message then travels unannotated, exactly
-    as it would without this module.
+    as it would without this module. The copy is written as bytes, not
+    with `write_text`: text mode would translate line feeds to
+    carriage-return pairs on Windows and corrupt the verbatim archive.
     """
     logger = get_logger()
     root = load_user_messages_dest()
@@ -51,8 +53,6 @@ def archive_user_message(text: str, container, seq: int) -> str | None:
         container.exec(["bash", "-c", f"mkdir -p {shlex.quote(root)}"])
         with tempfile.TemporaryDirectory(prefix="syna-archive-") as temp_dir:
             host_file = Path(temp_dir, file_name)
-            # Bytes, not write_text: text mode translates \n to \r\n on
-            # Windows, which would corrupt the "verbatim" copy.
             host_file.write_bytes(text.encode("utf-8"))
             container.copy_to(str(host_file), root)
         container.exec(["bash", "-c", f"chmod 444 {shlex.quote(pod_path)}"])

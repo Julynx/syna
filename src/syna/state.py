@@ -65,7 +65,7 @@ class ToolCancelled(Exception):
     The harness sets the call's cancel event when the deadline passes and
     waits for the worker to exit. A tool that checks the event stops
     promptly and raises this class, so the harness can report the
-    deadline notice — the harness stopped the call at its limit — rather
+    deadline notice, the harness stopped the call at its limit, rather
     than an incidental failure message.
     """
 
@@ -143,7 +143,7 @@ def _reset_dead_client(*, strict: bool = False) -> None:
     stopped, host resumed from sleep), leaving every request failing on
     a dead pipe or socket until a restart. The shared pod, if any, is
     destroyed first. With `strict` a failed destroy propagates (shutdown
-    path); otherwise it is logged and dropped (self-heal path — with the
+    path); otherwise it is logged and dropped (self-heal path: with the
     engine gone the pod is unreachable anyway, and the next
     `get_container()` call lazily starts a replacement).
     """

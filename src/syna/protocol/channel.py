@@ -3,8 +3,8 @@
 To prevent the model from simulating system messages, fabricating tool outputs,
 or forging compaction summaries, all system-originated messages are wrapped in
 dedicated sentinel markers from the Unicode Private Use Area (U+E000 to U+E0FF).
-Any assistant reply attempting to emit these sentinel characters—either raw or
-as unicode escape sequences—is rejected by a sanitization gate.
+Any assistant reply attempting to emit these sentinel characters, either raw or
+as unicode escape sequences, is rejected by a sanitization gate.
 """
 
 import re

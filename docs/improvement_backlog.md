@@ -43,11 +43,11 @@ Prerequisites and design notes:
 - Lifecycle: a delegate must respect the session's cancel event and step
   budget, or a cancelled turn can keep burning tokens in the background.
 
-## Configurable pod permissions (network, privileges) — study if worth it
+## Configurable pod permissions (network, privileges): study if worth it
 
 Per-session policy for what the pod may do: network egress, reachability
 of the host and engine bridge, and privilege level inside the container.
-The word "permissions" is deliberate — this is about what the sandbox
+The word "permissions" is deliberate: this is about what the sandbox
 may touch, not what the model may say.
 
 The problem, precisely: the pod currently runs as root with unrestricted
@@ -56,13 +56,13 @@ network access. The only ceilings are resource-shaped (`pod_memory_mb`,
 host-side browser, by contrast, already runs behind a full network
 policy engine (`net_guard`: private ranges blocked, hostname resolution
 checked at decision time, allowlist config, tested matrix in
-`test_net_guard.py`). The asymmetry is real and documented — the server
+`test_net_guard.py`). The asymmetry is real and documented; the server
 section of the technical description lists pod egress as an accepted
 residual risk and calls it "a separate topic". This entry is that
 separate topic.
 
-Why it is not a obvious yes: the pod's most common legitimate work —
-`pip install`, `apt-get`, `git clone`, `curl` — needs network, and much
+Why it is not a obvious yes: the pod's most common legitimate work:
+`pip install`, `apt-get`, `git clone`, `curl`, needs network, and much
 of it needs root. A permissions model that breaks package installation
 breaks the agent. The study has to answer whether the safety gain
 outweighs the workflow cost, hence "study if worth it" rather than
@@ -71,14 +71,14 @@ roadmap.
 The design space to evaluate:
 
 - **Egress modes**, coarse to fine: off / public-only (reuse
-  `net_guard`'s blocked-range matrix — it already exists, is tested, and
+  `net_guard`'s blocked-range matrix: it already exists, is tested, and
   is pod-agnostic by design) / per-destination allowlist. The reuse path
   is the cheap one: the policy engine is written against destinations,
   not against the browser.
 - **Enforcement point.** Engine-level (a custom podman network whose
   default route is blocked or NATed through a filter) is tamper-proof
   but per-session and heavier to set up; in-pod nftables is cheap but
-  the model is root and can undo it — the docs already draw the
+  the model is root and can undo it; the docs already draw the
   integrity-vs-boundary line for read-only artifacts, and the same
   reasoning applies: in-pod rules are an integrity barrier, not a
   security boundary. DNS-level filtering (block resolution of private
@@ -88,33 +88,33 @@ The design space to evaluate:
   needs root; most build work does not. A `root_required` escape hatch
   (per-call, user-approved) may be worth more than a global downgrade.
 - **Approval UX.** The `ask_user` interaction bridge is the natural
-  consent point: "Syna wants to download from pypi.org — allow?" gives
+  consent point: "Syna wants to download from pypi.org. Allow?" gives
   the user a real decision instead of a config file they set once and
   forget. Study whether per-destination prompts are annoying enough to
   defeat the feature.
 - **Denial ergonomics.** Whatever is denied must come back to the model
   as descriptive result text (the `ERROR:` convention), naming what was
-  blocked and how to ask for it — otherwise the model retries and
+  blocked and how to ask for it; otherwise the model retries and
   burns steps.
 
 Prerequisites: decide per-session vs per-category granularity before
 any code; measure whether engine-level network setup per session is
 fast enough to keep session start snappy; check what Podman rootless
 machines already isolate (the podman VM already blocks some host
-reachability — verify before building what it gives for free).
+reachability; verify before building what it gives for free).
 
-## `wait` tool (sleep, wait until a time, wait for a job) — study if worth it
+## `wait` tool (sleep, wait until a time, wait for a job): study if worth it
 
 A first-class waiting verb. Today, waiting is modeled as `sleep N`
 inside `execute_command`, which caps at the command timeout (50 s
 default, 25 in Allegro), and anything longer must become
-`nohup ... &` plus repeated polling calls — every poll costing a full
+`nohup ... &` plus repeated polling calls, every poll costing a full
 model request, a step, and a request delay. Long builds, test suites,
 downloads, and "check back at 14:00" have no first-class tool.
 
 Live-session evidence (2026-11-05, Syna's own tool experiments): she
-named native background execution her top efficiency request — the
-`nohup` + wait + `tail` pattern costs "3 calls each time" — and the same
+named native background execution her top efficiency request: the
+`nohup` + wait + `tail` pattern costs "3 calls each time", and the same
 session showed the failure side of the current model: three batches
 containing a deliberately slow call detached at the tool-call timeout,
 skipping the healthy calls behind them (three in the first batch, one in
@@ -124,12 +124,12 @@ incentive to run slow calls alone.
 
 Proposed surface, three modes:
 
-1. `wait(seconds=N)` — sleep for N seconds.
-2. `wait(until="hh:mm:ss")` — sleep until the next occurrence of that
+1. `wait(seconds=N)`: sleep for N seconds.
+2. `wait(until="hh:mm:ss")`: sleep until the next occurrence of that
    wall-clock time. The docstring must pin down which clock (pod-local
    vs UTC) and midnight wrap; the pod's clock is the model's world, so
    pod-local is the likely answer.
-3. `wait(job=...)` — block until a pod process or file condition
+3. `wait(job=...)`: block until a pod process or file condition
    completes (the handle question below).
 
 Budget model: the tool overrides `tool_call_timeout_s` and
@@ -140,7 +140,7 @@ custom timeout: `parse.py` already dispatches `ask_user` and
 tool's timeout is its own argument, capped by config". Modes 1 and 2
 pre-validate: a requested wait longer than `max_waiting_time` fails
 immediately with a descriptive error naming the cap and suggesting
-chunked waits or backgrounding — no execution, no wasted blocking. Mode
+chunked waits or backgrounding: no execution, no wasted blocking. Mode
 3 blocks until completion or `max_waiting_time`; on elapse it returns
 the observed state (process still alive, output tail so far) as a
 normal result rather than an error, so the model decides what to do
@@ -152,7 +152,7 @@ its end.** Candidates, ranked by reliability-per-complexity:
 - `tail --pid=<pid> -f /dev/null` as the blocking exec: a single
   pod-side call that exits exactly when the process dies. No host-side
   polling loop, no new session state, and the PID comes from the model
-  itself — `execute_command` output can echo `$!` of a backgrounded
+  itself: `execute_command` output can echo `$!` of a backgrounded
   job, which the prompt's `nohup` convention already teaches. This is
   the recommended v1 mechanism: one docstring sentence explains it.
 - Sentinel file: the command touches a done-file when finished; `wait`
@@ -160,12 +160,12 @@ its end.** Candidates, ranked by reliability-per-complexity:
   (remote jobs that only produce a file).
 - A session-level background-job registry (`execute_command` gains
   `background=true` and returns a handle). Most ergonomic, most
-  plumbing — only worth it if the PID convention proves flaky in
+  plumbing; only worth it if the PID convention proves flaky in
   practice.
 
 **Open question 2 (blocking): should it run "in parallel"?** The
-fire-and-forget UX — "the command is running, go do whatever you need
-in the meantime, you'll get a response when it finishes" — collides
+fire-and-forget UX: "the command is running, go do whatever you need
+in the meantime, you'll get a response when it finishes", collides
 with the closed tool-call group invariant: every `tool_call_id` must
 receive a result before the next model request, so a tool cannot
 "finish later". The honest options, in order of cost:
@@ -176,7 +176,7 @@ receive a result before the next model request, so a tool cannot
 - **Return-immediately status**: the tool returns "job N is running;
   continue working and re-check later", and the model polls with short
   waits. Nearly free to build today, but it reintroduces the polling
-  steps this tool exists to remove — measure whether it is a feature
+  steps this tool exists to remove; measure whether it is a feature
   or a regression.
 - **True async callback** (completion arrives as a harness notice via
   the queued-message injection checkpoint): the real version of the
@@ -185,7 +185,7 @@ receive a result before the next model request, so a tool cannot
   the first two options shows up in practice (the Worlds benchmark's
   long jobs are the natural measurement ground).
 
-Fit notes: Allegro should not halve waiting budgets — the wait length
+Fit notes: Allegro should not halve waiting budgets: the wait length
 is user/model intent, not a speed knob to tune. The study should start
 by instrumenting how often real sessions do sleep-and-poll today; if
 the answer is "rarely", the tool is a nice-to-have, not a need.
@@ -198,8 +198,8 @@ shaped). Proposed surface: a `python` tool with an optional `session_id`,
 or a persistent REPL process managed per pod.
 
 Evidence: a live session (2026-11-05, Syna's own experiments) ranked this
-her #2 request after edit feedback. Her data-analysis scenario — install
-into a venv, load a CSV, clean and group, plot — re-imports, re-reads,
+her #2 request after edit feedback. Her data-analysis scenario, install
+into a venv, load a CSV, clean and group, plot, re-imports, re-reads,
 and re-computes every intermediate state on each call because each
 `python3` invocation is a cold process; on top of the token cost, every
 step re-pays interpreter and import startup. The same session also
@@ -208,7 +208,7 @@ of setup before any real work) and the >25 s ceiling pushing analysis
 scripts into `nohup` + log + `tail`.
 
 Why backlog: the pod is per-session already, so the scoping question is
-small (one interpreter per pod), but the surface is not — process
+small (one interpreter per pod), but the surface is not: process
 lifecycle across detached tool workers, memory growth over a long
 session, state visible to `execute_command` (the model must be able to
 inspect and clean up the interpreter), and interaction with the
@@ -227,22 +227,22 @@ wrong about small text and exact numbers, or 2-3 setup calls to install
 
 Evidence: a live session (2026-11-05) tested `describe_image` against a
 PIL-rendered image with two short lines and it lost a decimal point
-(`1234.56` read as `123456`) — exactly the numeric-transcription failure
+(`1234.56` read as `123456`), exactly the numeric-transcription failure
 the docstring warns about, on an easy image (crisp, 400x120, high
 contrast). Scanned legal or financial documents are strictly harder.
 
 Why backlog: real OCR needs `tesseract` (or similar) inside the pod,
 which means a custom image or per-session apt installs (slow, network-
 dependent, re-paid every session), and tesseract's own quality on
-tables/layouts is mediocre — the improvement over a zoomed-crop
+tables/layouts is mediocre; the improvement over a zoomed-crop
 `describe_image` pass must be measured, not assumed. The crop guidance
 already in the `describe_image` docstring is the cheap mitigation;
 build the tool only if crop-then-describe still fails in practice.
 
 ## `web_search` filters (recency, domain)
 
-Optional parameters on `search` — a recency window (e.g. `recency="month"`)
-and a domain restriction (`site=`) — mapped to the engine endpoints that
+Optional parameters on `search`: a recency window (e.g. `recency="month"`)
+and a domain restriction (`site=`), mapped to the engine endpoints that
 support them (DuckDuckGo html accepts a `df` parameter; Bing has `qft`
 filters), ignored by engines that do not.
 
@@ -258,7 +258,7 @@ as fresh). Instrument real sessions first: if queries about current
 facts are rare, the browser `visit` path plus a query word ("2026") is
 an adequate substitute.
 
-## Allegro (the Turbo switch) — implemented
+## Allegro (the Turbo switch): implemented
 
 Originally researched as a "Turbo switch": a client-side toggle that
 appends one rule to the end of the system prompt, nudging the agent
@@ -283,7 +283,7 @@ Mechanism as built:
   invalidation per real mode change, none for a no-op toggle.
 - The mode also runs a lighter runtime profile, applied with the same
   turn-start swap: thinking effort becomes the faster of (user setting,
-  low; OpenRouter only — custom endpoints and faster settings win), the
+  low; OpenRouter only: custom endpoints and faster settings win), the
   per-request pause halves (2s → 1s), the step budget halves with its
   wrap-up warning clamped along, and command/tool-call timeouts halve
   through a thread-local scale that lives exactly one turn on the

@@ -98,7 +98,7 @@ def allegro_thinking_effort(base: str | None) -> str | None:
 
     Allegro wants 'low', but never at the cost of slowness or breakage:
     a user who set none/minimal keeps it (those are faster), and custom
-    endpoints with no explicit effort keep None — the reasoning object
+    endpoints with no explicit effort keep None: the reasoning object
     must not be injected where the user never opted into it. The choice
     only applies on OpenRouter.
     """
@@ -119,8 +119,8 @@ def load_thinking_effort():
 
     The default applies on OpenRouter only. The OpenRouter-style
     `reasoning` object is forwarded verbatim to custom BASE_URLs, and
-    strict OpenAI-compatible endpoints reject it as an unknown parameter
-    — it would break endpoints that work without the field — so an unset
+    strict OpenAI-compatible endpoints reject it as an unknown parameter,
+    it would break endpoints that work without the field, so an unset
     value omits it there. An explicit THINKING_EFFORT is always sent (the
     user opted in), and non-reasoning models ignore the field.
     """
@@ -170,7 +170,7 @@ def build_prompt(allegro: bool = False):
     (get_tool_definitions); it is deliberately not duplicated here.
     With allegro, the speed-priority rule is appended under its own
     `## Allegro mode` h2 section, and the command timeout is reported
-    halved — the same value the enforcement layer uses while the
+    halved, the same value the enforcement layer uses while the
     Allegro scale is active.
     """
     prompt = read_asset_text("prompt.md")
@@ -428,8 +428,8 @@ class AgentSession:
 
         Called from the web worker when the user presses "Send now" on a
         queued message while a turn is running. The message is appended
-        to history at the next request boundary — after the running tool
-        batch is atomic and its results are in — so the model receives it
+        to history at the next request boundary, after the running tool
+        batch is atomic and its results are in, so the model receives it
         before it can send anything else. Never interrupts a turn.
         """
         with self._injection_lock:
@@ -560,8 +560,8 @@ class AgentSession:
         """The conversation snapshot the work reviewer receives.
 
         The pending review_work call is filtered out of the trailing
-        assistant message — the reviewer should judge the task's results
-        and methodology, not the review request itself — while its
+        assistant message, the reviewer should judge the task's results
+        and methodology, not the review request itself, while its
         sibling calls in the same batch (think notes, other tools) stay
         in the snapshot. The message disappears entirely only when the
         review call was its sole content.
@@ -718,9 +718,6 @@ class AgentSession:
                     )
                 self._requests_since_elide += 1
                 self._compact_history_if_needed()
-                # A "Send now" message from the queue lands here: after the
-                # previous batch's results are in history, before the next
-                # model request, so the model cannot act again without it.
                 self.apply_injections()
                 self._emit({"type": "status", "text": "Thinking..."})
                 response_msg = ask_question(
@@ -890,9 +887,9 @@ class AgentSession:
     def _elide_old_outputs(self, history, total_tokens, logger) -> int:
         """Elide saved tool outputs and archived user messages once history passes its interval.
 
-        Elision runs when the message count reaches `elide_interval_messages`
-        — keeping prompts small throughout a long run without waiting for the
-        token budget — and whenever the budget is exceeded regardless of
+        Elision runs when the message count reaches `elide_interval_messages`,
+        keeping prompts small throughout a long run without waiting for the
+        token budget, and whenever the budget is exceeded regardless of
         count. To keep the provider prompt cache warm, the rewrite itself is
         batched: outside the budget-exceeded path it only runs every
         `elide_every_requests` requests. Every output still becomes a pointer
@@ -943,7 +940,7 @@ class AgentSession:
     def _compact_history_if_needed(self):
         """Keep history within budget: elide old outputs, then summarize.
 
-        Eliding is lossless — elided outputs remain readable in the pod at
+        Eliding is lossless: elided outputs remain readable in the pod at
         their saved_to paths. It runs on a batched message-count interval so
         prompts stay small throughout a long run without rewriting history
         before every request, and additionally whenever the token budget is

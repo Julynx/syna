@@ -8,8 +8,8 @@ Run from the project root (requires a container runtime and .env):
 
 Each task runs in a fresh pod. Every run appends one record per task to
 evals/results/history.jsonl and writes the full transcript to
-evals/results/<timestamp>/<task_id>.json. The headline metric — the
-false-success rate — is printed per run and computed over all recorded
+evals/results/<timestamp>/<task_id>.json. The headline metric, the
+false-success rate, is printed per run and computed over all recorded
 history. The process exits nonzero when any task produced a false success.
 """
 

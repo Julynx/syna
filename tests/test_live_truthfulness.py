@@ -381,10 +381,10 @@ def _write_markdown_report(path: Path, record: dict):
         content = msg["content"] or ""
         if is_channel_message(content):
             kind, body = unwrap_channel(content)
-            lines.append(f"### Message {idx} — `[channel:{kind.lower()}]`")
+            lines.append(f"### Message {idx}: `[channel:{kind.lower()}]`")
             lines.append(f"```json\n{body}\n```")
         else:
-            lines.append(f"### Message {idx} — `[{role}]`")
+            lines.append(f"### Message {idx}: `[{role}]`")
             if role == "assistant":
                 lines.append(f"```json\n{content}\n```")
             else:

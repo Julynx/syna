@@ -1,7 +1,7 @@
 """Network policy for the agent's browser: public internet only.
 
-The browser runs on the host, so every request it makes — agent-driven
-navigation or a page's own fetches — originates from the host's network.
+The browser runs on the host, so every request it makes, agent-driven
+navigation or a page's own fetches, originates from the host's network.
 This module decides whether a destination is reachable under the policy:
 public internet targets only. Loopback, private, link-local (including
 the cloud metadata service), and other non-routable ranges are blocked.
@@ -10,7 +10,7 @@ Hostname checks resolve DNS at decision time (with a short-lived cache)
 so names that currently resolve into those ranges are caught. That closes
 casual rebinding; a determined rebinder can still race the browser's own
 second resolution, which is why the Syna server independently validates
-the Host header, Origin, and a per-process token — the browser guard is
+the Host header, Origin, and a per-process token; the browser guard is
 one layer, not the whole defense. Resolution failures allow the request
 through: there is no reachable target, and the browser surfaces the
 connection error it would show anyway.
@@ -121,10 +121,6 @@ def _parse_literal_ip(host: str):
         return None
     labels = host.split(".")
     if 2 <= len(labels) <= 4:
-        # WHATWG URL IPv4 parsing (what the browser actually does):
-        # radix-prefixed labels, every label but the last is a single
-        # octet, and the last label of a shortened form carries all
-        # remaining bits (24-bit for a.b, 16-bit for a.b.c).
         values = []
         for label in labels:
             try:
@@ -158,7 +154,6 @@ def _resolve(host: str) -> list:
     try:
         answers = socket.getaddrinfo(host, None)
         ips = [ipaddress.ip_address(answer[4][0]) for answer in answers]
-        # Deduplicate, preserving order.
         ips = list(dict.fromkeys(ips))
     except OSError:
         ips = []

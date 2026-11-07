@@ -1,6 +1,6 @@
 """End-to-end simulated task: a scripted multi-turn conversation driving the
-full session loop — batched calls, stop-on-failure, persistence, elision,
-budget nudges, think notes — without a live model or container."""
+full session loop, batched calls, stop-on-failure, persistence, elision,
+budget nudges, think notes, without a live model or container."""
 
 import json
 import sys

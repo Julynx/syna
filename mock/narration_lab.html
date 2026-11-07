@@ -168,12 +168,12 @@
 
     <div class="controls">
       <button data-fixture="0">
-        Load test 1 — the real failed reply (ES news)
+        Load test 1: the real failed reply (ES news)
       </button>
       <button data-fixture="1">
-        Load test 2 — tech report (EN, code/LaTeX/links)
+        Load test 2: tech report (EN, code/LaTeX/links)
       </button>
-      <button data-fixture="2">Load test 3 — pathological (ES/EN mixed)</button>
+      <button data-fixture="2">Load test 3: pathological (ES/EN mixed)</button>
     </div>
     <textarea
       id="input"
@@ -194,7 +194,7 @@
       <input
         id="token"
         size="38"
-        placeholder="Token (optional — auto-read from the server)"
+        placeholder="Token (optional, auto-read from the server)"
       />
       <label
         >reveal timeout
@@ -240,7 +240,7 @@
     <script>
       "use strict";
 
-      /* Mirrors webui/js/voice.js speakableText — keep both in sync. */
+      /* Mirrors webui/js/voice.js speakableText; keep both in sync. */
       function speakableText(markdown) {
         return markdown
           .replace(/```[\s\S]*?```/g, " ")
@@ -353,7 +353,7 @@
             "</td><td>" +
             chunk.length +
             "</td>" +
-            '<td class="status-queued">queued</td><td>—</td>' +
+            '<td class="status-queued">queued</td><td>.</td>' +
             '<td class="preview"></td>';
           row.querySelector(".preview").textContent = preview(chunk);
           chunkBody.appendChild(row);

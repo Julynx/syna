@@ -291,7 +291,7 @@ function addBubble(content, side) {
 }
 
 /* Images from the pod render inline through the session's image endpoint;
-   remote URLs are never fetched automatically — a page could otherwise
+   remote URLs are never fetched automatically: a page could otherwise
    make Syna embed an image whose URL exfiltrates data. They become links. */
 function applyImagePolicy(bubble) {
   bubble.querySelectorAll("img").forEach((img) => {
@@ -988,7 +988,7 @@ function buildAskPanel(ask) {
   const other = document.createElement("button");
   other.type = "button";
   other.className = "ask-choice other";
-  other.textContent = "Other — type your own response";
+  other.textContent = "Other: Type your own response";
   other.addEventListener("click", () => {
     Sfx.play("click");
     dismissAskPanel();
@@ -1143,7 +1143,7 @@ function sendNow(id, btn) {
 }
 
 /* While Syna waits for an answer, a "Send now" delivery can only happen
-   after the question is resolved — disable the buttons so that shows. */
+   after the question is resolved; disable the buttons so that shows. */
 function setQueueSendDisabled(disabled) {
   if (!queueDock) return;
   queueDock.querySelectorAll(".queue-send").forEach((btn) => {
@@ -1218,7 +1218,7 @@ function finishToolRow(event) {
 
 /* The harness never lets the model see a result while a call is still
    running, so any tool row still marked running when the model speaks or
-   the turn ends is stale — e.g. its finished event was delivered to
+   the turn ends is stale; e.g. its finished event was delivered to
    another open window. Settle it so its animation cannot run forever. */
 function finishStaleToolRows() {
   const stale = document.querySelectorAll(".tool-row.running");

@@ -1,4 +1,4 @@
-"""THE LEAGUE OF LEGENDS WORLDS BENCHMARK — not a regular test.
+"""THE LEAGUE OF LEGENDS WORLDS BENCHMARK, not a regular test.
 
 This is an expensive, long-horizon probe (typically 30-45 minutes and
 hundreds of model steps). It is deliberately NOT wired into any test
@@ -39,16 +39,16 @@ advised.
 The watchdog is soft: at the budget the agent is asked to interrupt at
 its next pause, so a run can overshoot slightly if a model call or a
 long tool is still in flight. A run also ends early whenever the model
-responds, gives up, or a fatal error halts the turn — none of these is
+responds, gives up, or a fatal error halts the turn; none of these is
 guaranteed to be a "finished" task.
 
 Outputs land in evals/results/worlds_<timestamp>/:
 
-- transcript.json — meta (model, duration, steps, tool-call count,
+- transcript.json: meta (model, duration, steps, tool-call count,
   outcome), the full message history, and every event.
-- shared/ — every file the agent delivered via share_file, pulled out
+- shared/: every file the agent delivered via share_file, pulled out
   of the pod (the expected deliverable is a PDF).
-- syna-run.log — the slice of the project log file written during this
+- syna-run.log: the slice of the project log file written during this
   run.
 """
 

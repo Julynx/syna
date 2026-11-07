@@ -769,7 +769,7 @@ footer {
   margin-top: 0;
 }
 
-/* Mobile install command — must come after the base .install-cmd rule
+/* Mobile install command: must come after the base .install-cmd rule
    so the overrides win the cascade. */
 @media (max-width: 768px) {
   .install-cmd {

@@ -2,8 +2,8 @@
 
 Installed from PyPI, Syna has no project folder: read-only assets ship
 inside the package (`src/syna/assets/`) and are loaded through
-`importlib.resources`; everything the user writes — `.env`,
-`config.json`, logs, session dumps — lives in the Syna data home
+`importlib.resources`; everything the user writes, `.env`,
+`config.json`, logs, session dumps, lives in the Syna data home
 (`~/.syna`, overridable with `SYNA_HOME` for tests and isolation).
 
 Inside a repository checkout the repo root is used as the data home

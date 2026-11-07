@@ -37,7 +37,7 @@ const Voice = (() => {
   /* Hands-free mode (settings, Voice): after a reply reaches the chat,
      start listening again. A reply that will be narrated arms the
      auto-listen when its text is revealed, and the mic opens when the
-     narration drains — never while Syna is still speaking, or the
+     narration drains; never while Syna is still speaking, or the
      microphone would record her own voice. The flag is server config
      (continuous_conversation): it changes through the settings GUI and
      takes effect on Save and Restart. */
@@ -204,7 +204,7 @@ const Voice = (() => {
      after one long synthesis. The response text stays hidden behind the
      "Tuning up, please wait..." pill until the first of: the first
      chunk's audio arriving (playback starts), the first chunk failing,
-     or the reveal timeout elapsing — at which point in-flight synthesis
+     or the reveal timeout elapsing; at which point in-flight synthesis
      is aborted and dropped. A chunk that errors, is refused by the
      model, or fails to decode is skipped with an event row while the
      rest of the narration continues. */

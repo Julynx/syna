@@ -7,7 +7,7 @@ The parser decodes and validates arguments before executing.
 Execution is sequential. The first failing call (argument error, raised
 exception, timeout, or non-zero command exit) stops the batch; the remaining
 calls are reported as "skipped". Every call receives a result labeled with its
-position, tool_call_id, tool name, status, and — when available — exit code and
+position, tool_call_id, tool name, status, and, when available, exit code and
 the pod path (/tool_outputs/) holding the full output.
 
 Timeouts are terminal, never detours: each call runs in a worker thread only
@@ -231,7 +231,7 @@ def call_deadline_s(tool_name: str, tool_timeout_s: float | None) -> float | Non
     and retry policy, so neither gets a harness deadline. web_search and
     browser enforce their own phase budgets (browser launch cap, search
     or command budget); their deadlines are each tool's own worst-case
-    composition — a bug guard that only fires when the tool's internal
+    composition: a bug guard that only fires when the tool's internal
     enforcement has failed, never the routine limit.
     """
     if tool_name in ("ask_user", REVIEW_TOOL_NAME):
@@ -315,8 +315,8 @@ def execute_tool_with_timeout(
     the harness sets the call's cancel event and waits up to the
     configured stop grace for the worker to exit:
 
-    - A worker that exits within the grace delivers its real outcome —
-      a late completion is a result, a failure is an error — except a
+    - A worker that exits within the grace delivers its real outcome:
+      a late completion is a result, a failure is an error, except a
       `ToolCancelled` exception, which the harness reports as the
       deadline notice.
     - A worker still running after the grace is detached with the
@@ -324,7 +324,7 @@ def execute_tool_with_timeout(
       running and holding its locks. This is an anomaly, not the normal
       timeout.
 
-    A None timeout waits indefinitely — used by ask_user, which must
+    A None timeout waits indefinitely; used by ask_user, which must
     outlive any configured budget and block until the user answers, and
     by review_work, whose reviewer request is bounded by the model
     client's own timeout and retry policy.
@@ -420,7 +420,10 @@ def _persist_tool_output(
 
     Uses the calling thread's container when one is bound (web sessions);
     with `persist_outputs` (CLI sessions) it falls back to the shared pod.
-    The saved path is what the model sees as `saved_to`.
+    The saved path is what the model sees as `saved_to`. Output is
+    written as bytes, not with `write_text`: text mode would
+    translate line feeds to carriage-return pairs on Windows and
+    corrupt the saved copy.
     """
     container = get_registered_container()
     if container is None and persist_outputs:
@@ -432,8 +435,6 @@ def _persist_tool_output(
         file_name = PurePosixPath(saved_to).name
         with tempfile.TemporaryDirectory(prefix="syna-persist-") as temp_dir:
             host_file = Path(temp_dir, file_name)
-            # Bytes, not write_text: text mode translates \n to \r\n on
-            # Windows, which would corrupt the saved output.
             host_file.write_bytes(output_text.encode("utf-8", errors="replace"))
             container.copy_to(str(host_file), "/tool_outputs")
         try:

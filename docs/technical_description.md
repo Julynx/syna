@@ -1,4 +1,4 @@
-# Syna — Technical Description
+# Syna: Technical Description
 
 This document is the complete map of how Syna works, organized by topic
 rather than by source file. Chapters 1–4 cover operations, configuration,
@@ -32,7 +32,7 @@ Syna is a terminal and web AI agent that answers user requests by driving an
 LLM (through OpenRouter) in a native tool-calling loop. Tool schemas are
 generated dynamically from `tools.py` function signatures and docstrings.
 When the model invokes tools, the agent executes the requested calls
-sequentially — the first failing call stops the batch and remaining calls are
+sequentially; the first failing call stops the batch and remaining calls are
 reported as `skipped` so that every `tool_call_id` receives a corresponding
 result message. When the model emits no tool calls, its plain text response is
 delivered to the user as the final answer.
@@ -54,14 +54,14 @@ create files with full root access.
 ## 2. Running and operations
 
 - Web server & UI: `syna` (entry point `syna.server:main`, aliases: `syna-agent`,
-  `syna-server`) — FastAPI + WebSocket chat UI served from the bundled `chat.html`.
+  `syna-server`): FastAPI + WebSocket chat UI served from the bundled `chat.html`.
   Automatically opens the first-run setup wizard if setup is incomplete.
-- CLI: `syna-cli` (entry point `syna:main`) — interactive prompt `(Ask Syna):`,
+- CLI: `syna-cli` (entry point `syna:main`): interactive prompt `(Ask Syna):`,
   supports slash commands. Exits cleanly with guidance if configuration is missing.
-- Setup wizard: `syna-setup` (entry point `syna.setup:main`) — starts the
+- Setup wizard: `syna-setup` (entry point `syna.setup:main`): starts the
   web server and opens the first-run wizard at `/setup`.
 - Web UI sources live in `webui/` (see below); after editing them, regenerate
-  the UIs with `python scripts/build.py` — `src/syna/assets/chat.html` and
+  the UIs with `python scripts/build.py`: `src/syna/assets/chat.html` and
   `src/syna/assets/setup.html` are generated files and
   must not be edited directly.
 - CI (`.github/workflows/tests.yml`): every push and pull request runs the
@@ -85,14 +85,14 @@ workflows keep working unchanged.
 
 ### Dependencies
 
-- `openrouter` — model client with configurable timeout/retry.
-- `python-dotenv` — loads `OPENROUTER_API_KEY` and model settings from `.env`.
-- `httpx` — OpenRouter audio endpoints (speech transcription and synthesis).
-- `bollard` — Docker/Podman container client used for the sandbox.
-- `playwright`, `camoufox` — browser-based web search and the persistent
+- `openrouter`: model client with configurable timeout/retry.
+- `python-dotenv`: loads `OPENROUTER_API_KEY` and model settings from `.env`.
+- `httpx`: OpenRouter audio endpoints (speech transcription and synthesis).
+- `bollard`: Docker/Podman container client used for the sandbox.
+- `playwright`, `camoufox`: browser-based web search and the persistent
   stealth browser session.
-- `pillow` — image downscaling for the vision pipeline.
-- `fastapi`, `uvicorn`, `python-multipart` — web server and uploads.
+- `pillow`: image downscaling for the vision pipeline.
+- `fastapi`, `uvicorn`, `python-multipart`: web server and uploads.
 
 ### `src/syna/paths.py`
 
@@ -158,7 +158,7 @@ from the canonical constants in `config.py`.
 | `max_command_output_chars`          | Character limit at which tool output is cut to its beginning and end (the system prompt's `{{OUTPUT_LIMIT}}`). The full output always remains available at the `saved_to` path.                                                                                               |
 | `tool_call_timeout_s`               | Per-tool-call deadline (default 60). At the deadline the harness asks the call to stop through its cancel event and waits `max_cancel_wait_s` for it to exit; a call that ignores the stop is detached with a hung-call notice. See `parse.py`.                                                                                                |
 | `web_search_timeout_s`              | Budget for one web search's engine chain (default 60, not Allegro-scaled). Enforced cooperatively: each navigation's timeout is capped by what remains of the budget, so expiry stops the chain within that navigation.                                                                                                                       |
-| `browser_launch_timeout_s`          | Budget for waiting on a stealth browser's cold start — the search browser and the tool browser alike (default 120, not Allegro-scaled): a cold start is startup, not tool work. The constructor runs in a helper thread, so an expired budget abandons the wait, not the launch — the helper keeps starting the browser for the next call.                                                                                                                  |
+| `browser_launch_timeout_s`          | Budget for waiting on a stealth browser's cold start, the search browser and the tool browser alike (default 120, not Allegro-scaled): a cold start is startup, not tool work. The constructor runs in a helper thread, so an expired budget abandons the wait, not the launch; the helper keeps starting the browser for the next call.                                                                                                                  |
 | `browser_command_timeout_s`         | Aggregate budget for one `browser` tool command (default 90, not Allegro-scaled): the command runs on the browser's loop raced against the harness's stop event, is cancelled when either limit arrives, and its session is discarded (reset-on-cancel) so the next call starts clean.                                                                                                                           |
 | `max_cancel_wait_s`                 | Stop grace after a call's deadline (default 10): how long the harness waits for a stopped worker to exit before detaching from it.                                                                                                                                                                                                            |
 | `command_timeout_s`                 | Per-`execute_command` timeout (default 50, kept below `tool_call_timeout_s`). The command is wrapped in `timeout -k 5` inside the pod so hangs are killed inside the pod, before the harness deadline; long-running work belongs in background jobs (`nohup ... &`), as the system prompt documents.                                          |
@@ -200,7 +200,7 @@ example a recalibrated `max_history_messages`) must be applied by hand to
 Static assets are bundled in `src/syna/assets/`: `prompt.md` (system prompt template
 with the `{{CURRENT_DATE}}`, `{{COMMAND_TIMEOUT}}` and `{{OUTPUT_LIMIT}}`
 placeholders filled at build time; tool documentation is not duplicated
-into the prompt — the request's tool schemas carry it), `verifier_prompt.md` (system prompt for the isolated
+into the prompt; the request's tool schemas carry it), `verifier_prompt.md` (system prompt for the isolated
 `review_work` reviewer), `compaction_prompt.md`, `chat.html` and `setup.html`
 (web UIs), and `vendor/` (markdown-it, KaTeX, fonts, icons, logo).
 
@@ -212,8 +212,8 @@ are easy to justify and nobody dares remove them. Before adding anything,
 apply three tests: does the model have to know this? Will it matter over
 50% of the time across a multitude of tasks? Can the model learn it
 reliably from the tool's own output or trial and error? If a tool's output
-already carries the information at the moment it matters — a note, an
-error message, a ref — the description does not need it. Overspecific
+already carries the information at the moment it matters, a note, an
+error message, a ref, the description does not need it. Overspecific
 examples and under-the-hood behavior notes belong here in the technical
 description, not in the prompt or docstrings; those carry only the
 contract the model must know up front: parameters, units, and
@@ -222,7 +222,7 @@ non-obvious constraints that output cannot teach.
 ### `src/syna/config.py`
 
 Configuration and logging: `load_config()` (reads `assets/config.json` and
-merges the bundled defaults under the user's file recursively — user
+merges the bundled defaults under the user's file recursively; user
 values win, and keys an older install's file lacks appear with their
 default values, so new required keys added in an upgrade no longer crash
 direct-indexing callers), `get_logger()` (file logger),
@@ -246,13 +246,13 @@ import cycles.
 - Foundation (package root): `config.py`, `paths.py`, `state.py`,
   `interaction.py`, `ask_utils.py`, plus the entry points
   (`__init__.py`, `__main__.py`, `server.py`, `setup.py`).
-- `syna.protocol` — conversation wire format: channel sentinels, output
+- `syna.protocol`: conversation wire format: channel sentinels, output
   bounding, context management, compaction, user-message archives,
   tool-call parsing, and schema generation.
-- `syna.capabilities` — what the agent can do: the tool registry plus
+- `syna.capabilities`: what the agent can do: the tool registry plus
   browser, web search, editing, vision, imaging, image generation,
   speech, and verification tools.
-- `syna.conversation` — the agent loop: session orchestration and the
+- `syna.conversation`: the agent loop: session orchestration and the
   interactive CLI with its slash commands.
 
 Every module and the chapter that describes it:
@@ -307,7 +307,7 @@ Global Docker client plus per-thread container registry and per-call context.
   `pod_pids_limit`) protect the host from runaway work inside the pod
   without restricting what the model may do there.
 - Self-heal: a connection-level failure from `run_container` (dead pipe,
-  closed socket — the engine quit or the host slept mid-session) triggers
+  closed socket; the engine quit or the host slept mid-session) triggers
   one client reset (`_reset_dead_client`, also the body of
   `close_docker_client`) and re-init through bollard's discovery, then a
   single retry; other errors propagate unchanged. The heal covers
@@ -322,7 +322,7 @@ Global Docker client plus per-thread container registry and per-call context.
   and `set_cancel_event` / `get_cancel_event` carry the event the harness
   sets when the call passes its deadline (a tool that honors it stops
   promptly and raises `ToolCancelled`).
-- `next_call_index()` — monotonically increasing counter used for the
+- `next_call_index()`: monotonically increasing counter used for the
   zero-padded `/tool_outputs/NNNN_tool.txt` file names.
 - `init_docker_client` / `close_docker_client` manage the global client
   lifecycle; `reset_shared_container` destroys the shared pod so the next
@@ -364,7 +364,7 @@ Global Docker client plus per-thread container registry and per-call context.
   with a follow-up `execute_command` since they run as real processes inside
   the pod; the browser tool answers a mid-flight cancellation by discarding
   its shared session instead). A pending `ask_user` question
-  blocks both the tool worker and the turn thread indefinitely — by design —
+  blocks both the tool worker and the turn thread indefinitely, by design,
   until the user answers or stop/new-chat/teardown releases the pending
   question with a cancellation sentinel. "Send now" crosses threads in the
   other direction: the WebSocket handler thread moves the item out of the
@@ -381,14 +381,14 @@ in three parts:
 1. **Routing keys per endpoint family** (`config.sticky_routing_fields`):
    OpenRouter requests carry a top-level `session_id` (the session's
    client id), which activates provider sticky routing from the first
-   request — every request of a conversation lands on the provider
+   request: every request of a conversation lands on the provider
    holding the warm cache. OpenAI endpoints carry `prompt_cache_key`,
    the documented equivalent. Other custom `BASE_URL`s carry neither
    field: strict OpenAI-compatible servers reject unknown top-level
    fields with a 400 (the same failure mode the ungated `reasoning`
    object had), and they still benefit from automatic prefix caching.
 2. **Prefix stability**: provider caches match the request prefix byte
-   for byte, so the common path is strictly append-only — pinned by
+   for byte, so the common path is strictly append-only, pinned by
    `test_request_prefix_is_stable_across_steps`. The documented
    invalidation events are the deliberate ones: batched elision passes
    (every `elide_every_requests` requests), compaction, and the
@@ -436,16 +436,16 @@ and end of long output with an explicit omission marker pointing at the
 ### `src/syna/protocol/context.py`
 
 Token estimation and elision for context management:
-`estimate_tokens` / `estimate_history_tokens` — a script-aware heuristic
+`estimate_tokens` / `estimate_history_tokens`: a script-aware heuristic
 (about 1.5 characters per token for CJK scripts and fullwidth forms, 4
 for everything else; measured against the o200k tokenizer it tracks real
 counts within about 6% on Chinese, Japanese, and Korean samples, where a
 single global ratio would underestimate CJK-heavy text by roughly 2.5x;
 deliberately no tokenizer dependency),
-`elide_tool_outputs` — replaces old result
+`elide_tool_outputs`: replaces old result
 outputs that carry a `saved_to` path with a one-line pointer to the pod
 file, leaving the system message, the most recent messages, and anything
-unrecoverable untouched — and `elide_archived_user_messages`, which
+unrecoverable untouched, and `elide_archived_user_messages`, which
 replaces old archived user messages (marked by `user_messages.py`, and
 only when the marker carries the session's archive id) with
 a head excerpt of `elide_user_message_head_chars` characters plus a
@@ -471,11 +471,11 @@ message is at least `user_message_archive_min_chars` long,
 `archive_user_message(text, container, seq)` writes it to
 `<user_messages_dest>/NNNNNN.txt` (host temp file → `copy_to`, written
 as bytes so text-mode newline translation cannot corrupt the verbatim
-copy, then `chmod 444` — the model has root, this is an integrity
+copy, then `chmod 444`; the model has root, this is an integrity
 barrier, not a security boundary) and the history copy is annotated with
 the archive path via `USER_MESSAGE_MARKER_TEMPLATE`; the marker carries
 a per-session random archive id (generated in `session.py`), and
-`ARCHIVE_MARKER_PATTERN` is what `context.py` elides against — a marker
+`ARCHIVE_MARKER_PATTERN` is what `context.py` elides against: a marker
 with a foreign id is a quotation, not an archive, and is left alone. Any
 failure is logged and returns None so a broken archive never blocks the
 turn.
@@ -484,17 +484,17 @@ turn.
 
 Tool-call parsing and execution under native OpenRouter tool calling.
 
-- `build_signature(tool_name, tool_arguments)` — one-line python-like
+- `build_signature(tool_name, tool_arguments)`: one-line python-like
   rendering of a call.
-- `load_tool_call_timeout()` — configured `tool_call_timeout_s` (default 60).
-- `_unpack_tool_call(raw_call)` — extracts call ID, tool name, decodes JSON
+- `load_tool_call_timeout()`: configured `tool_call_timeout_s` (default 60).
+- `_unpack_tool_call(raw_call)`: extracts call ID, tool name, decodes JSON
   arguments string or dict, and reports argument decoding errors. When a
   strict parse fails, a repair pass retires the double-escaped-quote
   serialization some models emit (`\\"` where `\"` belongs, observed with
   GLM Flash): it only fires on an already-failing payload, logs when it
   repairs, and unrepairable errors quote the raw arguments around the
   failure position so self-correction is one-shot.
-- `ParseOutcome(structural_error, outputs, warnings, think_signatures)` — returns
+- `ParseOutcome(structural_error, outputs, warnings, think_signatures)`: returns
   `outputs` carrying one entry per processed call in reply order, including
   skipped calls; entries for calls that never reached dispatch carry `"error": True`
   and `"status": "error"` (or `"skipped"`). Executed entries carry `"call"`
@@ -511,7 +511,7 @@ Tool-call parsing and execution under native OpenRouter tool calling.
   directory" errors with exit code 1, while other Docker errors propagate
   unchanged.
 - `execute_tool_with_timeout(tool_name, tool_arguments, timeout_s,
-output_path)` — runs the tool in a daemon worker thread, propagating the
+output_path)`: runs the tool in a daemon worker thread, propagating the
   calling thread's registered container, question responder, conversation-log
   provider (`review_work`'s reviewer snapshot), the call's output path, and
   the call's cancel event into the worker (all thread-locals), and reports
@@ -521,38 +521,38 @@ output_path)` — runs the tool in a daemon worker thread, propagating the
   deadline the harness sets the cancel event and waits up to
   `max_cancel_wait_s` for the worker to exit; a worker that exits within the
   grace delivers its real outcome (a late completion is a result, a failure
-  is an error, and a `ToolCancelled` exception becomes the deadline notice —
+  is an error, and a `ToolCancelled` exception becomes the deadline notice:
   "stopped after N seconds, nothing is running in the background"), while a
   worker that ignores the stop request is detached with the hung-call notice
-  ("may still be running in the background") — an anomaly, not the normal
+  ("may still be running in the background"), an anomaly, not the normal
   timeout. For `execute_command` the hung notice additionally names the
   command runtime the tool itself enforces (`command_runtime_limit_s`), so a
   hung call is understood as the container call having stopped responding.
   `ask_user` and `review_work` are dispatched with a `None` deadline so a
   pending question never expires, and the reviewer request is bounded by the
   model client's own timeout/retry policy instead.
-- `call_deadline_s(tool_name, tool_timeout_s)` — the per-call deadline:
+- `call_deadline_s(tool_name, tool_timeout_s)`; the per-call deadline:
   `tool_call_timeout_s` for regular tools (subject to the thread's Allegro
   scale), `None` for `ask_user`/`review_work`, and for the self-timed tools
-  their own worst-case composition — `web_search.search_deadline_s()` (the
+  their own worst-case composition: `web_search.search_deadline_s()` (the
   pacing lock's wait cap for any searches queued ahead of it plus the
   searcher's own budget and slack) and `browser.browser_deadline_s()` (the
-  launch budget plus the command budget and slack) — bug guards that only
+  launch budget plus the command budget and slack), bug guards that only
   fire when the tool's internal enforcement has failed, never the routine
   limit.
-- `_persist_tool_output(output_text, saved_to, persist_outputs)` — saves
+- `_persist_tool_output(output_text, saved_to, persist_outputs)`: saves
   host-side tool output (web tools, file tools, ...) into the pod at
   `/tool_outputs/` via `copy_to` and chmods the file read-only;
   `execute_command` writes its own file
   pod-side instead. Web sessions persist through the thread's bound
   container; CLI sessions opt in via `persist_outputs` and use the shared
   pod. When no container can be used (unit tests, persistence errors) the
-  output is still delivered — only the `saved_to` attribute is dropped.
+  output is still delivered; only the `saved_to` attribute is dropped.
 - Output shown to the model is cleaned (ANSI stripped, progress lines
   collapsed, empty -> `(no output)`) and cut to head-and-tail at
   `max_command_output_chars`.
 - `parse_and_execute_tools(tool_calls, on_tool_event, echo_errors,
-tool_timeout_s)` — validates arguments against declared signatures; emits
+tool_timeout_s)`: validates arguments against declared signatures; emits
   `started` / `finished` / `error` / `skipped` events with `tool_call_id`,
   `raw` JSON, and parsed `arguments` for front-end call details; `failed=True` is
   passed on finished events for failed runs so the UI can style them.
@@ -584,19 +584,19 @@ the loop, `ask_utils.py` sends the model requests, and
 
 ### `src/syna/conversation/session.py`
 
-`AgentSession` — the shared conversation loop for CLI and web.
+`AgentSession`: the shared conversation loop for CLI and web.
 
 - Builds the system prompt from `assets/prompt.md`: fills `{{CURRENT_DATE}}`,
   `{{COMMAND_TIMEOUT}}` and `{{OUTPUT_LIMIT}}`. Tool documentation is not
   injected into the prompt; the request's tool schemas are the single copy.
   With `build_prompt(allegro=True)` the Allegro speed rule is appended
   under its own `## Allegro mode` h2 section, and `{{COMMAND_TIMEOUT}}`
-  is reported halved — the value enforcement actually uses.
+  is reported halved, the value enforcement actually uses.
 - `set_allegro(enabled)` applies the Allegro profile and rewrites the
   system message in place, only on an actual change: a no-op leaves the
   provider prompt cache untouched, a real mode change invalidates it
   once. The profile: thinking effort becomes the faster of (user
-  setting, `'low'`, OpenRouter only — custom endpoints and faster user
+  setting, `'low'`, OpenRouter only: custom endpoints and faster user
   settings are left alone), `request_delay` halves, `max_steps_per_turn`
   halves with `step_warning_remaining` clamped to half the halved
   budget. Sessions start in normal mode.
@@ -618,20 +618,20 @@ the loop, `ask_utils.py` sends the model requests, and
   leaving dangling tool call IDs.
 - **Closed tool-call groups**: providers reject requests containing assistant
   tool_calls without matching results, so `_close_tool_call_group` answers
-  any call left hanging by an abnormal exit — user interruption mid-batch,
-  an internal batch error, or a stray call beside the final status report —
+  any call left hanging by an abnormal exit: user interruption mid-batch,
+  an internal batch error, or a stray call beside the final status report,
   with synthetic `skipped` results, and fills in missing call ids in place.
   Tool-call ids absent from a provider reply are synthesized at the source
   (`ask_utils.py`) and in the parser backstop, keeping every pair consistent.
 - **Sentinel channel separation**: tool results are appended as individual
   `role: "tool"` messages wrapped with `format_tool_result_content` on the
-  `TOOL_RESULTS` channel — containing a `<result>` element with status, exit code,
-  and pod path — corrective warnings, file uploads, step-budget warnings and
+  `TOOL_RESULTS` channel: containing a `<result>` element with status, exit code,
+  and pod path, corrective warnings, file uploads, step-budget warnings and
   interruptions as `HARNESS_NOTICE`, and compaction summaries as `COMPACTION`.
 - **Two-stage context management** (`context.py`): once the history reaches
   `elide_interval_messages`, and additionally whenever estimated tokens
   exceed `context_budget_tokens`, old tool outputs (those with `saved_to`)
-  outside the recent window are elided to pointers — lossless, since the
+  outside the recent window are elided to pointers; lossless, since the
   model can re-read them in the pod. Archived large user messages are
   elided the same way (head excerpt plus pointer to the verbatim file).
   To keep the provider prompt cache warm,
@@ -648,7 +648,7 @@ the loop, `ask_utils.py` sends the model requests, and
   notice. Past the cap the turn ends with one final model request with
   `tool_choice="none"`, delivering the status report as natural language; an
   empty report ends the turn with the plain exhaustion error. Both notices
-  carry a per-turn share_file ledger — the paths actually shared this turn
+  carry a per-turn share_file ledger: the paths actually shared this turn
   (`format_shared_files_ledger`, fed by the session's `_on_tool_event`
   through `shared_file_metadata`), plus, at exhaustion, the instruction to
   only claim a file is shared if it appears in the list, and to only
@@ -665,7 +665,7 @@ the loop, `ask_utils.py` sends the model requests, and
   the session logs one aggregate line (requests, prompt tokens, cached
   tokens, hit ratio) as the health check for prompt-cache behavior.
 - **Lone-think acceptance**: a reply containing only `think` calls is
-  accepted rather than bounced — the reply persists in history, pending
+  accepted rather than bounced; the reply persists in history, pending
   corrective notices from earlier malformed attempts are purged, the no-tool
   streak resets, and the loop re-asks.
 - Dispatched execution errors persist permanently in history (valuable
@@ -688,9 +688,9 @@ the loop, `ask_utils.py` sends the model requests, and
   A `skipped` parser event renders like a finished tool row.
 - User interruption raises `TurnCancelled` inside the `started` event hook.
 - **Queued-message injection ("Send now")**: `queue_injection(item)` holds
-  a queued web message thread-safely; at the top of the turn loop — after
+  a queued web message thread-safely; at the top of the turn loop: after
   the previous tool batch's results are in history and before the next
-  `ask_question` — `apply_injections()` appends every pending message to
+  `ask_question`: `apply_injections()` appends every pending message to
   `self.messages` (through `_prepare_user_message`, so large injected
   messages archive like turn-starting ones) and emits a `user_message`
   event carrying the message's client id. The batch is never broken and
@@ -700,7 +700,7 @@ the loop, `ask_utils.py` sends the model requests, and
   returned to the web session's inbox by the worker, so they run as the
   next turn instead of being dropped.
 - **User message archives**: before appending the user message, `run_turn`
-  hands it to `_prepare_user_message` — messages at least
+  hands it to `_prepare_user_message`: messages at least
   `user_message_archive_min_chars` long are archived verbatim into the pod
   by `user_messages.py` and annotated with the archive path (a failed
   archive logs and leaves the message unannotated). `_reviewer_log`
@@ -715,7 +715,7 @@ the loop, `ask_utils.py` sends the model requests, and
 
 Shared helpers: `show_welcome()` banner and `ask_question(client, model,
 messages, delay, effort, dump_path, response_format, accept_reply,
-session_id, tools, tool_choice, usage_callback)` — sends model requests with configurable delay,
+session_id, tools, tool_choice, usage_callback)`: sends model requests with configurable delay,
 request dumps, and native `tools` and `tool_choice` parameters. Every request
 carries `max_tokens` from the `max_output_tokens` config value (default
 16384), so reasoning models cannot starve the visible reply of the
@@ -798,8 +798,8 @@ with exit code 1, and the delivery metadata reaches the client through the
 `structured_output` event field), `ask_user` (asks the user a question
 with optional choices and blocks until they answer; validates its arguments,
 returns a clean error dict in non-interactive contexts, and propagates
-`InteractionCancelled` when the task is stopped mid-question — the client
-adds the "Other — type your own response" option itself, and an empty
+`InteractionCancelled` when the task is stopped mid-question; the client
+adds the "Other: Type your own response" option itself, and an empty
 choices array means an open text answer), and `review_work` (isolated
 adversarial verification through `verification.py`; the reviewer's report
 is the tool result). The final answer to the user is
@@ -808,7 +808,7 @@ tool calls.
 
 Pod artifacts are written read-only as an integrity barrier (the model has
 root and can undo it; the point is that a result already reported cannot be
-silently overwritten — regeneration produces new, timestamped names):
+silently overwritten; regeneration produces new, timestamped names):
 `_write_into_pod` chmods 444 every artifact it copies in (screenshots,
 transcripts, audio, generated images), `execute_command`'s pod-side runner
 chmods its `/tool_outputs/` capture file, and `_persist_tool_output` in
@@ -819,9 +819,9 @@ dumps are deliberately not read-only: their writers rewrite them in place
 Blocking-operation boundedness (audited when the harness moved to
 terminal, cancel-based timeouts; updated when the browser tool got the
 same treatment): every network and model request carries an explicit
-timeout — the speech and image-generation endpoints use
+timeout; the speech and image-generation endpoints use
 `httpx.post(timeout=timeout_ms)` and the vision and reviewer requests go
-through the model client's configured timeout and retry policy — so those
+through the model client's configured timeout and retry policy, so those
 calls honor the harness deadline or finish just past it, within the stop
 grace. The browser's Playwright operations each carry their own timeouts
 (navigation 30 s, clicks 4-7 s, selects 3 s, reload 20 s), and their
@@ -830,7 +830,7 @@ aggregate is now bounded too: each browser tool command runs under
 a wedged command is cancelled mid-flight and reported as a timeout
 instead of leaning on the harness deadline. The bollard `exec` and
 `copy_to`/`copy_from` calls behind `execute_command`, the file tools, and
-`share_file` carry no client-side timeout parameter — `execute_command`
+`share_file` carry no client-side timeout parameter; `execute_command`
 bounds itself with the pod-side `timeout -k` kill, and the rest are
 bounded by the harness deadline: a wedged engine surfaces as a hung-call
 notice after the stop grace instead of blocking the session forever.
@@ -840,7 +840,7 @@ request's tool schemas (`get_tool_definitions` in `tool_schemas.py`
 splits it into the tool description and per-argument descriptions), so
 the docstrings must stay in sync with actual behavior.
 
-`execute_command` hardening (reliability inside the pod, not restriction —
+`execute_command` hardening (reliability inside the pod, not restriction:
 the model keeps full root and can cd, edit system files, and install
 packages): the command runs via `timeout -k 5 <command_timeout_s> bash -c`
 inside the pod so hangs are killed inside the pod, before the harness
@@ -869,9 +869,9 @@ designed to round-trip files byte-exactly. Reads decode with
 `surrogateescape`, so bytes that are not valid UTF-8 survive an
 unrelated edit untouched (the numbered display maps them to U+FFFD;
 `errors="replace"` would have corrupted them permanently on write).
-Content splits on `\n` only — matching `grep -n` line numbering, where
+Content splits on `\n` only, matching `grep -n` line numbering, where
 `splitlines()` also broke on form feeds and U+2028 and sent edits to
-the wrong line — and a file's newline style (CRLF stays CRLF) and
+the wrong line, and a file's newline style (CRLF stays CRLF) and
 missing trailing newline are preserved on write. Edit operations are
 validated before the file is touched: non-dict or multi-key
 operations, non-object payloads, missing required keys, unknown operation
@@ -881,8 +881,8 @@ several times all raise clean `ValueError`s instead of leaking internal
 `TypeError`s. `replace_string` swaps the one exact occurrence of a text
 snippet (the safer anchor for small edits in files that may have
 changed) and runs after the batch's line operations. A successful edit
-returns a unified diff of the applied change — bounded to a head-and-tail
-view at `DIFF_MAX_CHARS` (2000), empty when the file is unchanged — so the
+returns a unified diff of the applied change, bounded to a head-and-tail
+view at `DIFF_MAX_CHARS` (2000), empty when the file is unchanged, so the
 model can confirm an edit landed without spending a follow-up `read_file`
 (a live session showed exactly that wasteful re-read pattern).
 
@@ -897,7 +897,7 @@ image endpoint will serve.
 
 ### `src/syna/capabilities/vision.py`
 
-`describe_image(file_path, question)` — image understanding through a
+`describe_image(file_path, question)`: image understanding through a
 dedicated single-turn vision request. Copies the image from the pod,
 converts it to PNG downscaled into a 1024x1024 box (via `imaging.py`),
 logs the payload size (pixels and PNG bytes, so a failing vision request
@@ -926,8 +926,8 @@ user-safe message carrying the provider detail.
 ### `src/syna/capabilities/verification.py`
 
 The `review_work` reviewer session. `run_verification(summary)` runs an
-isolated single-turn request — fresh client (`create_model_client`),
-`assets/verifier_prompt.md` as the system prompt, **no tools** — whose
+isolated single-turn request: fresh client (`create_model_client`),
+`assets/verifier_prompt.md` as the system prompt, **no tools**; whose
 user message carries the last `verify_log_tail_chars` characters of the
 agent's serialized message history (`json.dumps`, minus the assistant
 message holding the pending `review_work` call itself) inside a
@@ -935,7 +935,7 @@ message holding the pending `review_work` call itself) inside a
 followed by the summary the agent intends to report. The reviewer model
 is `VERIFIER_MODEL` (falling back to `MODEL`) at `VERIFIER_MODEL_EFFORT`
 (default `high`); the reviewer's text is the tool result and nothing
-else — no session id, no diagnostic dump, no UI/history artifacts beyond
+else: no session id, no diagnostic dump, no UI/history artifacts beyond
 the tool call and its result. The conversation snapshot arrives through
 a thread-local provider (`set_conversation_log_provider` /
 `current_conversation_log_provider`), propagated into tool worker
@@ -976,21 +976,21 @@ bare tool-call timeout.
 
 Budgets and cancellation (the same terminal-timeout treatment as
 `web_search`): the tool browser and the search browser are both
-`SharedBrowser` instances — the cold Camoufox start runs in a helper thread
+`SharedBrowser` instances: the cold Camoufox start runs in a helper thread
 bounded by `browser_launch_timeout_s`, so a caller that outlives the budget
 abandons the wait, not the start, and the next call finds the browser warm;
 concurrent first callers join one construction, a failed constructor is
 raised to every waiter with a fresh attempt on the next call, and
 `invalidate` drops the instance with a best-effort teardown in its own
 helper thread (a session that wedged mid-command cannot be trusted to close
-promptly, and no caller may block on it). Each session command — and the
-screenshot capture — runs under `browser_command_timeout_s` (default 90,
+promptly, and no caller may block on it). Each session command, and the
+screenshot capture, runs under `browser_command_timeout_s` (default 90,
 not Allegro-scaled; a visit's worst legitimate path is a 30 s navigation
 plus challenge waiting), raced against the harness's cancel event inside
 the browser's own loop (`Browser._bounded`): the event is read in the
 calling thread, where the per-call event is thread-local, and whichever
 limit arrives first cancels the Playwright task. A command that lands its
-result while the stop is being delivered still counts — the result is
+result while the stop is being delivered still counts; the result is
 returned; the harness stop is answered with `ToolCancelled` (rendered as
 the "stopped, nothing is running" notice) and budget expiry with
 `BrowserCommandTimeout`; a command that ignores its cancellation for the
@@ -1003,12 +1003,12 @@ discard the shared session (reset-on-cancel: a command cancelled mid-flight
 leaves the page in an unknown state a later command could land on), so the
 next browser call starts a clean browser through the launch budget. The
 harness deadline for the tool call (`browser_deadline_s`, consumed by
-`call_deadline_s` in `parse.py`) is launch budget + command budget + slack
-— a bug guard that only fires when the internal enforcement has failed.
+`call_deadline_s` in `parse.py`) is launch budget + command budget + slack;
+a bug guard that only fires when the internal enforcement has failed.
 
 Network guard: the browser runs on the host, so all its traffic is
 host-originated. A single `context.route("**/*")` handler (`_guard_route`)
-is the choke point for every request — ad/identity neutralization and the
+is the choke point for every request: ad/identity neutralization and the
 `net_guard` policy (public internet only) in one place, independent of
 Playwright's route-matching order. WebSocket handshakes cannot be blocked
 by routing, so `_on_websocket` kills sockets to non-public destinations the
@@ -1028,11 +1028,11 @@ load-bearing: the semantic net catches native dialogs, Bootstrap-style
 modals and `role=dialog` surfaces, walking open shadow roots and same-origin
 iframes (consent managers like Usercentrics and justETF's transparent
 country warning render inside shadow roots, where `querySelectorAll` cannot
-reach); the veil net catches hand-rolled walls whatever their markup — a
+reach); the veil net catches hand-rolled walls whatever their markup, a
 visible `position:fixed` element covering ≥90% of the viewport, stacking
 above the page (`z-index ≥ 10`), carrying an actionable control, and not
 containing the page's `main` (so SPA app shells are not mistaken for walls).
-Native `<dialog>` counts as blocking only when `:modal` matches — non-modal
+Native `<dialog>` counts as blocking only when `:modal` matches; non-modal
 `dialog[open]` panels leave the page interactive and stay uncollapsed.
 Bootstrap 3's `.modal.fade.in` naming shows why the layered nets matter:
 no class rule would catch it, and the role/veil rules do. All discovery is
@@ -1043,8 +1043,8 @@ model's next action is dismissing it instead of clicking dead refs
 (`snapshot(full=true)` opts out; non-blocking banners keep the full page
 with a note line; `read` prepends a warning). Dismissal clicks only
 consent-language buttons and pure-dismiss controls (`[data-bs-dismiss]`,
-`.btn-close`, Close/Cancel) — never Save/OK/submit, which could confirm
-something on the user's behalf — and `_click_element` skips auto-dismissal
+`.btn-close`, Close/Cancel), never Save/OK/submit, which could confirm
+something on the user's behalf, and `_click_element` skips auto-dismissal
 entirely when the clicked element itself sits inside an overlay, so a model
 working granularly inside a consent banner is never overridden to
 "Accept all". Clicks self-heal: on Playwright's actionability timeout the
@@ -1052,7 +1052,7 @@ overlays are dismissed and the trusted click retried, then a coordinate
 click (after re-centering the scroll so fixed headers cannot cover the
 target) and a label/JS click (`FALLBACK_CLICK_JS`) are tried; each fallback
 is reported in a note, and a final failure carries the actionability
-reason — `describe_pw_error` keeps the first line plus keyword-picked,
+reason: `describe_pw_error` keeps the first line plus keyword-picked,
 deduplicated call-log verdicts ("element is not visible", "<label>
 intercepts pointer events"), since the log repeats its boilerplate across
 retry cycles and a naive line budget drops the verdict entirely. Consent
@@ -1061,7 +1061,7 @@ Didomi, Quantcast) are invisible to the in-page walker, so when an overlay
 blocks the view the harness scans child frames over Playwright's frame API
 (`_scan_frames`, `FRAME_ELEMENTS_JS`) and allocates frame-scoped refs from
 a separate range (`FRAME_REF_BASE`), resolved through a Python-side
-registry and cleared on navigation — the click chain works on them
+registry and cleared on navigation; the click chain works on them
 unchanged. Tables render as data on both
 paths: the compact view's walker suppresses flushes inside `<td>`/`<th>`
 (`inCell`) so every `<tr>` emits one line with `|`-separated cells no
@@ -1071,7 +1071,7 @@ matter what block elements the cells contain, and `read` extracts text with
 DOM. WebRTC is disabled via `firefox_user_prefs` (it
 bypasses HTTP-layer interception and is a standard IP-leak/fingerprint
 surface). Note: interception in this Camoufox build pins the browser to
-HTTP/2 — HTTP/3 is unavailable in both route and proxy modes (verified
+HTTP/2; HTTP/3 is unavailable in both route and proxy modes (verified
 against cloudflare-quic.com); absence of H3 is a common real-world pattern.
 
 ### `src/syna/capabilities/net_guard.py`
@@ -1082,10 +1082,10 @@ ULA, multicast, reserved, documentation) are an explicit list, independent
 of `ipaddress.is_global` version drift. `check_destination` parses IP
 literals with the WHATWG URL IPv4 semantics browsers actually apply
 (decimal, hex, octal, mixed, trailing dot, shortened dotted forms where
-the last label carries the remaining bits — e.g. "127.65535" is
+the last label carries the remaining bits, e.g. "127.65535" is
 127.0.255.255), and resolves hostnames at decision time
 with a short-lived cache, blocking names that resolve to any private
-address — which closes casual DNS rebinding; a fast-flip rebinding
+address, which closes casual DNS rebinding; a fast-flip rebinding
 adversary can still race the browser's own second resolution, which is
 why the Syna server independently validates the Host header, Origin, and
 token. Resolution failures pass (the
@@ -1096,7 +1096,7 @@ scheme-less payloads (data:, about:) through. Config:
 
 ### `src/syna/capabilities/web_search.py`
 
-`search(query, delay_s=2)` — searches the query through the stealth browser
+`search(query, delay_s=2)`: searches the query through the stealth browser
 (Camoufox) against server-rendered endpoints, trying engines in order
 (DuckDuckGo html, DuckDuckGo lite, Bing, Mojeek) until one returns results,
 with per-engine redirect unwrapping (DuckDuckGo's `uddg=` wrapper, Bing's
@@ -1107,16 +1107,16 @@ implementation was dropped: its plain-HTTP
 engine fleet was blocked or challenged (google 403, brave 429, DuckDuckGo
 202 anomaly pages, startpage bot walls), its only working engine (yahoo)
 failed 60% of the time, and every failed attempt was bot-shaped traffic
-that risked the IP's reputation — which would also poison the stealth
+that risked the IP's reputation, which would also poison the stealth
 browser. Navigations carry a same-site referer, and an engine that serves
 a captcha/challenge page (detected by widget selectors or marker phrases)
 is paused for a randomized 15-30 minute cooldown instead of being
-re-requested on the next search — repeated visits to a host that demands
+re-requested on the next search; repeated visits to a host that demands
 verification are the repeat-offense pattern that hardens soft challenges
 into IP bans. The search is self-timed and never detached: it blocks until
 it completes, fails, or runs out of one of its own budgets. Starting the
 stealth browser from cold gets `browser_launch_timeout_s` (default 120, not
-Allegro-scaled — a cold start is startup, not search work, and its duration
+Allegro-scaled; a cold start is startup, not search work, and its duration
 varies with OS cache state; one live incident had a first-of-day cold start
 take 31.5 s and lose its results to a 30 s detach). The constructor runs in
 a helper thread so the budget bounds the wait rather than the process: a
@@ -1140,8 +1140,8 @@ stop grace) outlasts every legitimate hold, so exceeding it means the
 running search wedged past every budget, and the waiter fails with a clear
 "appears stuck" error. The harness deadline for the tool call
 (`search_deadline_s` in `web_search.py`, consumed by `call_deadline_s` in
-`parse.py`) is composed to outlast all of it — the lock's wait cap plus
-the searcher's own budget and slack — because a queued search spends its
+`parse.py`) is composed to outlast all of it: the lock's wait cap plus
+the searcher's own budget and slack, because a queued search spends its
 deadline waiting for the lock before its own budgets even start; it is a
 bug guard that only fires when the internal enforcement has failed. Every
 engine attempt, result count, lock wait, and
@@ -1163,8 +1163,8 @@ FastAPI app. One `SessionRecord` per client id owns an `AgentSession`, a
 dedicated container (registered thread-locally in the record's worker thread),
 event queues, an event log for WebSocket replay, an `ask_user` pending
 question, and shared-file downloads (when a finished `share_file` event
-carries `structured_output` metadata — matched via
-`session.shared_file_metadata()` — the record copies the pod path to the host
+carries `structured_output` metadata, matched via
+`session.shared_file_metadata()`; the record copies the pod path to the host
 and pushes a `file` event the client renders as a download; worker teardown
 releases the container and model client; `share_file` recreates the session
 temp dir if it was removed externally). The session inbox is a
@@ -1184,7 +1184,7 @@ message or treats a plain `message` as the typed answer instead of queueing a
 turn (the message's Allegro flag and client id are captured at enqueue time in
 `_inbox_item_from_message`; a `queued: true` `user_message` event docks the
 client's queue pill, and the worker re-pushes the message without the flag
-when it dequeues a queued item, turning the pill into a chat bubble —
+when it dequeues a queued item, turning the pill into a chat bubble;
 injected messages are announced by the session itself at the moment they
 enter history). After every turn the worker re-enqueues undelivered
 injections. `stop`,
@@ -1209,18 +1209,18 @@ uvicorn.
 
 Server auth (hardened boundaries): `main()` generates a per-process token
 (`AUTH_TOKEN`, `secrets.token_urlsafe`); the HTTP middleware then requires
-it on `/api/*` (header `X-Syna-Token` or `token` query — the query form
+it on `/api/*` (header `X-Syna-Token` or `token` query; the query form
 exists for `<img>` and download links, which cannot set headers) and
 rejects requests whose `Host` header is not the configured loopback
 binding (a DNS-rebound page's requests carry the attacker's domain). The
 WebSocket endpoint rejects foreign `Origin` handshakes and requires the
 token in the query (a missing Origin comes from the file:// fallback and
 still needs the token; uvicorn's access log records the query string, so
-the log file contains the token — local, process-private). CORS and the
+the log file contains the token; local, process-private). CORS and the
 WebSocket Origin check are pinned to the server's own UI origin
 (`TRUSTED_ORIGINS`, the configured `server_port` on the loopback hosts):
 another local port hosts some other application, whose pages must not
-read the token-embedding HTML shell or open the WebSocket — the old
+read the token-embedding HTML shell or open the WebSocket; the old
 any-loopback-port regex allowed exactly that drive-by. `/` and
 `/vendor/*` stay open so the page can bootstrap and learn the token. With
 `AUTH_TOKEN` unset (embedded use, tests) every check is disabled; the
@@ -1230,7 +1230,7 @@ just on the WebSocket path. Accepted residual risks (documented, not
 fixed): the single shared browser means pages visited in one session
 share profile/cookie state with others; from inside the pod, `curl` can
 reach the podman bridge gateway interface of the host (the Syna server
-binds loopback and is unreachable that way) — pod egress policy is a
+binds loopback and is unreachable that way); pod egress policy is a
 separate topic.
 
 ## 10. The web UI
@@ -1241,28 +1241,28 @@ generated assets by `scripts/build.py`. Client narration lives in
 
 ### Sources and build
 
-`src/syna/assets/chat.html` and `src/syna/assets/setup.html` are GENERATED by `scripts/build.py` — never edit them directly. The
+`src/syna/assets/chat.html` and `src/syna/assets/setup.html` are GENERATED by `scripts/build.py`: never edit them directly. The
 sources live in `webui/`:
 
-- `webui/index.html` — chat page skeleton with `{{CSS}}` and `{{JS}}` markers;
+- `webui/index.html`: chat page skeleton with `{{CSS}}` and `{{JS}}` markers;
   `webui/index-setup.html` + `webui/css/setup.css` + `webui/js/setup.js` are
   the first-run setup wizard.
-- `webui/css/` — style blocks (`base`, `ambient`, `chrome`, `chat`,
+- `webui/css/`: style blocks (`base`, `ambient`, `chrome`, `chat`,
   `composer`, `voice`), inlined in that order. The UI is dark-only:
   `base.css` defines a single dark palette (`color-scheme: dark`), and
   no `prefers-color-scheme` branches remain anywhere in `webui/`.
-- `webui/js/` — script blocks (`ambient`, `sfx`, `markdown`, `chat`,
+- `webui/js/`: script blocks (`ambient`, `sfx`, `markdown`, `chat`,
   `speech_chunker`, `voice`), inlined in that order. The background light field (`ambient.js`)
-  blends three states — `idle`, `thinking`, `tool` — through per-frame
+  blends three states, `idle`, `thinking`, `tool`, through per-frame
   weight easing; while the model narrates aloud, `voice.js` pins the state
   to `tool` and releases it back to the computed state when the speech
   ends, so narration enters and exits with the same fluid crossfade. The
   activity AUDIO layer (`sfx.js` heartbeat/notes, driven by the same
-  `data-ambient` attribute) stays silent while `Voice.speaking` is true —
+  `data-ambient` attribute) stays silent while `Voice.speaking` is true:
   the voice is the only sound. Voice context pills ("Listening..." while
   recording, "Transcribing..." while the finished recording is being
-  transcribed and sent — the pill the old flow dropped, leaving the user
-  waiting in silence — and "Tuning up, please wait..." while a narrated
+  transcribed and sent: the pill the old flow dropped, leaving the user
+  waiting in silence, and "Tuning up, please wait..." while a narrated
   reply's speech is being generated, before the reply's text is revealed)
   reuse the `.inline-status` styling with smooth grow-in/collapse
   transitions and are cleared on every fresh session.
@@ -1277,7 +1277,7 @@ wrapped in a `<style>`/`<script>` tag. Two cascade/scoping gotchas:
   `window.Voice`).
 - Direct children of `#chat` are styled by `#chat > *` (`margin: 0 auto`,
   ID specificity). Any per-child rule that overrides those declarations must
-  carry an ID too, or it silently loses the cascade — this bit the collapsed
+  carry an ID too, or it silently loses the cascade; this bit the collapsed
   `.tool-overflow` wrapper's negative margin (see-more pill jump).
 - Spacing constants must stay in sync by hand: `#chat { gap: 10px }`,
   `.tool-overflow { gap: 10px }`, its collapsed `margin-top: -10px`, and
@@ -1286,7 +1286,7 @@ wrapped in a `<style>`/`<script>` tag. Two cascade/scoping gotchas:
   are flex columns with a definite height, so any child that sets
   `overflow: hidden` (every height-animated element does, for clipping)
   would otherwise get an automatic minimum size of 0 and be flex-shrunk to
-  the viewport instead of overflowing — height measurements taken mid-
+  the viewport instead of overflowing: height measurements taken mid-
   animation returned the shrunk size and the container "jumped" to its true
   height the moment the animation cleared `overflow` (the see-more expand
   and detail grow-in jumps). With `flex: none` the containers scroll, as
@@ -1319,7 +1319,7 @@ drops are ignored.
 
 - Clicking a finished tool row (or a compaction row) toggles a
   `.tool-detail` container inserted after the row: one scrollable, capped
-  section per data kind ("Call" — the block's exact JSON, "Output" — the
+  section per data kind ("Call": the block's exact JSON, "Output": the
   tool result; "Summary" for compactions), each with its own copy button.
   Sections are created on click and destroyed on collapse (no persistent
   DOM, no fetches); the server caps each field at 6000 characters with an
@@ -1334,7 +1334,7 @@ drops are ignored.
   height closed. Interrupting a phase cancels it and reverses cleanly.
 - All state-changing API calls carry the per-process server token
   (`withToken`/`authHeaders`): the WebSocket URL, fetches, inline pod
-  images (`<img>` cannot set headers — query param), and file-download
+  images (`<img>` cannot set headers; query param), and file-download
   chips. The token arrives via `SYNA_CONFIG` from the served page.
 - The composer carries an Allegro pill (`#allegro-btn`, `queue_music`
   icon + label) left of the send button: a speed-mode toggle remembered
@@ -1356,7 +1356,7 @@ drops are ignored.
   applied on Save and Restart like every other field): in voice mode,
   the microphone automatically reopens after each reply reaches the
   chat. A narrated reply arms the auto-listen when its text is revealed
-  and opens the mic only when the narration drains — never while Syna
+  and opens the mic only when the narration drains; never while Syna
   is still speaking, which would record her own voice; an un-narrated
   reply opens it immediately. User-initiated stops (composer Stop,
   voice mode off, new chat) clear the armed auto-listen, and a reply
@@ -1368,13 +1368,13 @@ drops are ignored.
 - Tool-row headers read the parsed `arguments` of the event (per-tool
   primary key) instead of regex-parsing the repr signature, which broke
   on commands containing single quotes (Python repr switches to double
-  quotes and the first single-quoted span won — e.g. heredoc commands
+  quotes and the first single-quoted span won, e.g. heredoc commands
   showing "EOF"). The signature parser remains only as a replay fallback.
 - Images in Syna's replies (`![](/workspace/....png)`) render inline:
   `applyImagePolicy` rewrites pod-absolute sources to
   `GET /api/image/{client_id}?path=...` (lazy-loaded, with an
   "unavailable" fallback chip), while remote `http(s)` sources are
-  converted to plain links and never fetched — a page could otherwise
+  converted to plain links and never fetched: a page could otherwise
   make Syna embed an image whose URL exfiltrates data. Pod images are
   also wrapped in an `.inline-image-frame` carrying a download button
   (revealed on frame hover, check-mark feedback like the copy buttons);
@@ -1383,10 +1383,10 @@ drops are ignored.
   download/copy behavior is untouched.
 - When Syna calls `ask_user`, the composer slides down and a question
   panel slides up in its place (choices capped in height and scrollable,
-  an always-appended "Other — type your own response" choice, and a stop
+  an always-appended "Other: Type your own response" choice, and a stop
   button). Picking a choice answers the pending tool call; "Other"
   restores the composer in send mode so the next typed message resolves
-  the question (the server intercepts it — no new turn starts). An empty
+  the question (the server intercepts it; no new turn starts). An empty
   choices array renders the question inline and keeps the composer in
   send mode. During history replay the question renders statically and
   is re-docked after `history_done` if still unanswered; stop, new chat,
@@ -1398,7 +1398,7 @@ drops are ignored.
   uppercase "Queued" label, truncated preview, a "Send now" button).
   Every message carries a client-generated id, echoed on every event
   about it, so the matching pill becomes a chat bubble the moment the
-  message actually reaches history — either when the worker dequeues it
+  message actually reaches history: either when the worker dequeues it
   for a new turn, or when a "Send now" injection lands mid-turn.
   "Send now" removes the pill's message from the queue and hands it to
   the session as a pending injection; the button disables until the
@@ -1433,9 +1433,9 @@ same format for the `speech_to_text` tool; `transcribe_audio` takes an
 explicit `language` hint (None omits the field so the model auto-detects);
 `client_configuration` collects
 the settings the web client needs for voice mode. `MAX_TTS_INPUT_CHARS`
-(4000) bounds one synthesis request — measured against the endpoint:
+(4000) bounds one synthesis request; measured against the endpoint:
 ~1000-character chunks work reliably, a ~19000-character request answered
-with an opaque provider 502 ("empty audio stream") — and `text_to_speech`
+with an opaque provider 502 ("empty audio stream"), and `text_to_speech`
 rejects longer inputs up front with an error that says to split the file,
 converting a mysterious provider failure into a one-step self-correction.
 Failures raise
@@ -1446,7 +1446,7 @@ Failures raise
 Narrated replies no longer appear while their speech is being
 generated. When a `model_message` will be narrated, the client calls
 `Voice.narrate(content, reveal)`: the "Tuning up, please wait..."
-pill appears immediately — _before_ the response exists in the chat —
+pill appears immediately, _before_ the response exists in the chat,
 and the bubble is rendered when the first chunk's audio arrives
 (playback starts), the first chunk fails (error row), or the
 configured `voice.narration_reveal_timeout_ms` (default 30 s)
@@ -1459,8 +1459,8 @@ Long replies are synthesized as chunks, not as one request:
 `speech_chunker.js` (`window.SpeechChunker`, DOM-free, also exported
 for Node) reduces the speakable text to ordered chunks of at most
 ~1000 characters cut at sentence boundaries. Sentences come from the
-ICU-backed `Intl.Segmenter` — which handles decimals, "a. m.",
-ellipses, URLs, versions and inline enumerations natively — plus a
+ICU-backed `Intl.Segmenter`, which handles decimals, "a. m.",
+ellipses, URLs, versions and inline enumerations natively; plus a
 ~28-entry merge list that re-glues ICU's single weakness, a title
 abbreviation before a capitalized word ("El Dr. García"); engines
 without `Intl.Segmenter` fall back to terminator scanning with the
@@ -1469,7 +1469,7 @@ code fences, images, raw URLs, LaTeX math (inline `$...$` only when
 it carries LaTeX syntax, so "$3.50 - $5" survives), and emoji
 including flags. `voice.js` dispatches chunks through a window of 2
 in-flight synthesis requests and plays them strictly in order, the
-first one the moment it is ready — synthesis runs several times
+first one the moment it is ready; synthesis runs several times
 faster than playback (measured on Gemini TTS: ~12 s to synthesize a
 ~1000-char chunk against ~55 s of audio it produces, so the queue
 cannot underrun). A chunk that errors, is
@@ -1484,7 +1484,7 @@ silences playback.
 All suites are plain scripts runnable with the project venv
 (`.venv\Scripts\python.exe tests\<file>.py`) and require no Docker:
 
-- `tests/test_json_protocol.py` — native protocol tests: tool schema generation
+- `tests/test_json_protocol.py`: native protocol tests: tool schema generation
   from `tools.py` via `tool_schemas.py`, argument decoding and signature validation,
   batch stop-on-failure with skipped statuses, think tool results and signatures,
   structured output events, and channel sentinel/marker escaping. Also covers the
@@ -1505,36 +1505,36 @@ All suites are plain scripts runnable with the project venv
   return: a unified diff accompanies a successful edit, a no-change edit
   returns an empty diff, and a large diff is bounded to a head-and-tail
   view at `DIFF_MAX_CHARS`.
-- `tests/test_tool_feedback.py` — session-level loop: history wiping after
+- `tests/test_tool_feedback.py`: session-level loop: history wiping after
   success, abort after 3 consecutive failures, `<tool_results>` marker
   format, parser warnings surfaced as harness notices, think+respond turns,
   step-budget warning (with the shared-files ledger, populated and empty),
   final status report delivered at exhaustion (and the
   error path when the final reply holds no valid `respond`), repeated-call
   nudges, compaction channel detection, and web event details.
-- `tests/test_output_and_persistence.py` — `output.py` cleaning and
+- `tests/test_output_and_persistence.py`: `output.py` cleaning and
   head-and-tail rendering, plus `/tool_outputs/` persistence using a fake
   container (host tools persisted; pod-native `execute_command` not;
   failures degrade gracefully without `saved_to`).
-- `tests/test_execute_command_scripts.py` — runs the exact pod-side
+- `tests/test_execute_command_scripts.py`: runs the exact pod-side
   runner/reader shell scripts generated by `execute_command` through a local
   real bash (Git Bash on Windows): exit-code capture, `(no output)`,
   head-and-tail marker, and timeout kill with partial output. Does not
   exercise bollard/Docker itself.
-- `tests/test_command_timeout_notice.py` — the explicit timeout notice on
+- `tests/test_command_timeout_notice.py`: the explicit timeout notice on
   `execute_command` results: a 124 kill appends the `TIMEOUT:` notice
   stating the exit code, the effective maximum runtime, and the
   background-job advice; 137 hedges between the timeout's final kill and a
   system kill; successful commands carry no notice; `command_runtime_limit_s`
   reports the deadline-bounded effective limit; and the hung-call notice
   names that limit for `execute_command` only.
-- `tests/test_browser_error_text.py` — the browser's actionable Playwright
+- `tests/test_browser_error_text.py`: the browser's actionable Playwright
   error reporting: `describe_pw_error` keeps the call-log actionability
   verdict ("intercepts pointer events", "not visible") in the one-line
   `ERROR:` format, clips long DOM dump lines, caps the output, drops
   separator and "Call log:" header lines, and degrades to a placeholder
   on empty errors.
-- `tests/test_browser_budgets.py` — the browser tool's own budgets and
+- `tests/test_browser_budgets.py`: the browser tool's own budgets and
   cancellation: a command within its budget returns its view, one slower
   than `browser_command_timeout_s` is cancelled mid-flight with a clear
   error, the harness's stop event cancels the in-flight command promptly,
@@ -1543,15 +1543,15 @@ All suites are plain scripts runnable with the project venv
   the launch budget abandons the wait while the helper starts the browser,
   `invalidate` tears down off the callers' path and the next get starts
   clean, and the harness deadline composes launch + command + slack.
-- `tests/test_request_payload.py` — verifies the request payload sent to
+- `tests/test_request_payload.py`: verifies the request payload sent to
   OpenRouter carries the system prompt with real quote characters (no
   escaping-layer artifacts) and survives a JSON roundtrip unchanged.
-- `tests/test_cache_routing.py` — endpoint-family cache routing:
+- `tests/test_cache_routing.py`: endpoint-family cache routing:
   `sticky_routing_fields` per family (session_id / prompt_cache_key /
   nothing), `ask_question` applying the fields and reporting usage to
   the callback, and the session-end cache summary line (hit ratio
   math, silence when no requests were made).
-- `tests/test_context_management.py` — token estimation (bounds, the
+- `tests/test_context_management.py`: token estimation (bounds, the
   script-aware CJK ratio, and hard-coded o200k tokenizer bounds),
   elision semantics
   (saved_to-only, recency window, idempotence), pod `HostConfig` assembly,
@@ -1561,19 +1561,19 @@ All suites are plain scripts runnable with the project venv
   batching disabled, a session-level proof that outputs stay full-text
   between batched elision passes, and the append-only prefix-stability
   invariant across consecutive requests (frozen request snapshots).
-- `tests/test_eval_scoring.py` — eval outcome scoring: honest failures,
+- `tests/test_eval_scoring.py`: eval outcome scoring: honest failures,
   false successes, false failures, clarifying questions, no-report runs,
   and the headline rate computation.
-- `tests/test_simulated_task.py` — an end-to-end scripted task: batched
+- `tests/test_simulated_task.py`: an end-to-end scripted task: batched
   calls with a failure and a skip, think+retry, persistence, elision under
   the token budget, and a clean respond.
-- `tests/test_ask_user.py` — the interaction bridge and tool: schema
+- `tests/test_ask_user.py`: the interaction bridge and tool: schema
   registration, responder round-trip and thread propagation into tool
   workers, no-responder and malformed-argument errors, cancellation
   (batch stops, remainder skipped), the `None`-timeout exemption (a slow
   question is not detached), `PendingQuestion` resolve/release semantics,
   and the terminal responder's number-or-text answer handling.
-- `tests/test_queued_messages.py` — queued messages and "Send now":
+- `tests/test_queued_messages.py`: queued messages and "Send now":
   inbox items carry the client-generated id (and None on empty content),
   the deque/condition inbox keeps FIFO order while allowing per-id
   removal and wakes a waiting worker, the injection queue drains oldest
@@ -1583,7 +1583,7 @@ All suites are plain scripts runnable with the project venv
   request payload carries it, and a `user_message` event with the id
   reaches the client), and undelivered injections re-enqueue after a
   turn ends.
-- `tests/test_user_message_archives.py` — the archive tool and session hook: read-only pod write (exact bytes including LF newline
+- `tests/test_user_message_archives.py`: the archive tool and session hook: read-only pod write (exact bytes including LF newline
   preservation, mkdir + chmod 444 commands),
   failure returning None, large messages archived and annotated in
   `run_turn` (small and channel messages untouched, failed archives leave
@@ -1591,7 +1591,7 @@ All suites are plain scripts runnable with the project venv
   the elision pass (head excerpt
   plus pointer, recency window, idempotence, plain/assistant messages
   ignored, markers with foreign archive ids rejected).
-- `tests/test_review_work.py` — the verification tool: reviewer request
+- `tests/test_review_work.py`: the verification tool: reviewer request
   shape (verifier prompt asset verbatim, labeled code-block log tail with
   truncation at `verify_log_tail_chars`, summary included, no tool
   schemas, no session id), model/effort selection with fallback and
@@ -1601,7 +1601,7 @@ All suites are plain scripts runnable with the project venv
   survive; a completed earlier review call stays), and a `run_turn`
   end-to-end run where history gains only the call, its result, and the
   final answer, with the provider popped afterward.
-- `tests/test_paths_and_setup.py` — the filesystem layout and the setup
+- `tests/test_paths_and_setup.py`: the filesystem layout and the setup
   wizard: bundled-asset resolution, `SYNA_HOME` override with first-run
   seeding, repo-root fallback, the endpoint-needs-key matrix, the
   `setup_incomplete` matrix (model/key/engine), `.env` merging with
@@ -1612,37 +1612,37 @@ All suites are plain scripts runnable with the project venv
   page served (and left)
   based on live setup state, and the setup API endpoints (token-gated
   detect, unknown dependency, key/validation errors on config).
-- `tests/test_image_endpoint.py` — the inline image endpoint against a
+- `tests/test_image_endpoint.py`: the inline image endpoint against a
   fake pod: path validation (outside `/workspace`, traversal, non-image
   extensions), pass-through for small in-box images (animated GIF bytes
   untouched), downscaling of oversized dimensions into the 1024x1024 PNG
   box, the 50 MB rejection, the recompression threshold, malformed-image
   rejection, the LRU cache eviction, and the `download=1` attachment
   header (default responses carry none).
-- `tests/test_net_guard.py` — the browser's network policy: blocked-range
+- `tests/test_net_guard.py`: the browser's network policy: blocked-range
   matrix (loopback v4/v6/mapped, RFC1918, metadata, CGNAT, multicast),
   URL-spec obfuscations (decimal, hex, octal, mixed, trailing dot, and
-  shortened dotted forms with large last labels — asserted against the
+  shortened dotted forms with large last labels, asserted against the
   correct ranges, not 0/8 luck), public short forms not blocked, hostname resolution blocked/allowed
   with stubbed `getaddrinfo`, resolution-failure pass-through, cache
   behavior, config overrides, scheme handling (ws/wss guarded, data:
   passed), `tool_visit` blocking before any page exists, and the route
   handler's neutralize/continue/abort outcomes plus the WebSocket
   observer.
-- `tests/test_server_auth.py` — the local-origin and token enforcement:
+- `tests/test_server_auth.py`: the local-origin and token enforcement:
   open API without a token, 401 without / 404 with the token (header and
   query), 403 on foreign Host headers, localhost accepted, shell and
   vendor staying open with the token injected, WebSocket handshake
   rejection for foreign Origins, other local ports (the pinned-origin
   rule), and missing tokens, acceptance of the server's own pinned
   origin, and CORS headers granted only to the UI origin.
-- `tests/test_web_search_pacing.py` — search rate-limit pacing: concurrent
+- `tests/test_web_search_pacing.py`: search rate-limit pacing: concurrent
   searches never overlap, the gap survives separate non-overlapping calls,
   the pacing sleep is randomized within `[delay_s, 1.5*delay_s)` rather
   than a fixed value, the lock's wait cap raises a clear "appears stuck"
   error when the running search wedges past every budget, and the cap
   outlasts every legitimate hold (launch budget + search budget + grace).
-- `tests/test_web_search_budgets.py` — the search's self-timed budgets: an
+- `tests/test_web_search_budgets.py`: the search's self-timed budgets: an
   engine chain slower than its budget stops with a clear timeout error, an
   expired launch budget abandons the wait while the constructor helper
   finishes and publishes the browser, a failed constructor propagates and
@@ -1651,7 +1651,7 @@ All suites are plain scripts runnable with the project venv
   cancels the call, the goto timeout is exact against a frozen clock
   (ceiling kept, remaining-budget cap, expired-budget minimum), and the
   harness deadline outlasts lock queueing plus the searcher's own work.
-- `tests/test_tool_cancellation.py` — the harness's terminal timeout
+- `tests/test_tool_cancellation.py`: the harness's terminal timeout
   semantics: a call finishing before its deadline returns normally, a
   tool's exception propagates, the cancel event reaches the worker, a
   `ToolCancelled` call renders as the "stopped, nothing is running"
@@ -1661,19 +1661,19 @@ All suites are plain scripts runnable with the project venv
   detach time), untimed calls wait for completion, the per-tool deadline
   dispatch matches the web-search composition, and the batch pipeline maps
   both timeout endings to failed `timeout` rows.
-- `tests/test_web_search_parsing.py` — search result post-processing:
+- `tests/test_web_search_parsing.py`: search result post-processing:
   DuckDuckGo `uddg=` and Bing base64 `/ck/a` redirect unwrapping (including
   plain links and malformed payloads), the title/URL/snippet block
   renderer, challenge-page detection (widget/marker probes), and the
   engine cooldown: challenged engines are paused and skipped, healthy
   engines behind a broken one keep serving.
-- `tests/test_live_web_search.py` — live search chain (manual run): every
+- `tests/test_live_web_search.py`: live search chain (manual run): every
   extractor verified against markup fixtures in the real browser, live
-  ddg-html/ddg-lite/bing required to return results (mojeek best-effort —
+  ddg-html/ddg-lite/bing required to return results (mojeek best-effort,
   it may serve an ALTCHA challenge, which the chain treats as no
   results), broken-first-engine fall-through, and graceful degradation
   when every engine is broken.
-- `tests/js/test_speech_chunker.cjs` — zero-dependency Node suite for
+- `tests/js/test_speech_chunker.cjs`: zero-dependency Node suite for
   `webui/js/speech_chunker.js` (`node tests/js/test_speech_chunker.cjs`):
   the English and Spanish hard-case batteries (titles, decimals, "EE.
   UU.", enumerations, "p. ej.", "pág.", "etc."), the merge list and its
@@ -1683,38 +1683,38 @@ All suites are plain scripts runnable with the project venv
   preservation), degenerate inputs, content fidelity (emoji, HTML and
   sentinels pass through untouched), a ~6.4k-char news fixture with a
   100 ms performance bound, determinism, and the options/API contract.
-- `tests/test_speech_chunker_js.py` — plain-script wrapper that runs the
+- `tests/test_speech_chunker_js.py`: plain-script wrapper that runs the
   Node suite and mirrors its exit code; prints a skip when Node.js is
   not installed.
-- `tests/test_tts_length_guard.py` — the `text_to_speech` input-length
+- `tests/test_tts_length_guard.py`: the `text_to_speech` input-length
   guard: text over `MAX_TTS_INPUT_CHARS` is rejected before synthesis
   with an error naming the cap and the split instruction, an under-limit
   text passes the guard and reaches synthesis, and the tool docstring
   states the same limit as the guard.
-- `mock/` — the narration lab, a manual test rig: `uv run python
+- `mock/`: the narration lab, a manual test rig: `uv run python
 mock/mock_server.py` serves `mock/narration_lab.html` on
   http://127.0.0.1:8123/ together with the production
   `webui/js/speech_chunker.js`, loads three long fixtures (the real
   reply that failed to narrate, a markdown-heavy English report, a
-  pathological mixed text) and reproduces the app pipeline —
+  pathological mixed text) and reproduces the app pipeline:
   `speakableText`, chunking, the dispatch window, ordered playback,
-  reveal timing — with per-chunk status rows and an event log. Synthesis
+  reveal timing, with per-chunk status rows and an event log. Synthesis
   runs either through a running Syna server (the per-process token is read automatically from the server's own page; a
   token pasted into the page overrides it) or as locally generated rising
   tones, so playback order is audible.
-- `tests/_runner.py` — shared harness for the plain-script suites: a
+- `tests/_runner.py`: shared harness for the plain-script suites: a
   monkeypatch (attribute/mapping overrides with automatic undo) and
   `run_suite`, which executes every test, prints per-test results, and
   exits non-zero on failure.
-- `evals/` — the live honesty eval suite (see `evals/README.md`): impossible
+- `evals/`: the live honesty eval suite (see `evals/README.md`): impossible
   and artifact tasks run against a real pod, scored mechanically, with the
   false-success rate tracked in `evals/results/history.jsonl`. Tasks include
   `impossible-visual-defect`, which plants a PDF whose table header row is
-  shifted one column against its data — the defect observed in the first
-  live Worlds run — and checks the agent renders the page (or admits it
+  shifted one column against its data, the defect observed in the first
+  live Worlds run, and checks the agent renders the page (or admits it
   could not verify the layout) instead of calling the deliverable ready
   from a content-only check.
-- `evals/run_worlds_benchmark.py` — THE LEAGUE OF LEGENDS WORLDS
+- `evals/run_worlds_benchmark.py`: THE LEAGUE OF LEGENDS WORLDS
   BENCHMARK. NOT a regular test and deliberately excluded from every
   run-all loop: it is not in `tests/` (no test runner discovers it) and
   not registered in `evals/tasks.py` (`run_evals.py` can never pick it
@@ -1724,7 +1724,7 @@ mock/mock_server.py` serves `mock/narration_lab.html` on
   League of Legends Worlds PDF report) whose facts are scattered across
   many sites and API calls, saves the full transcript, the delivered
   artifacts (`shared/`), and this run's log slice to
-  `evals/results/worlds_<timestamp>/`, and scores nothing — analysis is
+  `evals/results/worlds_<timestamp>/`, and scores nothing; analysis is
   manual: tracing the final report back to the tool calls that produced
   each fact, watching for hallucination, loops, stalls, and dishonest
   success claims over very long histories. The wall-clock watchdog
@@ -1739,13 +1739,13 @@ mock/mock_server.py` serves `mock/narration_lab.html` on
   An import-and-resolve guard (`tests/test_worlds_benchmark_runner.py`)
   imports the runner and resolves its configured log path, so refactors
   that break it surface in the regular suite instead of mid-launch.
-- `tests/test_browser_health.py` — live browser health checks (run manually):
+- `tests/test_browser_health.py`: live browser health checks (run manually):
   Phase 1 reproduces the visit-read-screenshot-soak workflow against a heavy
   Fandom page and reports crashes, popup hijacks, navigations away, blank
   reads, or non-JPEG captures over 90 seconds; Phase 2 (`--stealth`) visits
   bot.sannysoft.com and CreepJS and dumps their verdicts for human review of
   the "functional and undetectable" standard.
-- `tests/test_live_truthfulness.py` — live model evaluation scenarios
+- `tests/test_live_truthfulness.py`: live model evaluation scenarios
   (manual run, requires a container runtime and an API key).
 
 ## 13. Website

@@ -14,7 +14,7 @@ them. Before adding anything, apply three tests: does the model have to
 know this? Will it matter over 50% of the time across a multitude of
 tasks? Can the model learn it reliably from the tool's own output or
 trial and error? If the output already carries the information at the
-moment it matters — a note, an error message, a ref — the description
+moment it matters, a note, an error message, a ref, the description
 does not need it. Document how the implementation works in
 docs/technical_description.md instead; docstrings carry only the contract
 the model must know up front: parameters, units, and non-obvious
@@ -138,7 +138,7 @@ def _command_timeout_notice(exit_code: int, timeout_s: int) -> str:
         what = "hit the timeout and was killed (exit code 124)"
     return (
         f"\n\nTIMEOUT: this execute_command call failed. The command {what}"
-        f" after {timeout_s} seconds — {timeout_s} seconds is the maximum"
+        f" after {timeout_s} seconds; {timeout_s} seconds is the maximum"
         " runtime of one execute_command call. The command is no longer"
         " running and the output above is partial. For longer work, launch"
         " it in the background (append `&`, or `nohup ... &`) with its"
@@ -412,7 +412,7 @@ def edit_file(file_path: str, operations: list[dict]):
       - `{"insert_above": {"line_num": 3, "insert_lines": ["..."]}}`
       - `{"replace": {"line_num_or_range": [45, 47], "replace_with_lines": ["..."]}}`
       - `{"delete": {"line_num_or_range": [45, 47]}}`
-      - `{"replace_string": {"old_string": "...", "new_string": "..."}}` — replaces the one exact occurrence of old_string; fails unless it matches exactly once. Prefer this for small edits: it cannot hit the wrong line.
+      - `{"replace_string": {"old_string": "...", "new_string": "..."}}`: replaces the one exact occurrence of old_string; fails unless it matches exactly once. Prefer this for small edits: it cannot hit the wrong line.
 
     Ranges are inclusive. Every line number in a call refers to the file as it was before that call, so several operations can be combined without recalculating; line numbers count lines exactly like `grep -n`. The result includes a unified diff of what changed, so you can confirm the edit landed as intended without re-reading. Afterwards, numbering has shifted: re-read the affected lines before the next edit. Write each line with its full indentation.
 
@@ -686,7 +686,7 @@ def _reset_browser():
 
     Called by the server when a chat is reset: the browser lives on the host
     (outside the pod), so it must be torn down separately from the VM. The
-    teardown runs in a helper thread — a session that wedged mid-command
+    teardown runs in a helper thread: a session that wedged mid-command
     cannot be trusted to close promptly, and the reset must not block.
     """
     if SHARED_BROWSER.invalidate():

@@ -482,7 +482,7 @@ const STEPS = [
       const modelInput = document.getElementById("model-input");
       const urlInput = document.getElementById("custom-url");
 
-      const apiKey = state.apiKey.trim();
+      const apiKey = state.apiKey.trim().replace(/^bearer\s+/i, "");
       const model = state.model.trim();
       const baseUrl = state.baseUrl.trim();
 
@@ -495,6 +495,20 @@ const STEPS = [
       }
       if (needsKey && !apiKey) {
         setFieldError(apiKeyInput, "API key is required");
+        return false;
+      }
+      const keyPrefix = preset ? preset.key_prefix || "" : "";
+      if (apiKey && keyPrefix && !apiKey.startsWith(keyPrefix)) {
+        setFieldError(
+          apiKeyInput,
+          "That does not look like a " +
+            preset.name +
+            " key (" +
+            preset.name +
+            " keys start with " +
+            keyPrefix +
+            "). Paste the full key, without extra text.",
+        );
         return false;
       }
       if (!model) {
@@ -766,7 +780,7 @@ async function runSanity(button) {
       button.textContent = "Let's Go!";
       const details = Object.values(results)
         .filter((entry) => !entry.ok)
-        .map((entry) => entry.detail)
+        .map((entry) => entry.raw || entry.detail)
         .join("\n");
       showModal(
         "Sanity Check Failed",

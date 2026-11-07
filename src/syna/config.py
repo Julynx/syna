@@ -30,7 +30,7 @@ DEFAULT_WEB_SEARCH_TIMEOUT_S = 60
 DEFAULT_BROWSER_LAUNCH_TIMEOUT_S = 120
 DEFAULT_BROWSER_COMMAND_TIMEOUT_S = 90
 # How long the harness waits after asking a call to stop before
-# detaching from it — the SIGTERM-to-SIGKILL grace.
+# detaching from it: the SIGTERM-to-SIGKILL grace.
 DEFAULT_MAX_CANCEL_WAIT_S = 10
 
 # Canonical provider model defaults. The first-run wizard, the settings

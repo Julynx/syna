@@ -81,7 +81,7 @@ def test_url_spec_shorthand_bypasses_are_blocked():
 
     The last label carries all remaining bits, so these are loopback or
     private addresses in the browser even though they look like ordinary
-    hostnames. Reasons must name the real range — blocking via a
+    hostnames. Reasons must name the real range; blocking via a
     mis-parse into 0.0.0.0/8 would be luck, not correctness.
     """
     expectations = {

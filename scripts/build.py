@@ -1,6 +1,6 @@
 """Assemble src/syna/assets/chat.html from the sources in webui/.
 
-chat.html is a GENERATED file — edit the css/ and js/ sources in webui/,
+chat.html is a GENERATED file; edit the css/ and js/ sources in webui/,
 then rebuild with: python scripts/build.py
 
 webui/index.html is the page skeleton; every {{CSS}} marker is replaced in
@@ -68,7 +68,7 @@ def build() -> None:
             js_files,
         )
         target = root / "src" / "syna" / "assets" / target_name
-        target.write_text(html, encoding="utf-8")
+        target.write_text(html, encoding="utf-8", newline="\n")
         print(f"Built {target} ({len(html)} bytes)")
 
 

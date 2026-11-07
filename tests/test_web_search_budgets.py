@@ -3,7 +3,7 @@
 The search is never detached: it blocks until it completes, fails, or
 runs out of one of its own budgets. Starting the stealth browser from
 cold is startup governed by the launch budget; the engine chain is work
-governed by the search budget, enforced cooperatively — each
+governed by the search budget, enforced cooperatively: each
 navigation's timeout is capped by what remains, so expiry stops the
 chain within that navigation.
 """
@@ -232,7 +232,7 @@ def test_search_deadline_covers_queueing():
 
     A queued search spends its deadline waiting for the pacing lock
     before its own budgets start, so the deadline must embed the lock's
-    wait cap — otherwise concurrent sessions could be stopped by the
+    wait cap; otherwise concurrent sessions could be stopped by the
     bug guard while their own enforcement never failed.
     """
     deadline = web_search.search_deadline_s()

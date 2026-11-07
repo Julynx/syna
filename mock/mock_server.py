@@ -5,7 +5,7 @@ the real webui sources (so the page loads the production SpeechChunker)
 and answers POST /api/speech/synthesize in two modes:
 
 - "mock": generates a tone WAV whose duration grows with the text, with
-  a small artificial latency — no external calls. Consecutive chunks get
+  a small artificial latency, no external calls. Consecutive chunks get
   rising tones, so the playback order is audible.
 - "server": proxies to a running Syna server (default
   http://127.0.0.1:8000/api/speech/synthesize) with real Gemini TTS.

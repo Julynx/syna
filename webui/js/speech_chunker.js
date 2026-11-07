@@ -14,8 +14,8 @@
  * Sentences are found with the browser's ICU-backed Intl.Segmenter,
  * which handles decimals, abbreviations like "a. m.", ellipses, quotes,
  * URLs, version numbers and inline enumerations natively, in every
- * locale. ICU's single weakness — a title abbreviation followed by a
- * capitalized word ("El Dr. García") — is repaired by merging adjacent
+ * locale. ICU's single weakness, a title abbreviation followed by a
+ * capitalized word ("El Dr. García"), is repaired by merging adjacent
  * segments across a small abbreviation list. Engines without
  * Intl.Segmenter fall back to terminator scanning plus the same merge
  * list: slightly weaker on inline enumerations, never harmful.

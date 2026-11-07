@@ -5,7 +5,7 @@ loaded into the shared browser (deterministic, independent of the live
 engines' mood).
 
 Phase 2 covers the chain against the live engines: ddg-html, ddg-lite,
-and bing must parse results; mojeek is best-effort only — it may serve an
+and bing must parse results; mojeek is best-effort only; it may serve an
 ALTCHA proof-of-work challenge page, which the chain treats as "no
 results" and moves past (auto-clicking the challenge would be bot
 behavior, and mojeek only matters if the earlier engines fail).
@@ -130,7 +130,7 @@ def test_live_engines_return_results():
             if not results:
                 print(
                     "NOTE mojeek returned no results "
-                    "(likely ALTCHA challenge) — best-effort, skipping"
+                    "(likely ALTCHA challenge); best-effort, skipping"
                 )
                 continue
         else:

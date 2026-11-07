@@ -3,8 +3,8 @@
 Files round-trip byte-exactly: reads decode with `surrogateescape`, so
 bytes that are not valid UTF-8 survive an unrelated edit untouched (the
 numbered display maps them to U+FFFD, matching the old behavior), and
-writes re-encode the same way. Content is split on `\n` only — matching
-`grep -n` and shell line tools — and a file's newline style and missing
+writes re-encode the same way. Content is split on `\n` only, matching
+`grep -n` and shell line tools, and a file's newline style and missing
 trailing newline are preserved on write instead of being normalized.
 """
 

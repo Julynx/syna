@@ -207,6 +207,7 @@ def test_provider_presets_are_complete():
         assert preset["model"]
         if preset["needs_key"]:
             assert preset["keys_url"].startswith("https")
+            assert preset["key_prefix"], "the key-shape guard needs a prefix"
     openrouter = setup_module.PROVIDERS["openrouter"]
     assert "openrouter.ai/api/v1" in openrouter["base_url"]
     assert "Most tested" not in openrouter["name"], "UI suffix lives in the label"
@@ -294,6 +295,22 @@ def test_setup_api_endpoints(monkeypatch):
             json={"provider": "openrouter", "api_key": "", "model": "m"},
         )
         assert config.status_code == 400, "OpenRouter requires a key"
+
+        malformed = client.post(
+            "/setup/api/config",
+            json={"provider": "openrouter", "api_key": "TzMlMtWQshort", "model": "m"},
+        )
+        assert malformed.status_code == 400, "a key with the wrong shape is rejected"
+
+        wellformed = client.post(
+            "/setup/api/config",
+            json={
+                "provider": "openrouter",
+                "api_key": "sk-or-v1-" + "a" * 64,
+                "model": "m",
+            },
+        )
+        assert wellformed.status_code == 200, "a correctly shaped key is accepted"
 
         custom = client.post(
             "/setup/api/config",
@@ -445,6 +462,31 @@ def test_sanity_check_requires_a_reachable_engine(monkeypatch):
     assert results["engine"]["ok"]
     assert ready, "the sanity check verifies the engine endpoint"
     assert results["endpoint"]["ok"]
+
+    class _RejectedChat:
+        def send(self, model, messages, max_tokens):
+            raise RuntimeError("Missing Authentication header")
+
+    class _RejectedClient:
+        chat = _RejectedChat()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(
+        session_module, "create_model_client", lambda: _RejectedClient()
+    )
+    rejected = setup_module.sanity_check()
+    assert not rejected["endpoint"]["ok"]
+    assert rejected["endpoint"]["detail"] == (
+        "the API key, please review it and try again."
+    ), "a provider 401 becomes short, actionable guidance"
+    assert rejected["endpoint"]["raw"] == "Missing Authentication header", (
+        "the raw provider response stays in the diagnostics field"
+    )
 
     def _broken():
         raise RuntimeError("no pipe available")

@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- GENERATED FILE — edit the css/ and js/ sources in webui/, then rebuild with: python scripts/build.py -->
+<!-- GENERATED FILE: edit the css/ and js/ sources in webui/, then rebuild with: python scripts/build.py -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -3236,7 +3236,7 @@ function addBubble(content, side) {
 }
 
 /* Images from the pod render inline through the session's image endpoint;
-   remote URLs are never fetched automatically — a page could otherwise
+   remote URLs are never fetched automatically: a page could otherwise
    make Syna embed an image whose URL exfiltrates data. They become links. */
 function applyImagePolicy(bubble) {
   bubble.querySelectorAll("img").forEach((img) => {
@@ -3933,7 +3933,7 @@ function buildAskPanel(ask) {
   const other = document.createElement("button");
   other.type = "button";
   other.className = "ask-choice other";
-  other.textContent = "Other — type your own response";
+  other.textContent = "Other: Type your own response";
   other.addEventListener("click", () => {
     Sfx.play("click");
     dismissAskPanel();
@@ -4088,7 +4088,7 @@ function sendNow(id, btn) {
 }
 
 /* While Syna waits for an answer, a "Send now" delivery can only happen
-   after the question is resolved — disable the buttons so that shows. */
+   after the question is resolved; disable the buttons so that shows. */
 function setQueueSendDisabled(disabled) {
   if (!queueDock) return;
   queueDock.querySelectorAll(".queue-send").forEach((btn) => {
@@ -4163,7 +4163,7 @@ function finishToolRow(event) {
 
 /* The harness never lets the model see a result while a call is still
    running, so any tool row still marked running when the model speaks or
-   the turn ends is stale — e.g. its finished event was delivered to
+   the turn ends is stale; e.g. its finished event was delivered to
    another open window. Settle it so its animation cannot run forever. */
 function finishStaleToolRows() {
   const stale = document.querySelectorAll(".tool-row.running");
@@ -5303,8 +5303,8 @@ connect();
  * Sentences are found with the browser's ICU-backed Intl.Segmenter,
  * which handles decimals, abbreviations like "a. m.", ellipses, quotes,
  * URLs, version numbers and inline enumerations natively, in every
- * locale. ICU's single weakness — a title abbreviation followed by a
- * capitalized word ("El Dr. García") — is repaired by merging adjacent
+ * locale. ICU's single weakness, a title abbreviation followed by a
+ * capitalized word ("El Dr. García"), is repaired by merging adjacent
  * segments across a small abbreviation list. Engines without
  * Intl.Segmenter fall back to terminator scanning plus the same merge
  * list: slightly weaker on inline enumerations, never harmful.
@@ -5520,7 +5520,7 @@ const Voice = (() => {
   /* Hands-free mode (settings, Voice): after a reply reaches the chat,
      start listening again. A reply that will be narrated arms the
      auto-listen when its text is revealed, and the mic opens when the
-     narration drains — never while Syna is still speaking, or the
+     narration drains; never while Syna is still speaking, or the
      microphone would record her own voice. The flag is server config
      (continuous_conversation): it changes through the settings GUI and
      takes effect on Save and Restart. */
@@ -5687,7 +5687,7 @@ const Voice = (() => {
      after one long synthesis. The response text stays hidden behind the
      "Tuning up, please wait..." pill until the first of: the first
      chunk's audio arriving (playback starts), the first chunk failing,
-     or the reveal timeout elapsing — at which point in-flight synthesis
+     or the reveal timeout elapsing; at which point in-flight synthesis
      is aborted and dropped. A chunk that errors, is refused by the
      model, or fails to decode is skipped with an event row while the
      rest of the narration continues. */

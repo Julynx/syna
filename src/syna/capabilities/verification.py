@@ -88,7 +88,7 @@ def run_verification(summary: str):
     """Run the isolated review request; return its text or an error dict.
 
     Follows the describe_image convention: never raises, never stops the
-    tool batch — failures come back as {'error': ...} so the agent knows
+    tool batch: failures come back as {'error': ...} so the agent knows
     verification did not happen.
     """
     logger = get_logger()

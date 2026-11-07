@@ -5,7 +5,7 @@ search endpoints. Engines are tried in order until one returns results: a
 real browser fingerprint passes the anomaly checks that block plain HTTP
 clients, and falling back across independent providers through real
 navigations is exactly what a person retrying on another search engine
-looks like — unlike a bot-shaped HTTP library, whose failures are the
+looks like, unlike a bot-shaped HTTP library, whose failures are the
 requests most likely to earn the IP a place on a bot list.
 
 Every wait is randomized (never fixed) so request timing carries no
@@ -15,12 +15,12 @@ next search. The browser is created lazily and kept warm for the process
 lifetime; searches share a process-wide pacing lock.
 
 The search is self-timed: the tool call blocks until the search completes,
-fails, or runs out of its own budget — the harness never detaches it, and
+fails, or runs out of its own budget; the harness never detaches it, and
 a queued search waits for the running one instead of overlapping. Two
 budgets bound the call. Starting the stealth browser from cold gets its
 own generous launch budget: it is startup, not search work, and its
 duration varies with OS cache state. The engine chain gets a search
-budget enforced cooperatively — each navigation's timeout is capped by
+budget enforced cooperatively: each navigation's timeout is capped by
 what remains of the budget, so expiry stops the chain within that
 navigation instead of abandoning it mid-flight.
 """
@@ -217,9 +217,9 @@ _engine_blocked_until: dict[str, float] = {}
 def _search_lock_wait_s() -> float:
     """Return the lock-wait cap for a queued search.
 
-    Long enough for the running search to finish legitimately — launch
+    Long enough for the running search to finish legitimately: launch
     budget, search budget, the pacing sleep ahead of it, and the
-    harness's stop grace — so a queued search never fails one that would
+    harness's stop grace, so a queued search never fails one that would
     have succeeded. Short enough that a search wedged past every budget
     fails the waiter with a clear error instead of hanging the turn.
     """
@@ -236,10 +236,10 @@ def search_deadline_s() -> float:
 
     The search enforces its own budgets, so this deadline is a bug guard
     that must only fire when that enforcement has failed. It therefore
-    outlasts every legitimate path: the pacing lock's wait cap — which
+    outlasts every legitimate path: the pacing lock's wait cap, which
     already embeds the launch budget, the search budget, the pacing
     sleep, and the stop grace of the running search a queued call waits
-    behind — plus the searcher's own budget and the slack for pacing and
+    behind, plus the searcher's own budget and the slack for pacing and
     one bounded navigation.
     """
     return (
@@ -294,7 +294,7 @@ def search(query, delay_s=2):
     least 'delay_s' apart instead of firing together: a queued search waits
     for the running one, which always finishes within its budgets, instead
     of overlapping. Raises ValueError when the wait outlasts the lock's
-    worst-case hold — the running search wedged past every budget.
+    worst-case hold: the running search wedged past every budget.
     """
     logger = get_logger()
     wait_started = time.monotonic()
@@ -308,7 +308,7 @@ def search(query, delay_s=2):
         )
         raise ValueError(
             "Another web search is still running and has held the lock for"
-            f" {wait_limit:.0f} seconds — past every budget, so it appears"
+            f" {wait_limit:.0f} seconds: past every budget, so it appears"
             " stuck and could not be stopped. Wait a moment, then retry."
         )
     try:
@@ -453,7 +453,7 @@ def _get_browser():
     """Return the shared search browser, starting it once.
 
     The construction runs in a helper thread bounded by the launch
-    budget — a cold start is startup, not search work — so a caller
+    budget, a cold start is startup, not search work, so a caller
     that outlives the budget abandons the wait, not the start, and a
     constructor wedged forever is a bug the harness's own deadline
     reports as a hung call.

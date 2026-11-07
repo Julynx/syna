@@ -99,20 +99,21 @@ _registry_lock = threading.Lock()
 
 
 class SessionRecord:
-    """Owns one client's agent session, container, queues and shared files."""
+    """Owns one client's agent session, container, queues and shared files.
+
+    The inbox is a deque under a condition instead of a queue.Queue:
+    "Send now" removes a specific queued item, which a Queue cannot do
+    safely. One delivery queue per connected WebSocket: every open
+    surface (a reloaded tab, a second window, the desktop app) receives
+    every event, instead of a shared queue splitting them between
+    connections."""
 
     def __init__(self, client_id: str):
         self.client_id = client_id
-        # A deque under a condition instead of a queue.Queue: "Send now"
-        # removes a specific queued item, which a Queue cannot do safely.
         self.inbox: deque = deque()
         self.inbox_ready = threading.Condition()
         self.event_log: list[dict] = []
         self.event_log_lock = threading.Lock()
-        # One delivery queue per connected WebSocket: every open surface
-        # (a reloaded tab, a second window, the desktop app) receives
-        # every event, instead of a shared queue splitting them between
-        # connections.
         self.subscribers: list[queue.Queue] = []
         self.shared: dict[str, dict] = {}
         self.pending_question = interaction.PendingQuestion()
@@ -288,7 +289,13 @@ class SessionRecord:
             self.enqueue_message(item)
 
     def _run_worker(self):
-        """Own this session's container and process the inbox sequentially."""
+        """Own this session's container and process the inbox sequentially.
+
+        A message whose container could not start is never dropped: it goes
+        back to the head of the queue (its pill stays honest) and the
+        engine bring-up is retried after a pause. The queued pill becomes a
+        chat bubble exactly when the message leaves the queue and starts
+        its turn."""
         self._start_container()
         try:
             while not self.shutdown.is_set():
@@ -298,15 +305,10 @@ class SessionRecord:
                 if self.container is None:
                     self._start_container()
                 if self.container is None:
-                    # Never drop the message: it goes back to the head of
-                    # the queue (its pill stays honest) and the engine
-                    # bring-up is retried after a pause.
                     self._requeue_front(item)
                     self.shutdown.wait(5.0)
                     continue
                 if item.get("was_queued"):
-                    # The queued pill becomes a chat bubble exactly when
-                    # the message leaves the queue and starts its turn.
                     self.push(
                         {
                             "type": "user_message",
@@ -545,7 +547,7 @@ async def enforce_local_origin(request: Request, call_next):
 
     With a token in force: the Host header must name the server's own
     loopback address, and /api and /setup endpoints must present the
-    token (header or query — query because <img> and download links
+    token (header or query: query because <img> and download links
     cannot set headers). Static assets, the HTML shell, and the setup
     wizard page stay open so the page can bootstrap and learn the token.
     """
@@ -575,15 +577,17 @@ def health():
 
 @app.get("/")
 def index():
-    """Serve the chat GUI with runtime settings injected."""
+    """Serve the chat GUI with runtime settings injected.
+
+    The config payload escapes `</` so no injected value can close the
+    script tag early; AUTH_TOKEN is url-safe anyway, but the config
+    shape is user-editable."""
     html = read_asset_text("chat.html")
     gui_config = {
         "max_visible_tool_calls": config.get("max_visible_tool_calls", 3),
         "voice": speech.client_configuration(speech_settings, config),
         "auth_token": AUTH_TOKEN,
     }
-    # "</" escaped so no value can close the script tag early; AUTH_TOKEN
-    # is url-safe anyway, but the config shape is user-editable.
     payload = json.dumps(gui_config).replace("</", "<\\/")
     script = f"<script>window.SYNA_CONFIG = {payload};</script>"
     return HTMLResponse(html.replace("</head>", script + "</head>"))
@@ -639,6 +643,20 @@ async def save_setup_config(request: SetupConfigRequest):
             raise HTTPException(
                 status_code=400,
                 detail=f"An API key is required for {preset['name']}.",
+            )
+        key_prefix = preset.get("key_prefix", "")
+        if (
+            key_prefix
+            and request.api_key.strip()
+            and not request.api_key.strip().startswith(key_prefix)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"That does not look like a {preset['name']} key"
+                    f" ({preset['name']} keys start with {key_prefix})."
+                    " Paste the full key, without extra text."
+                ),
             )
     else:
         raise HTTPException(status_code=400, detail="Unknown provider.")
@@ -725,7 +743,7 @@ async def new_chat(client_id: str):
 
     Returns before the client reconnects; the replacement session (with a
     new container) is created on the next WebSocket connect. If a turn is
-    still stuck past the stop timeout, teardown proceeds anyway — the old
+    still stuck past the stop timeout, teardown proceeds anyway; the old
     worker finishes cleaning up in the background while the client gets a
     brand new session.
     """
@@ -1062,7 +1080,6 @@ async def save_settings(request: SettingsUpdateRequest):
     if request.config:
         save_config(request.config)
 
-    # Invalidate caches and reset any open browser
     load_config.cache_clear()
     global speech_settings, config
     config = load_config()
@@ -1175,12 +1192,17 @@ async def _pump_events(subscriber: queue.Queue, websocket: WebSocket):
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
-    """Two-way realtime channel between one client and its session."""
+    """Two-way realtime channel between one client and its session.
+
+    With a token in force, origin and token checks run before accept:
+    browsers do not same-origin restrict WebSockets, so the server
+    enforces it; a missing Origin comes from the file:// fallback
+    client and still needs the token, and closing before accepting
+    denies the handshake with an HTTP 403. The subscriber registers
+    under the same lock push() holds, so any event pushed from that
+    point lands in this connection's queue, and the history snapshot
+    carries everything before it, exactly once, no gap."""
     if AUTH_TOKEN:
-        # A page's WebSocket is not same-origin restricted by browsers;
-        # the server enforces it instead. A missing Origin comes from the
-        # file:// fallback client and still needs the token; closing
-        # before accepting denies the handshake with an HTTP 403.
         origin = websocket.headers.get("origin", "")
         if origin and not _is_local_origin(origin):
             await websocket.close(code=1008)
@@ -1201,9 +1223,6 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         return
     record.touch()
 
-    # Register under the same lock push() holds: any event pushed from
-    # here on lands in this connection's queue, and the history snapshot
-    # carries everything before it — exactly once, no gap.
     subscriber: queue.Queue = queue.Queue()
     with record.event_log_lock:
         history = list(record.event_log)
@@ -1231,8 +1250,6 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 if item is None:
                     continue
                 content = item["content"]
-                # A pending ask_user question is waiting: this message
-                # is the typed answer, not the start of a new turn.
                 if record.pending_question.active and record.answer_pending_question(
                     content
                 ):
