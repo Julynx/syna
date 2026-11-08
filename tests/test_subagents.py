@@ -417,9 +417,29 @@ def test_check_reports_paths_and_state(monkeypatch):
     result = check_subagent("sc", registry=registry, container=FakeContainer())
     assert "running" in result and "nesting level 2 of 3" in result
     assert "/workspace/subagents/sc/messages.json" in result
-    assert "not readable from the pod" in result
+    assert "host dump" not in result, "host paths stay out of pod-facing reports"
+    assert not record.outcome_collected, "a running check collects nothing"
     unknown = check_subagent("nope", registry=registry, container=FakeContainer())
     assert unknown.startswith("ERROR:") and "per-session" in unknown
+
+
+def test_check_of_finished_subagent_collects_the_outcome(monkeypatch):
+    """A settled check reports the outcome once and marks it collected."""
+    registry = fresh_registry()
+    record = SubagentRecord(id="sf", goal="the goal", level=2)
+    record.dump_host_path = None
+    record.started = time.time() - 90
+    record.finished_at = record.started + 30
+    record.state = "finished"
+    record.end_reason = "response"
+    record.response = "All done."
+    registry.subagents["sf"] = record
+    monkeypatch.setattr(subagents, "load_max_subagent_depth", lambda: 3)
+    result = check_subagent("sf", registry=registry, container=FakeContainer())
+    assert "finished with a response after 30s" in result, result
+    assert "after 90s" not in result
+    assert record.outcome_collected
+    assert "host dump" not in result
 
 
 def test_allegro_is_inherited(monkeypatch):
@@ -481,6 +501,7 @@ def main():
             test_completion_notice_names_pod_paths,
             test_last_assistant_content_fallback,
             test_check_reports_paths_and_state,
+            test_check_of_finished_subagent_collects_the_outcome,
             test_allegro_is_inherited,
         ]
     )

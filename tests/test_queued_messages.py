@@ -220,7 +220,7 @@ def test_background_notice_queueing_and_wait_for_drop():
     assert len(pushed) == 1 and pushed[0]["type"] == "background_done"
     assert not record._notice_is_stale({"bg_kind": "process", "bg_id": "p1"})
 
-    proc.collected_by_wait_for = True
+    proc.outcome_collected = True
     assert record._notice_is_stale({"bg_kind": "process", "bg_id": "p1"})
     assert not record._notice_is_stale({"bg_id": None})
     record._on_background_completion(
@@ -228,7 +228,67 @@ def test_background_notice_queueing_and_wait_for_drop():
     )
     assert len(record.inbox) == 1, "the collected outcome is not enqueued twice"
     assert len(pushed) == 2, "the UI still learns about the completion"
-    print("PASS wait_for collection suppresses the duplicate wake notice")
+    print("PASS outcome collection suppresses the duplicate wake notice")
+
+
+def _notice_item(item_id: str, text: str) -> dict:
+    from syna.protocol.channel import harness_notice, wrap_channel
+
+    return {
+        "kind": "message",
+        "id": item_id,
+        "bg_kind": "process",
+        "bg_id": item_id,
+        "content": wrap_channel("HARNESS_NOTICE", harness_notice(text)),
+    }
+
+
+def test_notice_batching_merges_head_notices_into_one_message():
+    """Queued notices drain in one turn; a user message stops the sweep."""
+    from syna.protocol.channel import unwrap_channel
+
+    record = _make_record()
+    record.container = object()
+    record.inbox.extend(
+        [
+            _notice_item("n1", "first notice"),
+            _notice_item("n2", "second notice"),
+            {"kind": "message", "id": "u1", "content": "hello"},
+            _notice_item("n3", "third notice"),
+        ]
+    )
+    first = record.inbox.popleft()
+    merged = record._merge_notice_batch(first)
+    assert merged is not None
+    kind, body = unwrap_channel(merged["content"])
+    assert kind == "HARNESS_NOTICE"
+    assert "first notice" in body and "second notice" in body
+    assert "third notice" not in body, "a non-notice message stops the sweep"
+    assert [item["id"] for item in record.inbox] == ["u1", "n3"]
+    print("PASS queued notices merge into one wake message")
+
+
+def test_notice_batching_drops_collected_outcomes():
+    from syna.protocol.channel import unwrap_channel
+
+    record = _make_record()
+    record.container = object()
+    registry = registry_for(record.container)
+    proc = ProcessRecord(id="p1", command="x", dir="/d")
+    registry.processes["p1"] = proc
+    proc.outcome_collected = True
+    record.inbox.extend(
+        [
+            _notice_item("p1", "already collected"),
+            _notice_item("n2", "fresh notice"),
+        ]
+    )
+    first = record.inbox.popleft()
+    merged = record._merge_notice_batch(first)
+    kind, body = unwrap_channel(merged["content"])
+    assert "already collected" not in body
+    assert "fresh notice" in body
+    print("PASS a collected outcome is dropped from the batch")
 
 
 def main():
@@ -244,6 +304,8 @@ def main():
             test_injection_emits_user_message_event_with_id,
             test_requeue_injections_returns_undelivered_messages,
             test_background_notice_queueing_and_wait_for_drop,
+            test_notice_batching_merges_head_notices_into_one_message,
+            test_notice_batching_drops_collected_outcomes,
         ]
     )
 

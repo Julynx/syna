@@ -46,7 +46,7 @@ from pydantic import BaseModel
 from . import interaction, setup
 from .capabilities import processes, speech, subagents
 from .pod_io import pod_copy_from
-from .protocol.channel import harness_notice, wrap_channel
+from .protocol.channel import harness_notice, unwrap_channel, wrap_channel
 from .config import (
     DEFAULT_IMAGE_GENERATION_ENABLED,
     DEFAULT_IMAGE_MODEL,
@@ -321,26 +321,61 @@ class SessionRecord:
         )
 
     def _wait_for_collected(self, kind: str, background_id: str) -> bool:
-        """Whether wait_for already returned this record's final report."""
+        """Whether the model already collected this record's outcome.
+
+        wait_for, check, and kill all report a finished record's final
+        outcome and set its collected flag when they do.
+        """
         if self.container is None:
             return False
         registry = processes.peek_registry(self.container)
         if registry is None:
             return False
         entry = registry.lookup(background_id)
-        return entry is not None and entry[1].collected_by_wait_for
+        return entry is not None and entry[1].outcome_collected
 
     def _notice_is_stale(self, item: dict) -> bool:
-        """Whether a queued background notice lost the race to wait_for.
+        """Whether a queued background notice lost the race to a report.
 
-        wait_for sets the record's collected flag when it returns the
-        final report; a notice enqueued before that must not wake the
-        model with the same outcome a second time.
+        wait_for, check, and kill set the record's collected flag when
+        they return the final outcome; a notice enqueued before that
+        must not wake the model with the same outcome a second time.
         """
         background_id = item.get("bg_id")
         if not background_id:
             return False
         return self._wait_for_collected(item.get("bg_kind") or "", background_id)
+
+    def _merge_notice_batch(self, first: dict) -> dict | None:
+        """Join every pending background notice into one wake message.
+
+        Completion notices queue while a turn runs, and draining them
+        one per turn burns a model round trip each. Notice items still
+        at the head of the inbox ride along with the first one (a
+        non-notice message stops the sweep and keeps its place), minus
+        the ones whose outcome the model already collected. The bodies
+        merge under a single channel wrapper, the same shape batched
+        tool results use.
+        """
+        items = [first]
+        with self.inbox_ready:
+            while self.inbox and self.inbox[0].get("bg_id"):
+                items.append(self.inbox.popleft())
+        bodies = []
+        for entry in items:
+            if self._notice_is_stale(entry):
+                logger.info(
+                    "Dropping the completion notice for '%s': the model"
+                    " already collected its outcome.",
+                    entry.get("bg_id"),
+                )
+                continue
+            unwrapped = unwrap_channel(entry.get("content") or "")
+            bodies.append(unwrapped[1] if unwrapped else entry.get("content", ""))
+        if not bodies:
+            return None
+        first["content"] = wrap_channel("HARNESS_NOTICE", "\n\n".join(bodies))
+        return first
 
     def _on_session_event(self, event: dict):
         metadata = shared_file_metadata(event)
@@ -404,12 +439,8 @@ class SessionRecord:
                 item = self._next_message(timeout=1.0)
                 if item is None or item.get("kind") != "message":
                     continue
-                if self._notice_is_stale(item):
-                    logger.info(
-                        "Dropping the completion notice for '%s': wait_for"
-                        " already reported its outcome.",
-                        item["bg_id"],
-                    )
+                item = self._merge_notice_batch(item)
+                if item is None:
                     continue
                 if self.container is None:
                     self._start_container()

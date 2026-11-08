@@ -1078,14 +1078,18 @@ module never imports session machinery, so there is no cycle).
   with the id, a one-line UI summary, and the model-facing notice. The
   server pushes the summary as a `background_done` event and enqueues
   the notice into the parent worker's inbox, which wakes an idle
-  worker or queues behind an active turn — unless `wait_for` already
-  returned the final report: it sets the record's
-  `collected_by_wait_for` flag, finalize skips the notice for it, the
-  server skips enqueueing it, and a notice already queued when
-  `wait_for` collected the outcome is dropped at dequeue time
-  (`_notice_is_stale`), so work that ends on its own reaches the model
-  exactly once. Collection via `check` never sets the flag: a check
-  racing the real end may legitimately produce two messages. All pod
+  worker or queues behind an active turn — unless the model already
+  collected the outcome: `wait_for`, `check`, and `kill` all set the
+  record's `outcome_collected` flag when their report carries the
+  final outcome, finalize skips the notice for it, the server skips
+  enqueueing it, and a notice already queued by then is dropped at
+  dequeue time (`_notice_is_stale`), so work that ends on its own
+  reaches the model exactly once. A check of a *running* process sets
+  nothing: a check racing the real end may legitimately produce two
+  messages (one report, one notice). Queued notices also drain as one
+  batched wake message instead of one turn each (the server's
+  `_merge_notice_batch`), and reports quote the runtime measured at
+  the record's end time (`finished_at`), not at report time. All pod
   calls serialize over
   bollard's single HTTP connection, so a notice can lag behind a
   long-running `execute_command` on the same pod; a late notice is

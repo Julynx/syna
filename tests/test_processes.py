@@ -203,6 +203,34 @@ def test_kill_on_finished_process_reports_snapshot(monkeypatch):
     )
     assert "already finished" in report
     assert proc.killed_by is None, "a settled record keeps its own story"
+    assert proc.outcome_collected, "the kill report carried the outcome"
+    assert proc.finished_at is not None
+
+
+def test_finished_reports_use_the_recorded_end_time(monkeypatch):
+    """A finished process's runtime comes from its end time, not report time."""
+    proc = ProcessRecord(id="p1", command="x", dir="/d")
+    proc.started = time.time() - 60
+    proc.finished_at = proc.started + 5
+    report = format_process_report(proc, "exited:0", "", "")
+    assert "after 5s" in report, report
+    assert "after 60s" not in report
+    still_running = ProcessRecord(id="p2", command="x", dir="/d")
+    still_running.started = time.time() - 7
+    report = format_process_report(still_running, "running", "", "")
+    assert "runtime 7s" in report, report
+
+
+def test_observe_end_time_adopts_the_first_finished_sighting():
+    proc = ProcessRecord(id="p1", command="x", dir="/d")
+    processes.observe_end_time(proc, "running")
+    assert proc.finished_at is None
+    before = time.time()
+    processes.observe_end_time(proc, "exited:0")
+    assert proc.finished_at is not None and proc.finished_at >= before
+    marked = proc.finished_at
+    processes.observe_end_time(proc, "exited:1")
+    assert proc.finished_at == marked, "the first sighting wins"
 
 
 def test_unknown_id_error_explains_recovery():
@@ -220,6 +248,7 @@ def test_finalize_fires_one_completion_notice():
     processes._finalize_process(registry, proc, str(CAP_EXIT_CODE))
     processes._finalize_process(registry, proc, str(CAP_EXIT_CODE))
     assert len(seen) == 1
+    assert proc.finished_at is not None, "finalize records the end time"
     payload = seen[0]
     assert payload["kind"] == "process" and payload["id"] == "p9"
     assert "runtime cap" in payload["model_notice"]
@@ -232,7 +261,7 @@ def test_wait_for_collection_suppresses_the_notice():
     registry.completion_sink = lambda payload: seen.append(payload)
     proc = ProcessRecord(id="p10", command="x", dir="/d")
     registry.processes["p10"] = proc
-    proc.collected_by_wait_for = True
+    proc.outcome_collected = True
     processes._finalize_process(registry, proc, "0")
     assert seen == [], "wait_for already reported this outcome"
     assert proc.state == "exited" and proc.exit_code == 0

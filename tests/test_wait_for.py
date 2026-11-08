@@ -95,7 +95,7 @@ def test_wait_for_collection_suppresses_the_process_notice(monkeypatch):
 
     result = tools.wait_for(name="done")
     assert "finished with exit code 0" in result
-    assert proc.collected_by_wait_for
+    assert proc.outcome_collected
     processes._finalize_process(registry, proc, "0")
     assert seen == [], "the process ending on its own must notify once"
 
@@ -114,7 +114,7 @@ def test_wait_for_collection_suppresses_the_subagent_notice(monkeypatch):
 
     result = tools.wait_for(name="sa")
     assert "finished with a response" in result
-    assert record.collected_by_wait_for
+    assert record.outcome_collected
     processes._finalize_subagent(registry, record, FakeContainer())
     assert seen == [], "the subagent ending on its own must notify once"
 

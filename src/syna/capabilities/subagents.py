@@ -47,6 +47,7 @@ from ..state import (
 from .processes import (
     SUBAGENT_DIR_ROOT,
     PodRegistry,
+    _ended_runtime_s,
     fire_completion,
     pod_copy_to,
     pod_exec,
@@ -84,6 +85,7 @@ class SubagentRecord:
     goal: str
     level: int
     started: float = field(default_factory=time.time)
+    finished_at: float | None = None
     runtime_cap_s: int | None = None
     state: str = "running"
     end_reason: str | None = None
@@ -97,7 +99,7 @@ class SubagentRecord:
     events_lock: threading.Lock = field(default_factory=threading.Lock)
     event_seq: int = 0
     notified: bool = False
-    collected_by_wait_for: bool = False
+    outcome_collected: bool = False
     allegro: bool = False
 
 
@@ -296,6 +298,8 @@ def _run_subagent(
         set_background_level(None)
         set_background_allegro(None)
         unregister_container()
+        if record.state != "running" and record.finished_at is None:
+            record.finished_at = time.time()
         if record.session is not None:
             try:
                 record.session.close()
@@ -388,7 +392,7 @@ def subagent_status_summary(record: SubagentRecord) -> str:
 
 def subagent_completion_notice(record: SubagentRecord) -> str:
     """The model-facing wake notice for a finished subagent."""
-    runtime = time.time() - record.started
+    runtime = _ended_runtime_s(record)
     if record.end_reason == "runtime cap":
         outcome = (
             "was stopped by its runtime cap (the cap is"
@@ -428,7 +432,7 @@ def _finalize_subagent(registry: PodRegistry, record: SubagentRecord, container)
         registry, record, {"kind": "done", "summary": subagent_status_summary(record)}
     )
     with registry.lock:
-        already_known = record.notified or record.collected_by_wait_for
+        already_known = record.notified or record.outcome_collected
         record.notified = True
     get_logger().info("Subagent '%s' %s.", record.id, subagent_status_summary(record))
     if not already_known:
@@ -530,6 +534,9 @@ def check_subagent(
     except Exception:
         get_logger().exception("Subagent '%s' artifact copy failed", record.id)
     runtime = time.time() - record.started
+    if record.state != "running":
+        runtime = _ended_runtime_s(record)
+        record.outcome_collected = True
     max_depth = load_max_subagent_depth()
     if record.state == "running":
         header = (
@@ -571,7 +578,6 @@ def check_subagent(
         paths += (
             f" The response lands at {pod_dir}/{RESPONSE_COPY_NAME} when it finishes."
         )
-    paths += f" Full host dump: {record.dump_host_path} (not readable from the pod)."
     sections.append(paths)
     return "\n\n".join(sections)
 

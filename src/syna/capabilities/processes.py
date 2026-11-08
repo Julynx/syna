@@ -87,13 +87,14 @@ class ProcessRecord:
     command: str
     dir: str
     started: float = field(default_factory=time.time)
+    finished_at: float | None = None
     pgid: int | None = None
     runtime_cap_s: int | None = None
     state: str = "running"
     exit_code: int | None = None
     killed_by: str | None = None
     notified: bool = False
-    collected_by_wait_for: bool = False
+    outcome_collected: bool = False
 
 
 def process_runtime_cap_s(proc: ProcessRecord) -> int:
@@ -494,7 +495,9 @@ def _finalize_process(registry: PodRegistry, proc: ProcessRecord, exit_marker: s
         except ValueError:
             proc.exit_code = None
         proc.state = "exited"
-        already_known = proc.notified or proc.collected_by_wait_for
+        if proc.finished_at is None:
+            proc.finished_at = time.time()
+        already_known = proc.notified or proc.outcome_collected
         proc.notified = True
     if already_known:
         return
@@ -548,7 +551,7 @@ def fire_completion(
 
 def process_completion_notice(proc: ProcessRecord) -> str:
     """The model-facing wake notice for a finished process."""
-    runtime = time.time() - proc.started
+    runtime = _ended_runtime_s(proc)
     if proc.exit_code == CAP_EXIT_CODE:
         outcome = (
             "hit its runtime cap and was killed"
@@ -583,6 +586,28 @@ def _fire_completion(registry: PodRegistry, kind: str, notice: str) -> None:
         )
     except Exception:
         get_logger().exception("Background completion sink failed")
+
+
+def _ended_runtime_s(record) -> float:
+    """Seconds a finished piece of work actually ran.
+
+    Prefers the recorded end time; a record whose end was never marked
+    (finalize lagged behind a report path) falls back to now, which is
+    the old at-report measurement and still better than nothing.
+    """
+    end = record.finished_at if record.finished_at is not None else time.time()
+    return end - record.started
+
+
+def observe_end_time(record, state: str) -> None:
+    """Mark the end time the first time a report path sees finished work.
+
+    Finalize normally records the end; a check or kill that probes the
+    pod before the watcher catches up adopts its observation so later
+    reports cannot keep stretching the runtime.
+    """
+    if state != "running" and record.finished_at is None:
+        record.finished_at = time.time()
 
 
 def process_status_summary(proc: ProcessRecord) -> str:
@@ -666,7 +691,10 @@ def format_process_report(
     proc: ProcessRecord, state: str, stdout: str, stderr: str
 ) -> str:
     """Render check/kill output: state, runtime, tails, artifact paths."""
-    runtime = time.time() - proc.started
+    if state == "running":
+        runtime = time.time() - proc.started
+    else:
+        runtime = _ended_runtime_s(proc)
     if state == "running":
         header = (
             f"Process '{proc.id}': running (runtime {runtime:.0f}s of a"
@@ -729,6 +757,9 @@ def kill_process(
             return "ERROR: " + unknown_id_error(process_id)
         if proc.state != "running":
             state, stdout, stderr = check_process_state(container, proc.dir)
+            if state != "running":
+                observe_end_time(proc, state)
+                proc.outcome_collected = True
             return (
                 format_process_report(proc, state, stdout, stderr)
                 + " It had already finished before this kill call."
