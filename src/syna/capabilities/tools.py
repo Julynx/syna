@@ -63,6 +63,7 @@ from .image_generation import (
 )
 from ..interaction import InteractionCancelled, InteractionError
 from ..interaction import ask as ask_interactive
+from ..pod_io import pod_copy_from, pod_copy_to, pod_exec
 from .processes import (
     NONINTERACTIVE_ENV_EXPORTS,
     WAIT_FOR_MAX_S,
@@ -188,7 +189,7 @@ def execute_command(command: str, arguments: list[str] | None = None):
     output_path = get_call_output_path()
     if not output_path:
         argv = [command, *arguments] if arguments else ["bash", "-c", command]
-        return container.exec(argv)
+        return pod_exec(container, argv)
 
     timeout_s = _effective_command_timeout()
     exit_path = output_path + ".exit"
@@ -215,8 +216,8 @@ def execute_command(command: str, arguments: list[str] | None = None):
             f"chmod 444 {shlex.quote(output_path)} 2>/dev/null || true",
         ]
     )
-    container.exec(["bash", "-c", runner_script])
-    view = container.exec(["bash", "-c", _reader_script(output_path, exit_path)])
+    pod_exec(container, ["bash", "-c", runner_script])
+    view = pod_exec(container, ["bash", "-c", _reader_script(output_path, exit_path)])
 
     match = EXIT_CODE_MARKER_PATTERN.search(view)
     if match:
@@ -281,14 +282,14 @@ def _write_into_pod(data: bytes, pod_dir: str, file_name: str) -> str:
     result already reported. Regeneration produces new, timestamped names.
     """
     container = get_container()
-    container.exec(["bash", "-c", f"mkdir -p {shlex.quote(pod_dir)}"])
+    pod_exec(container, ["bash", "-c", f"mkdir -p {shlex.quote(pod_dir)}"])
     with tempfile.TemporaryDirectory(prefix="syna-artifact-") as temp_dir:
         host_file = Path(temp_dir, file_name)
         host_file.write_bytes(data)
-        container.copy_to(str(host_file), pod_dir)
+        pod_copy_to(container, str(host_file), pod_dir)
     pod_path = f"{pod_dir}/{file_name}"
     try:
-        container.exec(["bash", "-c", f"chmod 444 {shlex.quote(pod_path)}"])
+        pod_exec(container, ["bash", "-c", f"chmod 444 {shlex.quote(pod_path)}"])
     except Exception:
         get_logger().warning("Could not make %s read-only", pod_path, exc_info=True)
     return pod_path
@@ -382,7 +383,7 @@ def _copy_from_pod(container, pod_path: str, host_dir: Path) -> str | None:
     Docker failure propagates unchanged.
     """
     try:
-        container.copy_from(pod_path, str(host_dir))
+        pod_copy_from(container, pod_path, str(host_dir))
     except DockerException as exc:
         message = str(exc)
         if (
@@ -438,7 +439,7 @@ def edit_file(file_path: str, operations: list[dict]):
             return error
         temp_file_path = Path(temp_path, basename(file_path))
         diff = e_edit_file(temp_file_path, operations)
-        container.copy_to(str(temp_file_path), dirname(file_path) or "/")
+        pod_copy_to(container, str(temp_file_path), dirname(file_path) or "/")
     message = f"File edited successfully ({len(operations)} operations applied)."
     if diff:
         message += f"\n\nApplied diff:\n{diff}"
@@ -623,14 +624,15 @@ def share_file(file_path: str):
     """
     container = get_container()
     quoted_path = shlex.quote(file_path)
-    probe = container.exec(
+    probe = pod_exec(
+        container,
         [
             "bash",
             "-c",
             f"if [ -f {quoted_path} ]; then echo file;"
             f" elif [ -d {quoted_path} ]; then echo dir;"
             f" else echo missing; fi",
-        ]
+        ],
     ).strip()
     if probe == "missing":
         set_last_exit_code(1)

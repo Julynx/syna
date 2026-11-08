@@ -259,6 +259,43 @@ def test_watcher_stops_when_the_pod_dies(monkeypatch):
     assert registry.watcher_started, "a dead pod ends the watcher for good"
 
 
+def test_watcher_survives_a_transient_poll_failure(monkeypatch):
+    """One failed probe must not silence notices for the session.
+
+    Live-observed in a real session: a poll that raced other pod work
+    raised, the watcher declared the pod gone and stopped, and a
+    finished process never delivered its completion notice.
+    """
+    registry = fresh_registry()
+    proc = ProcessRecord(id="pw", command="x", dir="/d")
+    registry.processes["pw"] = proc
+    monkeypatch.setattr(processes, "WATCHER_POLL_INTERVAL_S", 0.01)
+
+    class FlakyPod:
+        def __init__(self):
+            self.calls = 0
+
+        def exec(self, argv):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("CannotSendRequest on a busy connection")
+            return "0"
+
+    pod = FlakyPod()
+    finished = []
+    real_finalize = processes._finalize_process
+
+    def one_shot_finalize(reg, record, marker):
+        real_finalize(reg, record, marker)
+        finished.append(True)
+        registry.active = False
+
+    monkeypatch.setattr(processes, "_finalize_process", one_shot_finalize)
+    processes._watch_processes(registry, pod)
+    assert finished and proc.state == "exited" and proc.exit_code == 0
+    assert pod.calls >= 2, "the watcher retried after the failure"
+
+
 def test_watcher_picks_up_a_process_spawned_later(monkeypatch):
     """The race the live test caught: a spawn after an exit must be seen.
 
@@ -339,6 +376,7 @@ def main():
             test_completion_notice_text_carries_paths,
             test_watcher_notices_exit_and_keeps_looping,
             test_watcher_stops_when_the_pod_dies,
+            test_watcher_survives_a_transient_poll_failure,
             test_watcher_picks_up_a_process_spawned_later,
             test_registry_for_is_stable_per_container,
             test_wait_for_deadline_composition,

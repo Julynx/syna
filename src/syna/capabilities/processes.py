@@ -61,6 +61,11 @@ WAIT_FOR_POLL_INTERVAL_S = 1.0
 
 # How often the completion watcher probes the pod for exit markers.
 WATCHER_POLL_INTERVAL_S = 3.0
+# A watcher poll that raises is retried; only this many consecutive
+# failures declare the pod gone. One transient failure (a moment of
+# connection pressure, a slow probe) must not silence completion
+# notices for the rest of the session.
+WATCHER_MAX_CONSECUTIVE_FAILURES = 3
 # How long spawn waits for the process group id to appear.
 PGID_WAIT_S = 4.0
 
@@ -69,20 +74,9 @@ PGID_WAIT_S = 4.0
 # connection in bollard's client, so concurrent callers corrupt the
 # connection state (observed live: CannotSendRequest mid-request when
 # the process watcher raced a tool call's exec). All pod calls in the
-# background-work paths go through these two helpers.
-_pod_call_lock = threading.Lock()
-
-
-def pod_exec(container, argv: list[str]) -> str:
-    """Run one pod exec under the client-wide connection lock."""
-    with _pod_call_lock:
-        return container.exec(argv)
-
-
-def pod_copy_to(container, host_path: str, pod_dir: str) -> None:
-    """Copy one host file into the pod under the connection lock."""
-    with _pod_call_lock:
-        container.copy_to(host_path, pod_dir)
+# codebase go through the shared helpers in `pod_io`; this module
+# re-exports them for `subagents.py`.
+from ..pod_io import pod_copy_to, pod_exec  # noqa: F401  (re-export)
 
 
 @dataclass
@@ -405,11 +399,13 @@ def _watch_processes(registry: PodRegistry, container) -> None:
 
     One watcher per registry runs until the registry is dropped,
     polling the pod for exit_code markers every few seconds whenever
-    processes exist. When the pod becomes unreachable the watcher stops
-    for good: the processes died with it, and there is nothing left to
-    report.
+    processes exist. A poll that raises is retried: transient failures
+    (connection pressure under concurrent pod work) must not silence
+    completion notices, so the pod is only declared gone after
+    consecutive failures give up.
     """
     logger = get_logger()
+    failures = 0
     try:
         while registry.active:
             with registry.lock:
@@ -428,9 +424,24 @@ def _watch_processes(registry: PodRegistry, container) -> None:
                         container,
                         ["bash", "-c", f"cat {exit_q} 2>/dev/null || true"],
                     ).strip()
-                except Exception:
-                    logger.info("Process watcher stopped: the pod is gone.")
-                    return
+                except Exception as exc:
+                    failures += 1
+                    if failures >= WATCHER_MAX_CONSECUTIVE_FAILURES:
+                        logger.warning(
+                            "Process watcher stopped: %s consecutive pod"
+                            " probes failed; last error: %s",
+                            failures,
+                            exc,
+                        )
+                        return
+                    logger.info(
+                        "Process watcher poll failed (%s of %d): %s",
+                        failures,
+                        WATCHER_MAX_CONSECUTIVE_FAILURES,
+                        exc,
+                    )
+                    break
+                failures = 0
                 if out:
                     _finalize_process(registry, proc, out)
             time.sleep(WATCHER_POLL_INTERVAL_S)

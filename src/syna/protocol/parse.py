@@ -33,6 +33,7 @@ from ..config import (
     load_tool_call_timeout_s,
 )
 from ..interaction import get_responder, register_responder, unregister_responder
+from ..pod_io import pod_copy_to, pod_exec
 from .output import bounded_output
 from ..state import (
     ToolCancelled,
@@ -449,14 +450,14 @@ def _persist_tool_output(
     if container is None or saved_to is None:
         return None
     try:
-        container.exec(["bash", "-c", "mkdir -p /tool_outputs"])
+        pod_exec(container, ["bash", "-c", "mkdir -p /tool_outputs"])
         file_name = PurePosixPath(saved_to).name
         with tempfile.TemporaryDirectory(prefix="syna-persist-") as temp_dir:
             host_file = Path(temp_dir, file_name)
             host_file.write_bytes(output_text.encode("utf-8", errors="replace"))
-            container.copy_to(str(host_file), "/tool_outputs")
+            pod_copy_to(container, str(host_file), "/tool_outputs")
         try:
-            container.exec(["bash", "-c", f"chmod 444 {shlex.quote(saved_to)}"])
+            pod_exec(container, ["bash", "-c", f"chmod 444 {shlex.quote(saved_to)}"])
         except Exception:
             get_logger().warning("Could not make %s read-only", saved_to, exc_info=True)
         return saved_to

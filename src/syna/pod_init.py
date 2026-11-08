@@ -26,6 +26,7 @@ from .config import (
     load_pod_doh_uri,
 )
 from .paths import asset_path
+from .pod_io import pod_exec
 
 SUCCESS_MARKER = "pod-init: step OK"
 
@@ -142,7 +143,7 @@ def run_pod_init_steps(container: Container) -> dict[str, bool]:
             continue
         started = time.monotonic()
         try:
-            output = container.exec(step_command(step))
+            output = pod_exec(container, step_command(step))
         except Exception as exc:
             get_logger().warning(
                 "Pod init step '%s' errored; the pod continues without it (%s).",

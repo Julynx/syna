@@ -45,6 +45,7 @@ from pydantic import BaseModel
 
 from . import interaction, setup
 from .capabilities import processes, speech, subagents
+from .pod_io import pod_copy_from
 from .protocol.channel import harness_notice, wrap_channel
 from .config import (
     DEFAULT_IMAGE_GENERATION_ENABLED,
@@ -178,7 +179,7 @@ class SessionRecord:
             )
             self.tmp_dir.mkdir(parents=True)
         copy_dir.mkdir()
-        self.container.copy_from(source_path, str(copy_dir))
+        pod_copy_from(self.container, source_path, str(copy_dir))
         source_copy = copy_dir / name
 
         if is_dir:
@@ -979,7 +980,7 @@ def _prepare_pod_image(
     token_dir = serve_dir / uuid.uuid4().hex
     token_dir.mkdir()
     try:
-        record.container.copy_from(pod_path, str(token_dir))
+        pod_copy_from(record.container, pod_path, str(token_dir))
         source = token_dir / basename(pod_path)
         if not source.is_file():
             raise FileNotFoundError(pod_path)

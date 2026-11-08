@@ -18,6 +18,7 @@ from bollard import Container, DockerClient
 
 from . import pod_init
 from .config import get_logger, load_config
+from .pod_io import pod_call
 
 CONTAINER_IMAGE = "python:3.14-trixie"
 
@@ -255,8 +256,8 @@ def get_container() -> Container:
 
 def destroy_container(container: Container) -> None:
     """Stop and force-remove a container."""
-    container.stop()
-    container.remove(force=True)
+    pod_call(container.stop)
+    pod_call(lambda: container.remove(force=True))
 
 
 def reset_shared_container() -> None:

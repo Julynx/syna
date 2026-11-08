@@ -18,6 +18,7 @@ from ..config import (
     get_logger,
     load_user_messages_dest,
 )
+from ..pod_io import pod_copy_to, pod_exec
 
 USER_MESSAGE_MARKER_TEMPLATE = (
     "[Harness note: a verbatim, read-only copy of this message is archived"
@@ -50,12 +51,12 @@ def archive_user_message(text: str, container, seq: int) -> str | None:
     file_name = f"{seq:06d}.txt"
     pod_path = f"{root.rstrip('/')}/{file_name}"
     try:
-        container.exec(["bash", "-c", f"mkdir -p {shlex.quote(root)}"])
+        pod_exec(container, ["bash", "-c", f"mkdir -p {shlex.quote(root)}"])
         with tempfile.TemporaryDirectory(prefix="syna-archive-") as temp_dir:
             host_file = Path(temp_dir, file_name)
             host_file.write_bytes(text.encode("utf-8"))
-            container.copy_to(str(host_file), root)
-        container.exec(["bash", "-c", f"chmod 444 {shlex.quote(pod_path)}"])
+            pod_copy_to(container, str(host_file), root)
+        pod_exec(container, ["bash", "-c", f"chmod 444 {shlex.quote(pod_path)}"])
     except Exception:
         logger.exception("Failed to archive a user message to %s", pod_path)
         return None

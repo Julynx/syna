@@ -3366,8 +3366,16 @@ const TOOL_META = {
     icon: ICONS.factCheck,
     key: "summary",
   },
-  process: { verb: "Process", icon: ICONS.terminal },
-  subagent: { verb: "Subagent", icon: ICONS.subagent },
+  process: {
+    verb: "Process",
+    icon: ICONS.terminal,
+    keys: ["name", "process_id"],
+  },
+  subagent: {
+    verb: "Subagent",
+    icon: ICONS.subagent,
+    keys: ["name", "subagent_id", "goal"],
+  },
   wait_for: { verb: "Waited for", icon: ICONS.schedule, key: "id" },
 };
 
@@ -3399,8 +3407,19 @@ function firstQuotedArg(signature) {
 
 function primaryArg(event) {
   const meta = TOOL_META[event.name];
-  if (event.arguments && meta && meta.key) {
-    const value = event.arguments[meta.key];
+  const args = event.arguments || null;
+  // The dispatch tools nest their real arguments one level down
+  // (`{command, args}`), so the identifying value lives in `args`.
+  if (meta && meta.keys && args) {
+    const nested = args.args && typeof args.args === "object" ? args.args : {};
+    for (const k of meta.keys) {
+      const value = args[k] !== undefined ? args[k] : nested[k];
+      if (value !== undefined && value !== null && String(value).length)
+        return String(value);
+    }
+  }
+  if (args && meta && meta.key) {
+    const value = args[meta.key];
     if (value !== undefined && value !== null) return String(value);
   }
   return firstQuotedArg(event.signature);

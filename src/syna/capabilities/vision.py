@@ -15,6 +15,7 @@ from ..config import (
     is_openrouter_base_url,
 )
 from .imaging import fit_image_to_box
+from ..pod_io import pod_copy_from
 from ..state import get_container
 
 
@@ -69,7 +70,7 @@ def describe_image(file_path: str, question: str):
         temp_path = Path(temp_dir)
 
         container = get_container()
-        container.copy_from(file_path, str(temp_path))
+        pod_copy_from(container, file_path, str(temp_path))
         source_path = temp_path / basename(file_path)
         png_path = temp_path / f"{source_path.stem or 'image'}.png"
 

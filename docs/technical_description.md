@@ -296,6 +296,7 @@ Every module and the chapter that describes it:
 | `src/syna/conversation/session.py`          | [The agent loop](#srcsynaconversationsessionpy)        |
 | `src/syna/interaction.py`                   | [The agent loop](#srcsynainteractionpy)                |
 | `src/syna/paths.py`                         | [Running and operations](#srcsynapathspy)              |
+| `src/syna/pod_io.py`                        | [Architecture](#srcsynapodiopy)                        |
 | `src/syna/protocol/channel.py`              | [The protocol layer](#srcsynaprotocolchannelpy)        |
 | `src/syna/protocol/compaction.py`           | [The protocol layer](#srcsynaprotocolcompactionpy)     |
 | `src/syna/protocol/context.py`              | [The protocol layer](#srcsynaprotocolcontextpy)        |
@@ -310,6 +311,19 @@ Every module and the chapter that describes it:
 | `webui/`, `scripts/build.py`                | [The web UI](#10-the-web-ui)                           |
 | `tests/`, `evals/`, `mock/`                 | [Testing](#12-testing)                                 |
 | `website/`                                  | [Website](#13-website)                                 |
+
+### `src/syna/pod_io.py`
+
+Serialized container I/O: one lock around every bollard call.
+
+Bollard's client multiplexes all container calls (exec, copy in either
+direction, stop, remove) over one persistent HTTP connection, and
+concurrent calls corrupt it (`CannotSendRequest` mid-request, observed
+live). `pod_exec`, `pod_copy_to`, `pod_copy_from`, and the generic
+`pod_call` wrap every container API call in the codebase; nothing may
+call the container object directly. The lock is a leaf in the lock
+order: the background registry lock is always taken before it, never
+after.
 
 ### `src/syna/state.py`
 
@@ -993,13 +1007,17 @@ module never imports session machinery, so there is no cycle).
   `drop_registry` runs at session teardown. Registries are in memory:
   a server restart loses them (the processes keep running under their
   `timeout` wrapper; `ps` in the pod is the recovery path). All pod
-  calls in the background paths go through `pod_exec`/`pod_copy_to`:
-  bollard's client multiplexes every container call over one HTTP
+  calls in the whole codebase go through the shared helpers in `pod_io`
+  (`pod_exec`, `pod_copy_to`, `pod_copy_from`, `pod_call`): bollard's
+  client multiplexes every container call over one persistent HTTP
   connection, and concurrent calls from the watcher, tool workers, and
-  server threads corrupt it (observed live as `CannotSendRequest`).
+  server threads corrupt it (observed live as `CannotSendRequest`,
+  which once killed a watcher mid-session).
 - **Ids.** A `name` argument becomes the id verbatim
-  (`[A-Za-z0-9][A-Za-z0-9_.-]{0,63}`); auto ids count per kind
-  (`process_0001`). Ids are unique across both registries and never
+  (letters, digits, underscores, and hyphens, with single dots between
+  segments; no leading, trailing, or doubled dots, so a name can never
+  escape or alias the artifact directory layout); auto ids count per
+  kind (`process_0001`). Ids are unique across both registries and never
   released, so `wait_for` ids are unambiguous and output directories
   cannot be aliased. Rejections follow the what/why/how style.
 - **spawn.** One exec starts `setsid bash -c <launcher>`: the launcher
@@ -1028,7 +1046,7 @@ module never imports session machinery, so there is no cycle).
 - **Completion watcher.** One thread per registry, started lazily on
   the first spawn and living for the registry's lifetime (a cheap
   3s poll loop; it only execs while processes exist, and exits when
-  the registry is dropped or the pod dies), reads the pod for
+  the registry is dropped), reads the pod for
   `exit_code` markers and fires the single
   completion notice per process through `fire_completion`: a payload
   with the id, a one-line UI summary, and the model-facing notice. The
@@ -1037,7 +1055,10 @@ module never imports session machinery, so there is no cycle).
   worker or queues behind an active turn. All pod calls serialize over
   bollard's single HTTP connection, so a notice can lag behind a
   long-running `execute_command` on the same pod; a late notice is
-  still a correct one.
+  still a correct one. A failed probe is retried: only consecutive
+  failures declare the pod gone, so one transient error under load
+  cannot silence notices for the rest of the session (observed live
+  before the retry existed).
 
 ### `src/syna/capabilities/subagents.py`
 

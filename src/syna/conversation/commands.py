@@ -8,6 +8,7 @@ from tkinter import filedialog
 
 from bollard import Container
 
+from ..pod_io import pod_copy_from, pod_copy_to
 from ..state import get_container
 
 
@@ -17,7 +18,7 @@ def send(dest_path, session=None):
         return "No input file or folder selected"
 
     container: Container = get_container()
-    container.copy_to(src_path, dest_path)
+    pod_copy_to(container, src_path, dest_path)
     if session is not None:
         name = PurePath(src_path).name
         pod_path = f"{dest_path.rstrip('/')}/{name}"
@@ -31,7 +32,7 @@ def receive(src_path, session=None):
         return "No output folder selected"
 
     container: Container = get_container()
-    container.copy_from(src_path, dest_path)
+    pod_copy_from(container, src_path, dest_path)
     return f"Directory '{src_path}' copied from pod to '{dest_path}'"
 
 
