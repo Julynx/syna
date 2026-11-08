@@ -686,18 +686,25 @@ def _runtime_cap_argument(args: dict) -> tuple[int | None, str | None]:
     """Validate the optional max_runtime_s spawn argument.
 
     Returns (seconds, None) when the argument is absent or a positive
-    integer, and (None, message) otherwise; bools are rejected although
-    isinstance would pass them as int.
+    integer, and (None, message) otherwise. Integral floats (5.0) are
+    accepted: `args` is a free-form object with no inner schema, so a
+    JSON number can arrive as float, and coercing beats a retry.
+    Bools are rejected although isinstance would pass them as int.
     """
     value = args.get("max_runtime_s")
     if value is None:
         return None, None
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or value != int(value)
+        or int(value) <= 0
+    ):
         return None, (
             "'max_runtime_s' must be a positive integer number of"
             f" seconds; got {value!r}."
         )
-    return value, None
+    return int(value), None
 
 
 def process(action: str, args: dict | None = None):

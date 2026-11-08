@@ -201,7 +201,7 @@ def _reset_dead_client(*, strict: bool = False) -> None:
             stack.close()
 
 
-def create_container() -> Container:
+def create_container(shared_copy_sink=None) -> Container:
     """Initialize the shared Docker client if needed and run a new container.
 
     HostConfig Init runs the container's init process (tini equivalent) so
@@ -210,7 +210,10 @@ def create_container() -> Container:
     Pod initialization steps (`pod_init`) run right after start and
     block until finished, so the pod is never handed over in a
     half-initialized state; each step logs its own duration and fails
-    open.
+    open. The user's shared directory (`~/.syna/shared`) is copied into
+    the pod the same way; when a `shared_copy_sink` is given it receives
+    the copy report, so callers with a UI can tell the user what
+    landed.
 
     A connection-level failure triggers one client reset and retry: a
     mid-session engine death (endpoint gone stale) self-heals through
@@ -240,6 +243,12 @@ def create_container() -> Container:
             HostConfig=build_pod_host_config(),
         )
     pod_init.run_pod_init_steps(container)
+    shared_report = pod_init.copy_shared_dir(container)
+    if shared_report is not None and shared_copy_sink is not None:
+        try:
+            shared_copy_sink(shared_report)
+        except Exception:
+            get_logger().exception("Shared-copy sink failed")
     return container
 
 

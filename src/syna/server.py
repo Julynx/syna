@@ -69,6 +69,7 @@ from .capabilities.imaging import (
     image_exceeds_box,
 )
 from .conversation.session import AgentSession, shared_file_metadata
+from .pod_init import shared_copy_notice
 from .state import (
     create_container,
     destroy_container,
@@ -470,7 +471,9 @@ class SessionRecord:
         self.container_starting = True
         self.push({"type": "status", "text": CONTAINER_STARTING_TEXT}, persistent=False)
         try:
-            self.container = create_container()
+            self.container = create_container(
+                shared_copy_sink=self._on_shared_copy
+            )
         except Exception as exc:
             logger.exception("Container creation failed for session %s", self.client_id)
             self.container_starting = False
@@ -484,6 +487,16 @@ class SessionRecord:
         self.container_starting = False
         logger.info("Container ready for session %s", self.client_id)
         self.push({"type": "ready"}, persistent=False)
+
+    def _on_shared_copy(self, report: dict):
+        """Record the pod-init shared copy as persistent chat history.
+
+        Persistent on purpose: non-persistent pushes race the first
+        WebSocket's subscriber registration and would be lost, while
+        this one is replayed as history by every client that connects
+        to the session.
+        """
+        self.push({"type": "info", "text": shared_copy_notice(report)})
 
     def _run_turn(self, user_text: str, allegro: bool = False):
         self.busy.set()

@@ -45,7 +45,10 @@ test("process summaries map to short termination labels", () => {
 });
 
 test("process structured fields map to short termination labels", () => {
-  assert.strictEqual(bgEndLabel("process", { state: "exited", exit_code: 3 }), "Exited 3");
+  assert.strictEqual(
+    bgEndLabel("process", { state: "exited", exit_code: 3 }),
+    "Exited 3",
+  );
   assert.strictEqual(
     bgEndLabel("process", { state: "exited", exit_code: null }),
     "Exited ?",
@@ -130,7 +133,10 @@ test("every live summary string maps off the summary alone", () => {
 });
 
 test("list state labels are short and kind-aware", () => {
-  assert.strictEqual(bgListStateLabel("process", { state: "running" }), "running");
+  assert.strictEqual(
+    bgListStateLabel("process", { state: "running" }),
+    "running",
+  );
   assert.strictEqual(
     bgListStateLabel("process", { state: "exited", exit_code: 0 }),
     "exit 0",
@@ -139,8 +145,14 @@ test("list state labels are short and kind-aware", () => {
     bgListStateLabel("process", { state: "exited", exit_code: null }),
     "exit ?",
   );
-  assert.strictEqual(bgListStateLabel("process", { state: "killed" }), "stopped");
-  assert.strictEqual(bgListStateLabel("subagent", { state: "running" }), "running");
+  assert.strictEqual(
+    bgListStateLabel("process", { state: "killed" }),
+    "stopped",
+  );
+  assert.strictEqual(
+    bgListStateLabel("subagent", { state: "running" }),
+    "running",
+  );
   assert.strictEqual(
     bgListStateLabel("subagent", { state: "finished", end_reason: "response" }),
     "finished",
@@ -162,16 +174,38 @@ test("runtime labels format compact durations", () => {
   assert.strictEqual(bgRuntimeLabel(now - 90), "1m");
   assert.strictEqual(bgRuntimeLabel(now - 3600), "1h00m");
   assert.strictEqual(bgRuntimeLabel(now - 3660), "1h01m");
-  assert.strictEqual(bgRuntimeLabel(now + 30), "0s", "clock skew clamps to zero");
+  assert.strictEqual(
+    bgRuntimeLabel(now + 30),
+    "0s",
+    "clock skew clamps to zero",
+  );
 });
 
 test("dispatch call labels name the action and the work", () => {
-  assert.strictEqual(bgCallLabel("process", "spawn", "ticker"), 'Spawned process "ticker"');
-  assert.strictEqual(bgCallLabel("process", "check", "ticker"), 'Checked process "ticker"');
-  assert.strictEqual(bgCallLabel("process", "kill", "ticker"), 'Killed process "ticker"');
-  assert.strictEqual(bgCallLabel("subagent", "spawn", "filedemo"), 'Spawned subagent "filedemo"');
-  assert.strictEqual(bgCallLabel("subagent", "check", "filedemo"), 'Checked subagent "filedemo"');
-  assert.strictEqual(bgCallLabel("subagent", "kill", "filedemo"), 'Killed subagent "filedemo"');
+  assert.strictEqual(
+    bgCallLabel("process", "spawn", "ticker"),
+    'Spawned process "ticker"',
+  );
+  assert.strictEqual(
+    bgCallLabel("process", "check", "ticker"),
+    'Checked process "ticker"',
+  );
+  assert.strictEqual(
+    bgCallLabel("process", "kill", "ticker"),
+    'Killed process "ticker"',
+  );
+  assert.strictEqual(
+    bgCallLabel("subagent", "spawn", "filedemo"),
+    'Spawned subagent "filedemo"',
+  );
+  assert.strictEqual(
+    bgCallLabel("subagent", "check", "filedemo"),
+    'Checked subagent "filedemo"',
+  );
+  assert.strictEqual(
+    bgCallLabel("subagent", "kill", "filedemo"),
+    'Killed subagent "filedemo"',
+  );
 });
 
 test("dispatch call labels survive missing pieces", () => {

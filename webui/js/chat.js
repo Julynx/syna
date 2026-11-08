@@ -468,7 +468,9 @@ function toolEventText(event) {
 /* The dispatch tools carry their action and the background work's name
    one level down (`{action, args}`), and a spawn's auto-generated name
    only exists once the spawn result arrives (structured_output), so the
-   label starts bare and gains the name when the row settles. */
+   label starts bare and gains the name when the row settles. Events
+   recorded before the action rename (`{command, args}`) fall back to
+   their `command` value, which named the same actions. */
 function dispatchEventText(event) {
   const args = event.arguments || null;
   const nested =
@@ -476,7 +478,10 @@ function dispatchEventText(event) {
   const action =
     args && args.action != null
       ? String(args.action)
-      : (String(event.signature).match(/\baction= *'([^']*)'/) || [])[1] || "";
+      : args && args.command != null
+        ? String(args.command)
+        : (String(event.signature).match(/\baction= *'([^']*)'/) || [])[1] ||
+          "";
   let name = nested.name ? String(nested.name) : "";
   if (!name && args && args.name != null) name = String(args.name);
   if (!name && event.structured_output && event.structured_output.name)
@@ -1505,6 +1510,9 @@ function render(event) {
     case "compaction":
       addCompactionRow(event);
       break;
+    case "info":
+      addEventRow(event.text, false);
+      break;
     case "status":
       if (!event.quiet) setStatus("working", event.text);
       break;
@@ -1740,21 +1748,26 @@ let bgModal = null;
 const BG_TRIM_CHARS = 160000;
 
 function backgroundIdFor(event) {
-  const name = event.name;
-  if (name === "process") {
-    const spawned = event.structured_output;
-    if (spawned && spawned.name) return { kind: "process", id: spawned.name };
-    const id = event.arguments && event.arguments.name;
+  // The dispatch tools nest their real arguments one level down
+  // (`{action, args}`), so a targeted call's name lives in `args.args`.
+  const args = event.arguments || null;
+  const nested =
+    args && args.args && typeof args.args === "object" ? args.args : {};
+  const spawned = event.structured_output;
+  const spawnedName = spawned && spawned.name ? String(spawned.name) : null;
+  const targetedName =
+    (nested.name ? String(nested.name) : null) ||
+    (args && args.name != null ? String(args.name) : null);
+  if (event.name === "process") {
+    const id = spawnedName || targetedName;
     return id ? { kind: "process", id } : null;
   }
-  if (name === "subagent") {
-    const spawned = event.structured_output;
-    if (spawned && spawned.name) return { kind: "subagent", id: spawned.name };
-    const id = event.arguments && event.arguments.name;
+  if (event.name === "subagent") {
+    const id = spawnedName || targetedName;
     return id ? { kind: "subagent", id } : null;
   }
-  if (name === "wait_for") {
-    const id = event.arguments && event.arguments.name;
+  if (event.name === "wait_for") {
+    const id = args && args.name;
     return id ? { kind: "either", id } : null;
   }
   return null;
@@ -1804,7 +1817,9 @@ function setBgState(state, exitCode, summary) {
     setBgOutcome(state === "gone" ? "Gone" : "Unavailable");
     return;
   }
-  setBgOutcome(bgEndLabel(bgModal.kind, { state, exit_code: exitCode, summary }));
+  setBgOutcome(
+    bgEndLabel(bgModal.kind, { state, exit_code: exitCode, summary }),
+  );
 }
 
 /* Once the work ends, the footer button stops being a button: disabled,
@@ -1877,8 +1892,10 @@ function startProcessPolling(id) {
       return;
     }
     if (!data) return;
-    if (data.stdout_b64) appendBgProcessText("stdout", b64ToText(data.stdout_b64));
-    if (data.stderr_b64) appendBgProcessText("stderr", b64ToText(data.stderr_b64));
+    if (data.stdout_b64)
+      appendBgProcessText("stdout", b64ToText(data.stdout_b64));
+    if (data.stderr_b64)
+      appendBgProcessText("stderr", b64ToText(data.stderr_b64));
     stdoutOffset = data.stdout_size;
     stderrOffset = data.stderr_size;
     if (data.state !== "running") {
@@ -1935,8 +1952,7 @@ function renderSubagentHistory(token, data) {
   token.lastSeq = data.events.length
     ? data.events[data.events.length - 1].seq
     : 0;
-  const stillRunning =
-    data.state === "running" || data.state === "stopping";
+  const stillRunning = data.state === "running" || data.state === "stopping";
   if (stillRunning) setBgState("running");
   else setBgOutcome(bgEndLabel("subagent", data));
   token.body.scrollTop = token.body.scrollHeight;
@@ -2070,7 +2086,9 @@ function addBackgroundDoneRow(event) {
   row.textContent = `${event.kind === "process" ? "Process" : "Subagent"} '${event.id}' ${event.summary}`;
   if (event.id) {
     row.style.cursor = "pointer";
-    row.addEventListener("click", () => openBackgroundModal(event.kind, event.id));
+    row.addEventListener("click", () =>
+      openBackgroundModal(event.kind, event.id),
+    );
   }
   append(row);
 }
@@ -2087,9 +2105,7 @@ async function refreshBackgroundList() {
       withToken(`${API_BASE}/api/background/${clientId}/list`),
       { headers: authHeaders() },
     );
-    bgListData = res.ok
-      ? await res.json()
-      : { processes: [], subagents: [] };
+    bgListData = res.ok ? await res.json() : { processes: [], subagents: [] };
   } catch (err) {
     bgListData = { processes: [], subagents: [] };
   }

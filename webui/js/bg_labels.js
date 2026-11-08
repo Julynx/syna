@@ -13,7 +13,8 @@ function bgEndLabel(kind, meta) {
   const summary = meta.summary || "";
   if (kind === "process") {
     if (summary === "stopped by the user") return "Stopped by user";
-    if (summary === "killed by its runtime cap") return "Stopped by runtime cap";
+    if (summary === "killed by its runtime cap")
+      return "Stopped by runtime cap";
     const exit = summary.match(/^exited with code (-?\d+)$/);
     if (exit) return "Exited " + exit[1];
     if (meta.state === "exited") {
@@ -95,5 +96,10 @@ function bgCallLabel(kind, action, name) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { bgEndLabel, bgListStateLabel, bgRuntimeLabel, bgCallLabel };
+  module.exports = {
+    bgEndLabel,
+    bgListStateLabel,
+    bgRuntimeLabel,
+    bgCallLabel,
+  };
 }

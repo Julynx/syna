@@ -13,8 +13,10 @@ previous behavior intact.
 """
 
 import base64
+import shlex
 import struct
 import time
+from pathlib import Path
 from urllib.parse import urlparse
 
 from bollard import Container
@@ -25,10 +27,13 @@ from .config import (
     load_pod_doh_bootstrap_alt,
     load_pod_doh_uri,
 )
-from .paths import asset_path
-from .pod_io import pod_exec
+from .paths import asset_path, get_data_home
+from .pod_io import pod_copy_to, pod_exec
 
 SUCCESS_MARKER = "pod-init: step OK"
+
+# Pod destination of the user's shared directory, copied at pod init.
+POD_SHARED_DIR = "/workspace/shared"
 
 
 class PodInitStep:
@@ -167,3 +172,77 @@ def run_pod_init_steps(container: Container) -> dict[str, bool]:
         get_logger().info("Pod init step '%s' active in %.1fs.", step.name, elapsed)
         results[step.name] = True
     return results
+
+
+def shared_dir_report() -> dict:
+    """Describe the user's shared directory, creating it when missing.
+
+    The host directory (`<data home>/shared`, so `~/.syna/shared` on an
+    installed package) is created empty when absent, per its contract;
+    from then on it is the user's to fill. `entries` lists the top-level
+    names in directory order.
+    """
+    host_dir = get_data_home() / "shared"
+    host_dir.mkdir(parents=True, exist_ok=True)
+    entries = sorted(path.name for path in host_dir.iterdir())
+    return {"host_path": host_dir, "pod_path": POD_SHARED_DIR, "entries": entries}
+
+
+def copy_shared_dir(container: Container) -> dict | None:
+    """Copy the user's shared directory into a fresh pod; None if empty.
+
+    Runs at pod initialization, so every new chat starts with the user's
+    shared files in place. Fails open like the other init steps: an
+    entry that cannot be copied is logged and skipped, a dead pod skips
+    the whole copy, and the report lists only what actually landed so
+    the chat notice never overstates.
+    """
+    logger = get_logger()
+    report = shared_dir_report()
+    if not report["entries"]:
+        return None
+    copied: list[str] = []
+    host_dir: Path = report["host_path"]
+    try:
+        pod_exec(
+            container,
+            ["bash", "-c", f"mkdir -p {shlex.quote(report['pod_path'])}"],
+        )
+        for name in report["entries"]:
+            try:
+                pod_copy_to(container, str(host_dir / name), report["pod_path"])
+            except Exception:
+                logger.exception("Shared entry '%s' could not be copied", name)
+                continue
+            copied.append(name)
+    except Exception:
+        logger.exception("Shared directory copy into the pod failed")
+        return None
+    if not copied:
+        return None
+    report["copied"] = copied
+    logger.info(
+        "Copied %d shared entries from %s into %s",
+        len(copied),
+        host_dir,
+        report["pod_path"],
+    )
+    return report
+
+
+def shared_copy_notice(report: dict) -> str:
+    """The chat info message for one completed shared-directory copy."""
+    copied: list[str] = report["copied"]
+    host_dir: Path = report["host_path"]
+    dirs = sum(1 for name in copied if (host_dir / name).is_dir())
+    files = len(copied) - dirs
+    if files == 0:
+        noun = "dir" if dirs == 1 else "dirs"
+    elif dirs == 0:
+        noun = "file" if files == 1 else "files"
+    else:
+        noun = "items"
+    return (
+        f"Copied {len(copied)} {noun} from {host_dir} into"
+        f" {report['pod_path']}."
+    )

@@ -10,6 +10,7 @@ each step on its configuration keys and fails open.
 
 import base64
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -207,10 +208,157 @@ def test_create_container_runs_init_steps(monkeypatch):
     monkeypatch.setattr(state, "client", None)
     monkeypatch.setattr(state, "init_docker_client", lambda: None)
     monkeypatch.setattr(state, "client", FakeClient())
+    monkeypatch.setattr(pod_init, "get_data_home", lambda: Path(tempfile.mkdtemp()))
     container = state.create_container()
     assert seen["args"][0] == state.CONTAINER_IMAGE
     assert "base64 -d" in seen["argv"][2]
     assert container.exec(["true"]) == pod_init.SUCCESS_MARKER
+
+
+def test_shared_dir_report_creates_the_directory(monkeypatch):
+    home = Path(tempfile.mkdtemp())
+    monkeypatch.setattr(pod_init, "get_data_home", lambda: home)
+    report = pod_init.shared_dir_report()
+    assert (home / "shared").is_dir()
+    assert report["entries"] == []
+    assert report["pod_path"] == pod_init.POD_SHARED_DIR
+    (home / "shared" / "notes").mkdir()
+    (home / "shared" / "keys.txt").write_text("k", encoding="utf-8")
+    report = pod_init.shared_dir_report()
+    assert report["entries"] == ["keys.txt", "notes"]
+
+
+class RecordingPod:
+    """Exec and copy recorder standing in for the pod."""
+
+    def __init__(self, fail_names=()):
+        self.copy_calls = []
+        self.exec_calls = []
+        self.fail_names = fail_names
+
+    def exec(self, argv):
+        self.exec_calls.append(argv[-1])
+        return ""
+
+    def copy_to(self, source, dest):
+        self.copy_calls.append((source, dest))
+        if Path(source).name in self.fail_names:
+            raise RuntimeError("pod gone")
+
+
+def test_copy_shared_dir_copies_files_and_dirs(monkeypatch):
+    home = Path(tempfile.mkdtemp())
+    shared = home / "shared"
+    shared.mkdir()
+    (shared / "keys.txt").write_text("k", encoding="utf-8")
+    (shared / "bundle").mkdir()
+    (shared / "bundle" / "inner.txt").write_text("i", encoding="utf-8")
+    monkeypatch.setattr(pod_init, "get_data_home", lambda: home)
+    pod = RecordingPod()
+    report = pod_init.copy_shared_dir(pod)
+    assert report["copied"] == ["bundle", "keys.txt"]
+    assert report["host_path"] == shared
+    assert report["pod_path"] == "/workspace/shared"
+    assert any("mkdir -p /workspace/shared" in call for call in pod.exec_calls)
+    assert [Path(src).name for src, _ in pod.copy_calls] == ["bundle", "keys.txt"]
+    assert all(dest == "/workspace/shared" for _, dest in pod.copy_calls)
+
+
+def test_copy_shared_dir_skips_empty_and_fails_open(monkeypatch):
+    home = Path(tempfile.mkdtemp())
+    (home / "shared").mkdir()
+    monkeypatch.setattr(pod_init, "get_data_home", lambda: home)
+    pod = RecordingPod()
+    assert pod_init.copy_shared_dir(pod) is None
+    assert pod.copy_calls == []
+
+    (home / "shared" / "good.txt").write_text("g", encoding="utf-8")
+    (home / "shared" / "bad.txt").write_text("b", encoding="utf-8")
+    report = pod_init.copy_shared_dir(RecordingPod(fail_names={"bad.txt"}))
+    assert report["copied"] == ["good.txt"]
+
+    class DeadPod:
+        def exec(self, argv):
+            raise RuntimeError("pod gone")
+
+    assert pod_init.copy_shared_dir(DeadPod()) is None
+
+
+def test_shared_copy_notice_counts_dirs_files_and_items(monkeypatch):
+    home = Path(tempfile.mkdtemp())
+    monkeypatch.setattr(pod_init, "get_data_home", lambda: home)
+    case = 0
+
+    def report(names):
+        nonlocal case
+        case += 1
+        shared = home / f"shared-{case}"
+        shared.mkdir()
+        for name in names:
+            if name.endswith(".txt"):
+                (shared / name).write_text("x", encoding="utf-8")
+            else:
+                (shared / name).mkdir()
+        return {
+            "host_path": shared,
+            "pod_path": "/workspace/shared",
+            "copied": list(names),
+        }
+
+    first = report(["notes"])
+    assert pod_init.shared_copy_notice(first) == (
+        f"Copied 1 dir from {first['host_path']} into /workspace/shared."
+    )
+    two_dirs = report(["a", "b"])
+    assert pod_init.shared_copy_notice(two_dirs) == (
+        f"Copied 2 dirs from {two_dirs['host_path']} into /workspace/shared."
+    )
+    two_files = report(["a.txt", "b.txt"])
+    assert pod_init.shared_copy_notice(two_files) == (
+        f"Copied 2 files from {two_files['host_path']} into /workspace/shared."
+    )
+    mixed = report(["a", "b.txt"])
+    assert pod_init.shared_copy_notice(mixed) == (
+        f"Copied 2 items from {mixed['host_path']} into /workspace/shared."
+    )
+
+
+def test_system_prompt_names_the_shared_directory():
+    from syna.conversation.session import build_prompt
+
+    prompt = build_prompt()
+    assert f"- {pod_init.POD_SHARED_DIR} contains files the user chose" in prompt
+    assert "{{POD_SHARED_PATH}}" not in prompt
+    assert "never authorizes it" in prompt
+
+
+def test_create_container_delivers_the_shared_copy_sink(monkeypatch):
+    seen = {}
+
+    class FakeContainer:
+        def exec(self, argv):
+            return pod_init.SUCCESS_MARKER
+
+        def copy_to(self, source, dest):
+            seen.setdefault("copied", []).append((source, dest))
+
+    class FakeClient:
+        def run_container(self, *args, **kwargs):
+            return FakeContainer()
+
+    home = Path(tempfile.mkdtemp())
+    shared = home / "shared"
+    shared.mkdir()
+    (shared / "keys.txt").write_text("k", encoding="utf-8")
+    monkeypatch.setattr(state, "client", None)
+    monkeypatch.setattr(state, "init_docker_client", lambda: None)
+    monkeypatch.setattr(state, "client", FakeClient())
+    monkeypatch.setattr(pod_init, "get_data_home", lambda: home)
+    sink_reports = []
+    state.create_container(shared_copy_sink=sink_reports.append)
+    assert len(sink_reports) == 1
+    assert sink_reports[0]["copied"] == ["keys.txt"]
+    assert "Copied 1 file" in pod_init.shared_copy_notice(sink_reports[0])
 
 
 def main():
@@ -227,6 +375,12 @@ def main():
             test_disabled_step_never_touches_the_pod,
             test_steps_fail_open,
             test_create_container_runs_init_steps,
+            test_shared_dir_report_creates_the_directory,
+            test_copy_shared_dir_copies_files_and_dirs,
+            test_copy_shared_dir_skips_empty_and_fails_open,
+            test_shared_copy_notice_counts_dirs_files_and_items,
+            test_create_container_delivers_the_shared_copy_sink,
+            test_system_prompt_names_the_shared_directory,
         ]
     )
 

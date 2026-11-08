@@ -64,6 +64,13 @@ def test_process_rejects_invalid_runtime_caps(monkeypatch):
     print("PASS process spawn rejects non-positive-integer caps")
 
 
+def test_process_accepts_integral_float_cap(monkeypatch):
+    captured = _captured(monkeypatch, "spawn_process", {"name": "p"})
+    tools.process("spawn", {"command": "sleep 1", "max_runtime_s": 5.0})
+    assert captured["kwargs"]["runtime_cap_s"] == 5
+    print("PASS process spawn accepts an integral float cap")
+
+
 def test_subagent_spawn_passes_name_and_runtime_cap(monkeypatch):
     captured = _captured(
         monkeypatch, "spawn_subagent", {"name": "worker", "max_runtime_s": 90}
@@ -118,6 +125,7 @@ def main():
             test_process_spawn_passes_name_and_runtime_cap,
             test_process_spawn_without_cap_sends_none,
             test_process_rejects_invalid_runtime_caps,
+            test_process_accepts_integral_float_cap,
             test_subagent_spawn_passes_name_and_runtime_cap,
             test_subagent_rejects_invalid_runtime_caps,
             test_unknown_action_errors_name_the_action,

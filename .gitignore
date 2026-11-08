@@ -12,6 +12,7 @@ wheels/
 # Syna data-home artifacts living in the repo root (repo checkouts act
 # as their own data home)
 /config.json
+/shared/
 syna.log
 message-session-log*
 TODO.md

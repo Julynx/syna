@@ -31,6 +31,7 @@ from ..config import (
     scale_seconds,
     set_timeout_scale,
 )
+from ..pod_init import POD_SHARED_DIR
 from ..protocol.channel import (
     contains_sentinel,
     defang_sentinels,
@@ -180,6 +181,7 @@ def build_prompt(allegro: bool = False):
     prompt = prompt.replace("{{CURRENT_DATE}}", date.today().isoformat())
     prompt = prompt.replace("{{COMMAND_TIMEOUT}}", str(command_timeout_s))
     prompt = prompt.replace("{{OUTPUT_LIMIT}}", str(load_output_limit_chars()))
+    prompt = prompt.replace("{{POD_SHARED_PATH}}", POD_SHARED_DIR)
     if allegro:
         prompt += ALLEGRO_PROMPT_SUFFIX
     return prompt

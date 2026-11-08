@@ -79,7 +79,8 @@ bundled inside the package at `src/syna/assets/` and loaded through
 `paths.py` (`importlib.resources`; `asset_path` / `read_asset_text`).
 Everything the user writes lives in the Syna data home (`~/.syna`,
 overridable with `SYNA_HOME`): `.env`, `config.json` (seeded from the
-bundled defaults on first run), `syna.log`, and session dumps. In a
+bundled defaults on first run), `syna.log`, session dumps, and the
+`shared/` directory (created empty; see "Shared directory" below). In a
 repository checkout the repo root acts as the data home so development
 workflows keep working unchanged.
 
@@ -345,7 +346,21 @@ Global Docker client plus per-thread container registry and per-call context.
   installs `dnscrypt-proxy`, points the pod resolver at Quad9's
   unfiltered endpoint over HTTPS (`pod_doh_uri`, `pod_doh_bootstrap`,
   `pod_doh_bootstrap_alt`, pinned inside dnscrypt stamps), and enables
-  transparent HTTP/3 for curl.
+  transparent HTTP/3 for curl. `pod_init.copy_shared_dir()` then copies
+  the user's shared directory (next section) into the pod and, when the
+  caller passed a `shared_copy_sink`, hands it the copy report so a UI
+  can tell the user what landed.
+- Shared directory (`pod_init.shared_dir_report`,
+  `copy_shared_dir`, `shared_copy_notice`): `<data home>/shared`
+  (`~/.syna/shared` on an installed package) is created empty when
+  missing and copied entry by entry into `/workspace/shared` at pod
+  initialization, so every new chat starts with the user's shared
+  files. It fails open like the init steps: a failing entry is logged
+  and skipped, a dead pod skips the copy, and the chat notice
+  (`Copied N dirs/files/items from <host path> into /workspace/shared.`)
+  lists only what actually landed. The system prompt's Environment
+  section names the pod path and warns that a credential found there
+  enables an action but never authorizes it.
 - Self-heal: a connection-level failure from `run_container` (dead pipe,
   closed socket; the engine quit or the host slept mid-session) triggers
   one client reset (`_reset_dead_client`, also the body of
