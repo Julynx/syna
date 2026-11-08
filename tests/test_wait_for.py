@@ -41,7 +41,7 @@ def make_tools_isolated(monkeypatch, registry, container=FakeContainer()):
 
 def test_unknown_id_is_an_error_with_recovery_path(monkeypatch):
     make_tools_isolated(monkeypatch, fresh_registry())
-    result = tools.wait_for(id="ghost")
+    result = tools.wait_for(name="ghost")
     assert result.startswith("ERROR:")
     assert "per-session" in result and "ps" in result
 
@@ -59,7 +59,7 @@ def test_returns_immediately_on_finished_process(monkeypatch):
         "check_process_state",
         lambda c, d: ("exited:0", "out text", "err text"),
     )
-    result = tools.wait_for(id="done")
+    result = tools.wait_for(name="done")
     assert "finished with exit code 0" in result
     assert "out text" in result and "err text" in result
     assert "It finished during this wait" in result
@@ -75,7 +75,7 @@ def test_returns_immediately_on_settled_subagent(monkeypatch):
     registry.subagents["sa"] = record
     make_tools_isolated(monkeypatch, registry)
 
-    result = tools.wait_for(id="sa")
+    result = tools.wait_for(name="sa")
     assert "finished with a response" in result
     assert "the answer" in result
 
@@ -107,7 +107,7 @@ def test_polls_until_the_process_finishes(monkeypatch):
         lambda c, d: ("exited:0", "", ""),
     )
 
-    result = tools.wait_for(id="slow", max_wait_s=60)
+    result = tools.wait_for(name="slow", max_wait_s=60)
     assert "finished with exit code 0" in result
 
 
@@ -130,7 +130,7 @@ def test_timeout_returns_still_running_not_an_error(monkeypatch):
     monkeypatch.setattr(time, "sleep", fake_sleep)
     monkeypatch.setattr(tools, "time", time)
 
-    result = tools.wait_for(id="long", max_wait_s=30)
+    result = tools.wait_for(name="long", max_wait_s=30)
     assert "still running" in result
     assert "30s" in result
     assert "check" in result
@@ -167,7 +167,7 @@ def test_subagent_kill_request_ends_the_wait(monkeypatch):
     monkeypatch.setattr(time, "sleep", fake_sleep)
     monkeypatch.setattr(tools, "time", time)
 
-    result = tools.wait_for(id="sa")
+    result = tools.wait_for(name="sa")
     # A kill leaves it still "running" until the runner confirms; the
     # wait sees the request and reports through check, which shows the
     # stop is pending (state running, kill requested -> settled).
@@ -179,7 +179,7 @@ def test_max_wait_s_validation(monkeypatch):
     proc = ProcessRecord(id="p", command="x", dir="/d")
     registry.processes["p"] = proc
     make_tools_isolated(monkeypatch, registry)
-    result = tools.wait_for(id="p", max_wait_s=-5)
+    result = tools.wait_for(name="p", max_wait_s=-5)
     assert result.startswith("ERROR:") and "positive" in result
 
 

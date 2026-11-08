@@ -1019,7 +1019,11 @@ module never imports session machinery, so there is no cycle).
   escape or alias the artifact directory layout); auto ids count per
   kind (`process_0001`). Ids are unique across both registries and never
   released, so `wait_for` ids are unambiguous and output directories
-  cannot be aliased. Rejections follow the what/why/how style.
+  cannot be aliased. Rejections follow the what/why/how style. All
+  model-facing text (tool arguments, docstrings, error strings, notices)
+  calls the id the "process name" or "subagent name" — a user-chosen
+  `name` becomes the id verbatim, so the two always coincide; the word
+  "id" only appears in internal code, logs, and this document.
 - **spawn.** One exec starts `setsid bash -c <launcher>`: the launcher
   is a session leader detached from the exec call, backgrounds
   `timeout -k 10 {process_max_runtime_s}` (no `setsid` around it, so
@@ -1608,9 +1612,9 @@ drops are ignored.
 - Background work has its own viewing layer (`background.css` plus a
   `chat.js` section). Clicking a finished `process`, `subagent`, or
   `wait_for` tool row opens a shared modal instead of the inline
-  detail: the id comes from the spawn's structured output or the row's
-  arguments (a `wait_for` row resolves its kind by asking the subagent
-  endpoint first). The process view polls the output endpoint every
+  detail: the id comes from the spawn's structured output (`name` key)
+  or the row's `name` argument (a `wait_for` row resolves its kind by
+  asking the subagent endpoint first). The process view polls the output endpoint every
   second, appends base64-decoded chunks into two labeled panes
   (stdout/stderr) that auto-follow while pinned to the bottom and trim
   themselves past a cap; the subagent view fetches the recorded event

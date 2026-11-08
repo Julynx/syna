@@ -195,7 +195,7 @@ def spawn_subagent(
         goal,
     )
     return {
-        "subagent_id": subagent_id,
+        "name": subagent_id,
         "level": record.level,
         "max_runtime_s": load_subagent_max_runtime_s(),
     }

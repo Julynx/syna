@@ -98,7 +98,7 @@ def test_spawn_registers_and_starts_watcher(monkeypatch):
         container=container,
         runtime_cap_s=99,
     )
-    assert result["process_id"] == "build"
+    assert result["name"] == "build"
     assert result["max_runtime_s"] == 99
     proc = registry.processes["build"]
     assert proc.pgid == 4242

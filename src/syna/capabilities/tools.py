@@ -689,8 +689,8 @@ def process(command: str, args: dict | None = None):
     - `args` (object, required): the arguments for that command; see the list below.
 
     * `spawn`: `command` (string, required): the bash command to run; `name` (string, optional): a short string of your choice (letters, digits, dots, hyphens). Generated programatically if not specified.
-    * `check`: `process_id` (string, required). Returns state, running time, and the last characters of stdout and stderr for the named process.
-    * `kill`: `process_id` (string, required). Kills the named process, preserving its output files.
+    * `check`: `name` (string, required): the process name the spawn returned. Returns state, running time, and the last characters of stdout and stderr.
+    * `kill`: `name` (string, required): the process name the spawn returned. Kills the process, preserving its output files.
     """
     args = args or {}
     if command == "spawn":
@@ -707,17 +707,17 @@ def process(command: str, args: dict | None = None):
             return "ERROR: " + result["error"]
         return result
     if command in ("check", "kill"):
-        process_id = args.get("process_id")
-        if not isinstance(process_id, str) or not process_id.strip():
+        process_name = args.get("name")
+        if not isinstance(process_name, str) or not process_name.strip():
             set_last_exit_code(1)
             return (
-                f"ERROR: process {command} needs 'process_id': the id"
-                " the spawn returned."
+                f"ERROR: process {command} needs 'name': the process"
+                " name the spawn returned."
             )
         if command == "check":
-            result = _check_process(process_id)
+            result = _check_process(process_name)
         else:
-            result = kill_process(process_id, by="model")
+            result = kill_process(process_name, by="model")
         if result.startswith("ERROR:"):
             set_last_exit_code(1)
         return result
@@ -753,8 +753,8 @@ def subagent(command: str, args: dict | None = None):
     - `args` (object, required): the arguments for that command; see the list below.
 
     * `spawn`: `goal` (string, required): the task, self-contained and verifiable, naming its deliverable paths; `name` (string, optional): a short string of your choice (letters, digits, dots, hyphens). Generated programatically if not specified.
-    * `check`: `subagent_id` (string, required). Returns state, running time, the tail of its message log, and its transcript path.
-    * `kill`: `subagent_id` (string, required). Stops it at its next pause; its transcript and any response stay in /workspace/subagents/{id}/.
+    * `check`: `name` (string, required): the subagent name the spawn returned. Returns state, running time, the tail of its message log, and its transcript path.
+    * `kill`: `name` (string, required): the subagent name the spawn returned. Stops it at its next pause; its transcript and any response stay in /workspace/subagents/{name}/.
     """
     args = args or {}
     if command == "spawn":
@@ -771,17 +771,17 @@ def subagent(command: str, args: dict | None = None):
             return "ERROR: " + result["error"]
         return result
     if command in ("check", "kill"):
-        subagent_id = args.get("subagent_id")
-        if not isinstance(subagent_id, str) or not subagent_id.strip():
+        subagent_name = args.get("name")
+        if not isinstance(subagent_name, str) or not subagent_name.strip():
             set_last_exit_code(1)
             return (
-                f"ERROR: subagent {command} needs 'subagent_id': the id"
-                " the spawn returned."
+                f"ERROR: subagent {command} needs 'name': the subagent"
+                " name the spawn returned."
             )
         if command == "check":
-            result = check_subagent(subagent_id)
+            result = check_subagent(subagent_name)
         else:
-            result = kill_subagent(subagent_id, by="model")
+            result = kill_subagent(subagent_name, by="model")
         if result.startswith("ERROR:"):
             set_last_exit_code(1)
         return result
@@ -792,10 +792,10 @@ def subagent(command: str, args: dict | None = None):
     )
 
 
-def wait_for(id: str, max_wait_s: int | None = None):
+def wait_for(name: str, max_wait_s: int | None = None):
     """
     Sleep until the named process or subagent finishes. If you can, you should keep working while a process or a subagent runs; you will be notified with a message when they finish. Only call this tool if you have nothing to do until the named process or subagent finishes.
-    - `id` (string, required): the process or subagent id.
+    - `name` (string, required): the process or subagent name.
     - `max_wait_s` (integer, optional): seconds to wait at most; default 120.
     """
     if (
@@ -810,17 +810,17 @@ def wait_for(id: str, max_wait_s: int | None = None):
     budget = min(max_wait_s, WAIT_FOR_MAX_S)
     container = get_container()
     registry = registry_for(container)
-    entry = registry.lookup(id)
+    entry = registry.lookup(name)
     if entry is None:
         set_last_exit_code(1)
-        return "ERROR: " + unknown_id_error(id)
+        return "ERROR: " + unknown_id_error(name)
     kind, record = entry
     deadline = time.monotonic() + budget
     while True:
-        entry = registry.lookup(id)
+        entry = registry.lookup(name)
         if entry is None:
             set_last_exit_code(1)
-            return "ERROR: " + unknown_id_error(id)
+            return "ERROR: " + unknown_id_error(name)
         kind, record = entry
         if kind == "process":
             if record.state != "running":
@@ -834,7 +834,7 @@ def wait_for(id: str, max_wait_s: int | None = None):
         if time.monotonic() >= deadline:
             runtime = time.time() - record.started
             return (
-                f"'{id}' is still running after waiting {budget:.0f}s"
+                f"'{name}' is still running after waiting {budget:.0f}s"
                 f" (total runtime {runtime:.0f}s). It keeps running and a"
                 " notice arrives here automatically when it finishes. You"
                 " can wait again, check its current output"

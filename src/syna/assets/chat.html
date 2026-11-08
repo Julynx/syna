@@ -3369,14 +3369,14 @@ const TOOL_META = {
   process: {
     verb: "Process",
     icon: ICONS.terminal,
-    keys: ["name", "process_id"],
+    keys: ["name"],
   },
   subagent: {
     verb: "Subagent",
     icon: ICONS.subagent,
-    keys: ["name", "subagent_id", "goal"],
+    keys: ["name", "goal"],
   },
-  wait_for: { verb: "Waited for", icon: ICONS.schedule, key: "id" },
+  wait_for: { verb: "Waited for", icon: ICONS.schedule, key: "name" },
 };
 
 const DETAIL_CAP_CHARS = 6000;
@@ -4864,18 +4864,18 @@ function backgroundIdFor(event) {
   const name = event.name;
   if (name === "process") {
     const spawned = event.structured_output;
-    if (spawned && spawned.process_id) return { kind: "process", id: spawned.process_id };
-    const id = event.arguments && event.arguments.process_id;
+    if (spawned && spawned.name) return { kind: "process", id: spawned.name };
+    const id = event.arguments && event.arguments.name;
     return id ? { kind: "process", id } : null;
   }
   if (name === "subagent") {
     const spawned = event.structured_output;
-    if (spawned && spawned.subagent_id) return { kind: "subagent", id: spawned.subagent_id };
-    const id = event.arguments && event.arguments.subagent_id;
+    if (spawned && spawned.name) return { kind: "subagent", id: spawned.name };
+    const id = event.arguments && event.arguments.name;
     return id ? { kind: "subagent", id } : null;
   }
   if (name === "wait_for") {
-    const id = event.arguments && event.arguments.id;
+    const id = event.arguments && event.arguments.name;
     return id ? { kind: "either", id } : null;
   }
   return null;

@@ -87,7 +87,7 @@ def spawn_with_fake_session(monkeypatch, registry, container=None):
         "do the thing", registry=registry, container=container, session_factory=factory
     )
     assert "error" not in result, result
-    record = registry.subagents[result["subagent_id"]]
+    record = registry.subagents[result["name"]]
     for _ in range(400):
         if record.notified and record.state != "running":
             break
@@ -243,7 +243,7 @@ def test_kill_before_start(monkeypatch):
     result = spawn_subagent(
         "x", registry=registry, container=container, session_factory=factory
     )
-    record = registry.subagents[result["subagent_id"]]
+    record = registry.subagents[result["name"]]
     kill_subagent(record.id, registry=registry, container=container, by="user")
     gate.set()
     for _ in range(400):
@@ -404,7 +404,7 @@ def test_allegro_is_inherited(monkeypatch):
         )
     finally:
         set_background_allegro(None)
-    record = registry.subagents[result["subagent_id"]]
+    record = registry.subagents[result["name"]]
     for _ in range(400):
         if record.notified:
             break

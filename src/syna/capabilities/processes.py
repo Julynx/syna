@@ -169,7 +169,7 @@ def reserve_id(registry: PodRegistry, kind: str, name: str | None) -> tuple:
         name = str(name).strip()
         if len(name) > MAX_ID_CHARS or not ID_PATTERN.fullmatch(name):
             return None, (
-                f"You cannot use '{name}' as an id: ids may be 1 to"
+                f"You cannot use '{name}' as a name: names may be 1 to"
                 f" {MAX_ID_CHARS} characters of letters, digits,"
                 " underscores, and hyphens, with single dots between"
                 " them (no leading, trailing, or doubled dots). Pick"
@@ -178,8 +178,8 @@ def reserve_id(registry: PodRegistry, kind: str, name: str | None) -> tuple:
         with registry.lock:
             if name in registry.taken_ids:
                 return None, (
-                    f"You cannot reuse the id '{name}': it is already"
-                    " taken by a background process or subagent, and ids"
+                    f"You cannot reuse the name '{name}': it is already"
+                    " taken by a background process or subagent, and names"
                     " stay reserved for the whole session. Pick another"
                     " name."
                 )
@@ -203,8 +203,8 @@ def unknown_id_error(background_id: str) -> str:
     """The what/why/how error for an id no registry entry matches."""
     return (
         f"You cannot check or stop '{background_id}': no process or"
-        " subagent with that id is registered in this session (ids are"
-        " per-session, and a server restart clears the registry). If the"
+        " subagent with that name is registered in this session (names"
+        " are per-session, and a server restart clears the registry). If the"
         " work predates the restart, find it in the pod with `ps` or"
         " `ls /workspace/processes /workspace/subagents` through"
         " execute_command."
@@ -350,7 +350,7 @@ def spawn_process(
         command[:200],
     )
     return {
-        "process_id": process_id,
+        "name": process_id,
         "dir": proc.dir,
         "max_runtime_s": runtime_cap_s,
     }
