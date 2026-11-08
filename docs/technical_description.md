@@ -358,9 +358,12 @@ Global Docker client plus per-thread container registry and per-call context.
   files. It fails open like the init steps: a failing entry is logged
   and skipped, a dead pod skips the copy, and the chat notice
   (`Copied N dirs/files/items from <host path> into /workspace/shared.`)
-  lists only what actually landed. The system prompt's Environment
-  section names the pod path and warns that a credential found there
-  enables an action but never authorizes it.
+  lists only what actually landed. When the directory is empty or
+  absent nothing is copied, no notice is pushed, and the system
+  prompt's Environment bullet is dropped entirely (the prompt names the
+  pod path and warns that a credential found there enables an action
+  but never authorizes it; it exists only while the user has shared
+  content, so prompts stay identical otherwise for cache stability).
 - Self-heal: a connection-level failure from `run_container` (dead pipe,
   closed socket; the engine quit or the host slept mid-session) triggers
   one client reset (`_reset_dead_client`, also the body of

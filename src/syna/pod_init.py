@@ -184,8 +184,23 @@ def shared_dir_report() -> dict:
     """
     host_dir = get_data_home() / "shared"
     host_dir.mkdir(parents=True, exist_ok=True)
-    entries = sorted(path.name for path in host_dir.iterdir())
-    return {"host_path": host_dir, "pod_path": POD_SHARED_DIR, "entries": entries}
+    return {
+        "host_path": host_dir,
+        "pod_path": POD_SHARED_DIR,
+        "entries": shared_dir_entries(),
+    }
+
+
+def shared_dir_entries() -> list[str]:
+    """The shared directory's top-level names; [] when absent.
+
+    Unlike `shared_dir_report` this never creates the directory: prompt
+    building calls it on every session and must stay side-effect free.
+    """
+    host_dir = get_data_home() / "shared"
+    if not host_dir.is_dir():
+        return []
+    return sorted(path.name for path in host_dir.iterdir())
 
 
 def copy_shared_dir(container: Container) -> dict | None:

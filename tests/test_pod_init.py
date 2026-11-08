@@ -323,13 +323,32 @@ def test_shared_copy_notice_counts_dirs_files_and_items(monkeypatch):
     )
 
 
-def test_system_prompt_names_the_shared_directory():
-    from syna.conversation.session import build_prompt
+def test_system_prompt_names_the_shared_directory(monkeypatch):
+    import syna.conversation.session as session_module
 
-    prompt = build_prompt()
+    home = Path(tempfile.mkdtemp())
+    shared = home / "shared"
+    shared.mkdir()
+    (shared / "keys.txt").write_text("k", encoding="utf-8")
+    monkeypatch.setattr(pod_init, "get_data_home", lambda: home)
+    prompt = session_module.build_prompt()
     assert f"- {pod_init.POD_SHARED_DIR} contains files the user chose" in prompt
     assert "{{POD_SHARED_PATH}}" not in prompt
     assert "never authorizes it" in prompt
+
+
+def test_system_prompt_drops_the_shared_bullet_when_empty(monkeypatch):
+    import syna.conversation.session as session_module
+
+    for with_empty_dir in (True, False):
+        home = Path(tempfile.mkdtemp())
+        if with_empty_dir:
+            (home / "shared").mkdir()
+        monkeypatch.setattr(pod_init, "get_data_home", lambda: home)
+        prompt = session_module.build_prompt()
+        assert "contains files the user chose" not in prompt, prompt
+        assert "{{POD_SHARED_PATH}}" not in prompt
+        assert pod_init.POD_SHARED_DIR not in prompt
 
 
 def test_create_container_delivers_the_shared_copy_sink(monkeypatch):
@@ -361,6 +380,27 @@ def test_create_container_delivers_the_shared_copy_sink(monkeypatch):
     assert "Copied 1 file" in pod_init.shared_copy_notice(sink_reports[0])
 
 
+def test_create_container_skips_the_sink_when_shared_is_empty(monkeypatch):
+    class FakeContainer:
+        def exec(self, argv):
+            return pod_init.SUCCESS_MARKER
+
+        def copy_to(self, source, dest):
+            raise AssertionError("nothing may be copied from an empty dir")
+
+    class FakeClient:
+        def run_container(self, *args, **kwargs):
+            return FakeContainer()
+
+    monkeypatch.setattr(state, "client", None)
+    monkeypatch.setattr(state, "init_docker_client", lambda: None)
+    monkeypatch.setattr(state, "client", FakeClient())
+    monkeypatch.setattr(pod_init, "get_data_home", lambda: Path(tempfile.mkdtemp()))
+    sink_reports = []
+    state.create_container(shared_copy_sink=sink_reports.append)
+    assert sink_reports == []
+
+
 def main():
     run_suite(
         [
@@ -380,7 +420,9 @@ def main():
             test_copy_shared_dir_skips_empty_and_fails_open,
             test_shared_copy_notice_counts_dirs_files_and_items,
             test_create_container_delivers_the_shared_copy_sink,
+            test_create_container_skips_the_sink_when_shared_is_empty,
             test_system_prompt_names_the_shared_directory,
+            test_system_prompt_drops_the_shared_bullet_when_empty,
         ]
     )
 

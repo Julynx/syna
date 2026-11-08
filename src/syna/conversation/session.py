@@ -1,6 +1,7 @@
 """Reusable agent session shared by the CLI and the web server."""
 
 import json
+import re
 import secrets
 import threading
 from datetime import date
@@ -31,7 +32,7 @@ from ..config import (
     scale_seconds,
     set_timeout_scale,
 )
-from ..pod_init import POD_SHARED_DIR
+from ..pod_init import POD_SHARED_DIR, shared_dir_entries
 from ..protocol.channel import (
     contains_sentinel,
     defang_sentinels,
@@ -74,6 +75,10 @@ STEP_BUDGET_OUT_NOTICE = (
     " report now: what was done, what was verified, and what remains, so the"
     " user knows where things stand. Do not call any tools."
 )
+
+# The shared-directory Environment bullet, removed whole when the user's
+# shared directory is empty or absent.
+SHARED_BULLET_PATTERN = re.compile(r"^- \{\{POD_SHARED_PATH\}\}.*\n", re.MULTILINE)
 
 ALLEGRO_PROMPT_SUFFIX = (
     "\n\n## Allegro mode\n\n"
@@ -172,7 +177,9 @@ def build_prompt(allegro: bool = False):
     With allegro, the speed-priority rule is appended under its own
     `## Allegro mode` h2 section, and the command timeout is reported
     halved, the same value the enforcement layer uses while the
-    Allegro scale is active.
+    Allegro scale is active. The shared-directory Environment bullet
+    only exists when the user actually has shared content: an empty or
+    absent directory drops the whole line.
     """
     prompt = read_asset_text("prompt.md")
     command_timeout_s = load_command_timeout_s()
@@ -181,7 +188,10 @@ def build_prompt(allegro: bool = False):
     prompt = prompt.replace("{{CURRENT_DATE}}", date.today().isoformat())
     prompt = prompt.replace("{{COMMAND_TIMEOUT}}", str(command_timeout_s))
     prompt = prompt.replace("{{OUTPUT_LIMIT}}", str(load_output_limit_chars()))
-    prompt = prompt.replace("{{POD_SHARED_PATH}}", POD_SHARED_DIR)
+    if shared_dir_entries():
+        prompt = prompt.replace("{{POD_SHARED_PATH}}", POD_SHARED_DIR)
+    else:
+        prompt = SHARED_BULLET_PATTERN.sub("", prompt)
     if allegro:
         prompt += ALLEGRO_PROMPT_SUFFIX
     return prompt
