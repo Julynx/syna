@@ -13,6 +13,15 @@ header {
   border-bottom: 1px solid var(--border);
 }
 
+/* The right-side button cluster; the auto margin hugs it to the edge
+   regardless of which member buttons are hidden. */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;

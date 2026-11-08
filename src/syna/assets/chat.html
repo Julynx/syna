@@ -312,6 +312,15 @@ header {
   border-bottom: 1px solid var(--border);
 }
 
+/* The right-side button cluster; the auto margin hugs it to the edge
+   regardless of which member buttons are hidden. */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
@@ -1828,7 +1837,6 @@ footer {
 }
 
 #settings-btn {
-  margin-left: auto;
   width: 34px;
   height: 34px;
 }
@@ -2409,37 +2417,39 @@ body.voice-off #mic-btn {
       <span class="brand"
         ><img class="brand-logo" src="vendor/syna-logo.png" alt="Syna"
       /></span>
-      <button
-        id="bg-btn"
-        class="icon-btn"
-        title="Processes and subagents"
-        aria-label="Processes and subagents"
-        hidden
-      ></button>
-      <button
-        id="settings-btn"
-        class="icon-btn"
-        title="Settings"
-        aria-label="Settings"
-      ></button>
-      <button
-        id="sound-btn"
-        class="icon-btn"
-        title="Toggle sound effects"
-        aria-label="Toggle sound effects"
-      ></button>
-      <button
-        id="voice-btn"
-        class="icon-btn"
-        title="Voice mode"
-        aria-label="Toggle voice mode"
-      ></button>
-      <button
-        id="newchat-btn"
-        class="icon-btn"
-        title="New chat"
-        aria-label="Start a new chat"
-      ></button>
+      <div class="header-actions">
+        <button
+          id="bg-btn"
+          class="icon-btn"
+          title="Processes and subagents"
+          aria-label="Processes and subagents"
+          hidden
+        ></button>
+        <button
+          id="settings-btn"
+          class="icon-btn"
+          title="Settings"
+          aria-label="Settings"
+        ></button>
+        <button
+          id="sound-btn"
+          class="icon-btn"
+          title="Toggle sound effects"
+          aria-label="Toggle sound effects"
+        ></button>
+        <button
+          id="voice-btn"
+          class="icon-btn"
+          title="Voice mode"
+          aria-label="Toggle voice mode"
+        ></button>
+        <button
+          id="newchat-btn"
+          class="icon-btn"
+          title="New chat"
+          aria-label="Start a new chat"
+        ></button>
+      </div>
     </header>
     <div id="banner">
       Cannot reach the Syna server. Retrying... (start it with "uv run
