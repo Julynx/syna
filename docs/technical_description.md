@@ -162,13 +162,18 @@ from the canonical constants in `config.py`.
 | `browser_launch_timeout_s`          | Budget for waiting on a stealth browser's cold start, the search browser and the tool browser alike (default 120, not Allegro-scaled): a cold start is startup, not tool work. The constructor runs in a helper thread, so an expired budget abandons the wait, not the launch; the helper keeps starting the browser for the next call.                                                                                                                  |
 | `browser_command_timeout_s`         | Aggregate budget for one `browser` tool command (default 90, not Allegro-scaled): the command runs on the browser's loop raced against the harness's stop event, is cancelled when either limit arrives, and its session is discarded (reset-on-cancel) so the next call starts clean.                                                                                                                           |
 | `max_cancel_wait_s`                 | Stop grace after a call's deadline (default 10): how long the harness waits for a stopped worker to exit before detaching from it.                                                                                                                                                                                                            |
-| `command_timeout_s`                 | Per-`execute_command` timeout (default 50, kept below `tool_call_timeout_s`). The command is wrapped in `timeout -k 5` inside the pod so hangs are killed inside the pod, before the harness deadline; long-running work belongs in background jobs (`nohup ... &`), as the system prompt documents.                                          |
-| `pod_doh_uri`                       | The pod's DNS-over-HTTPS resolver (default `https://dns10.quad9.net/dns-query`, Quad9's unfiltered endpoint; empty disables): a bootstrap script runs once on container creation, installs `dnscrypt-proxy`, points `resolv.conf` at it (the pre-DoH resolvers stay as fallbacks), and gives curl transparent HTTP/3 via `/root/.curlrc`, which races QUIC against TCP and falls back automatically for sites without h3. `pod_doh_bootstrap` (default `9.9.9.10`) is pinned inside the resolver stamp so a poisoning middlebox cannot redirect the DoH connection; a custom `pod_doh_uri` needs its provider's own bootstrap IP or an empty `pod_doh_bootstrap`. Any bootstrap failure leaves the pod on native DNS. |
-| `net_guard_doh_uri`                 | The browser guard's poison-check resolver (default `https://dns.google/resolve`, JSON DoH over HTTP/1.1; empty uses the system resolver): destination checks resolve through it first so a poisoning resolver cannot tilt the decision, with the system resolver as fallback, which is also the view the browser's TRR mode 2 falls back to. Its job is classification (private vs public vs unresolvable), not IP equality with the browser's own resolver. |
+| `command_timeout_s`                 | Per-`execute_command` timeout (default 50, kept below `tool_call_timeout_s`). The command is wrapped in `timeout -k 5` inside the pod so hangs are killed inside the pod, before the harness deadline; work longer than one call belongs to the `process` tool, as the system prompt documents.                                                               |
 | `pod_doh_uri`                       | The pod's DNS-over-HTTPS resolver (default `https://dns10.quad9.net/dns-query`, Quad9's unfiltered endpoint; empty disables): a bootstrap script runs once on container creation, installs `dnscrypt-proxy`, points `resolv.conf` at it (the pre-DoH resolvers stay as fallbacks), and gives curl transparent HTTP/3 via `/root/.curlrc`, which races QUIC against TCP and falls back automatically for sites without h3. `pod_doh_bootstrap` (default `9.9.9.10`) is pinned inside the resolver stamp so a poisoning middlebox cannot redirect the DoH connection; a custom `pod_doh_uri` needs its provider's own bootstrap IP or an empty `pod_doh_bootstrap` (which makes the script emit a `bootstrap_resolvers` line instead). Any bootstrap failure leaves the pod on native DNS. |
 | `pod_doh_bootstrap_alt`             | Secondary bootstrap IP (default `149.112.112.10`) registered as a second resolver entry on the same provider, so dnscrypt-proxy fails over when the primary anycast address is unreachable. Must belong to the provider in `pod_doh_uri`; empty disables the second entry. |
+| `net_guard_doh_uri`                 | The browser guard's poison-check resolver (default `https://dns.google/resolve`, JSON DoH over HTTP/1.1; empty uses the system resolver): destination checks resolve through it first so a poisoning resolver cannot tilt the decision, with the system resolver as fallback, which is also the view the browser's TRR mode 2 falls back to. Its job is classification (private vs public vs unresolvable), not IP equality with the browser's own resolver. |
 | `pod_memory_mb`                     | Pod memory ceiling in MB (default 8192). Protects the host from runaway processes inside the pod; does not restrict what the model may do inside it.                                                                                                                          |
 | `pod_pids_limit`                    | Pod process-count ceiling (default 512), guarding against fork bombs.                                                                                                                                                                                                         |
+| `process_max_runtime_s`             | Runtime cap of one detached pod process (default 1200). Enforced pod-side by a `timeout` wrapper; a capped process exits with code 124.                                                                                                                                       |
+| `subagent_max_runtime_s`            | Runtime cap of one subagent turn (default 1800). Enforced through the session's cancel event; the turn ends as "stopped by the runtime cap".                                                                                                                                  |
+| `max_subagent_depth`                | Subagent nesting levels allowed, counting main (default 3: main -> subagent -> sub-subagent; a sub-subagent cannot spawn further).                                                                                                                                            |
+| `max_concurrent_subagents`          | How many subagents may run at once (default 4). A spawn beyond the cap is refused; spend protection.                                                                                                                                                                          |
+| `wait_for_timeout`                  | Default deadline of one `wait_for` call (default 120). The wait follows its own budget (plus slack), not `tool_call_timeout_s`; on expiry it returns "still running", never an error.                                                                                         |
+| `check_tail_chars`                  | How many characters of output `process check`/`subagent check` and `wait_for` tail (default 4000).                                                                                                                                                                            |
 | `max_steps_per_turn`                | Model requests allowed per turn (default 100). Before the cap, the model receives a wrap-up warning; past it, the turn ends with one final request reserved for a `respond` status report.                                                                                    |
 | `step_warning_remaining`            | Remaining-steps count that triggers the wrap-up warning (default 20).                                                                                                                                                                                                         |
 | `context_budget_tokens`             | Estimated-token budget for the whole conversation (default 100000). When exceeded, old tool outputs are elided first and summarization runs only if the budget is still exceeded.                                                                                             |
@@ -242,8 +247,11 @@ protocol limits the prompt and tools consume: `load_output_limit_chars()`
 unscaled web-search budgets `load_web_search_timeout_s()`,
 `load_browser_launch_timeout_s()`, and `load_max_cancel_wait_s()`, the
 browser's encrypted-DNS settings `load_browser_doh_uri()` and
-`load_browser_doh_bootstrap()`, and the pod's `load_pod_doh_uri()` and
-`load_pod_doh_bootstrap()`.
+`load_browser_doh_bootstrap()`, the pod's `load_pod_doh_uri()` and
+`load_pod_doh_bootstrap()`, and the background-work budgets
+`load_process_max_runtime_s()`, `load_subagent_max_runtime_s()`,
+`load_max_subagent_depth()`, `load_max_concurrent_subagents()`,
+`load_wait_for_timeout()`, and `load_check_tail_chars()`.
 
 ## 4. Architecture
 
@@ -259,7 +267,8 @@ import cycles.
   tool-call parsing, and schema generation.
 - `syna.capabilities`: what the agent can do: the tool registry plus
   browser, web search, editing, vision, imaging, image generation,
-  speech, and verification tools.
+  speech, verification tools, and the background-work layer (detached
+  pod processes and subagents).
 - `syna.conversation`: the agent loop: session orchestration and the
   interactive CLI with its slash commands.
 
@@ -274,6 +283,8 @@ Every module and the chapter that describes it:
 | `src/syna/capabilities/image_generation.py` | [Capabilities](#srcsynacapabilitiesimage_generationpy) |
 | `src/syna/capabilities/imaging.py`          | [Capabilities](#srcsynacapabilitiesimagingpy)          |
 | `src/syna/capabilities/net_guard.py`        | [The browser stack](#srcsynacapabilitiesnet_guardpy)   |
+| `src/syna/capabilities/processes.py`        | [Capabilities](#srcsynacapabilitiesprocessespy)        |
+| `src/syna/capabilities/subagents.py`        | [Capabilities](#srcsynacapabilitiessubagentspy)        |
 | `src/syna/capabilities/speech.py`           | [Voice and narration](#srcsynacapabilitiesspeechpy)    |
 | `src/syna/capabilities/tools.py`            | [Capabilities](#srcsynacapabilitiestoolspy)            |
 | `src/syna/capabilities/verification.py`     | [Capabilities](#srcsynacapabilitiesverificationpy)     |
@@ -528,7 +539,8 @@ Tool-call parsing and execution under native OpenRouter tool calling.
 - `execute_tool_with_timeout(tool_name, tool_arguments, timeout_s,
 output_path)`: runs the tool in a daemon worker thread, propagating the
   calling thread's registered container, question responder, conversation-log
-  provider (`review_work`'s reviewer snapshot), the call's output path, and
+  provider (`review_work`'s reviewer snapshot), subagent nesting level,
+  the call's output path, and
   the call's cancel event into the worker (all thread-locals), and reports
   back the tool-recorded exit code. The worker thread exists to enforce the
   call's deadline, not to let the conversation move on while work continues:
@@ -546,13 +558,18 @@ output_path)`: runs the tool in a daemon worker thread, propagating the
   `ask_user` and `review_work` are dispatched with a `None` deadline so a
   pending question never expires, and the reviewer request is bounded by the
   model client's own timeout/retry policy instead.
-- `call_deadline_s(tool_name, tool_timeout_s)`; the per-call deadline:
+- `call_deadline_s(tool_name, tool_timeout_s, tool_arguments)`; the per-call
+  deadline:
   `tool_call_timeout_s` for regular tools (subject to the thread's Allegro
   scale), `None` for `ask_user`/`review_work`, and for the self-timed tools
   their own worst-case composition: `web_search.search_deadline_s()` (the
   pacing lock's wait cap for any searches queued ahead of it plus the
-  searcher's own budget and slack) and `browser.browser_deadline_s()` (the
-  launch budget plus the command budget and slack), bug guards that only
+  searcher's own budget and slack), `browser.browser_deadline_s()` (the
+  launch budget plus the command budget and slack), and
+  `processes.wait_for_deadline_s(tool_arguments)` (the call's own
+  `max_wait_s` or the configured `wait_for_timeout`, capped, plus slack so
+  the tool's graceful "still running" return wins over the harness stop),
+  bug guards that only
   fire when the tool's internal enforcement has failed, never the routine
   limit.
 - `_persist_tool_output(output_text, saved_to, persist_outputs)`: saves
@@ -619,7 +636,10 @@ the loop, `ask_utils.py` sends the model requests, and
   (`config.set_timeout_scale`): in Allegro, `load_command_timeout_s` and
   `load_tool_call_timeout_s` halve at enforcement time for exactly the
   turn's duration on the worker thread, with no cross-session leakage.
-- Loads dynamic tool schemas via `get_tool_definitions()` from `tool_schemas.py`.
+- Loads dynamic tool schemas via `get_tool_definitions()` from
+  `tool_schemas.py`, filtered through the constructor's `excluded_tools`
+  (the subagent capability hides `ask_user`, the media generators, and
+  `review_work` from its workers).
 - `run_turn(query)` requests model responses via `ask_question` with native `tools`
   and `tool_choice="auto"`. When the model returns a plain text response without
   tool calls, the content is delivered to the user via `model_message` and the turn
@@ -957,6 +977,118 @@ a thread-local provider (`set_conversation_log_provider` /
 threads by `parse.py` like the container binding; failures follow the
 `describe_image` convention: an `{'error': ...}` dict, never a raise.
 
+### `src/syna/capabilities/processes.py`
+
+Detached background processes in the pod, behind the `process` tool
+(subcommands `spawn`, `check`, `kill`). Also the home of the per-session
+background registry shared with `subagents.py` (which imports it; this
+module never imports session machinery, so there is no cycle).
+
+- **Registry.** `PodRegistry` holds process and subagent records behind
+  one lock, the id-reservation set shared by both kinds, and two
+  optional hooks the server registers: `event_sink` (subagent UI
+  streaming) and `completion_sink` (wake notices). `registry_for(container)`
+  keys by container identity, so the session worker, subagent runners,
+  and server request threads all resolve the same registry;
+  `drop_registry` runs at session teardown. Registries are in memory:
+  a server restart loses them (the processes keep running under their
+  `timeout` wrapper; `ps` in the pod is the recovery path). All pod
+  calls in the background paths go through `pod_exec`/`pod_copy_to`:
+  bollard's client multiplexes every container call over one HTTP
+  connection, and concurrent calls from the watcher, tool workers, and
+  server threads corrupt it (observed live as `CannotSendRequest`).
+- **Ids.** A `name` argument becomes the id verbatim
+  (`[A-Za-z0-9][A-Za-z0-9_.-]{0,63}`); auto ids count per kind
+  (`process_0001`). Ids are unique across both registries and never
+  released, so `wait_for` ids are unambiguous and output directories
+  cannot be aliased. Rejections follow the what/why/how style.
+- **spawn.** One exec starts `setsid bash -c <launcher>`: the launcher
+  is a session leader detached from the exec call, backgrounds
+  `timeout -k 10 {process_max_runtime_s}` (no `setsid` around it, so
+  `$!` and `wait` still target timeout itself), records timeout's pid
+  into the process's `pgid` file, and records timeout's exit status as
+  the process's `exit_code`. Verified live: GNU timeout makes itself
+  the process group leader (`setpgid(0,0)`) with the command and its
+  children in that group, so timeout's pid is the group id and
+  `kill -- -PGID` reaches the whole tree, timeout included. The
+  command runs as `exec stdbuf -oL -eL bash -c <command>` (line
+  buffering: redirected output is block-buffered otherwise) with
+  output going to `/workspace/processes/{id}/stdout` and `stderr`.
+  Spawn polls briefly for the `pgid` file and fails cleanly when it
+  never appears. Exit code 124 means the runtime cap fired; a manual
+  kill of the group reports 128+signal through the same file. No
+  host-side reaper: processes die with the pod.
+- **check/kill.** `check_process_state` probes state and tails
+  (bytes-capped pod-side, base64-framed so the output cannot fool the
+  marker parse, truncated to `check_tail_chars` host-side).
+  `kill_process` signals the recorded process group (`TERM`, then a
+  pod-side SIGKILL follow-up), never touching artifacts; a kill by the
+  model marks its completion notice as already-known (it knows), a
+  kill by the user leaves it to fire ("stopped by the user").
+- **Completion watcher.** One thread per registry, started lazily on
+  the first spawn and living for the registry's lifetime (a cheap
+  3s poll loop; it only execs while processes exist, and exits when
+  the registry is dropped or the pod dies), reads the pod for
+  `exit_code` markers and fires the single
+  completion notice per process through `fire_completion`: a payload
+  with the id, a one-line UI summary, and the model-facing notice. The
+  server pushes the summary as a `background_done` event and enqueues
+  the notice into the parent worker's inbox, which wakes an idle
+  worker or queues behind an active turn.
+
+### `src/syna/capabilities/subagents.py`
+
+Background subagents: full `AgentSession` instances on their own
+threads, behind the `subagent` tool (same subcommand shape). Same
+system prompt, model configuration, and shared pod; `AgentSession` is
+imported lazily inside the runner (importing it at module level would
+close a cycle: tools -> here -> session -> parse -> tools).
+
+- **spawn.** Gating before anything expensive: depth first (the
+  spawning context's nesting level comes from a thread-local set by
+  the runner and propagated by `parse.py` onto tool worker threads;
+  a spawn is allowed while child level <= `max_subagent_depth`), then
+  the `max_concurrent_subagents` cap, then id reservation. The first
+  user message is a nesting header ("nesting level N of M; you cannot
+  ask the user questions") followed by the goal. Tools a background
+  worker cannot use are removed from its schemas
+  (`AgentSession(excluded_tools=...)` seam): `ask_user`,
+  `text_to_speech`, `text_to_image`, `review_work` (its work is judged
+  by the spawning agent, and the verifier's conversation provider does
+  not exist on its threads anyway).
+- **Runtime cap.** A `threading.Timer` at `subagent_max_runtime_s`
+  calls `session.cancel()`; the turn unwinds at the next pause and is
+  recorded as "stopped by the runtime cap". Allegro inheritance: a
+  subagent spawned from an Allegro turn gets `set_allegro(True)` (the
+  prompt suffix and the lighter runtime profile), so delegated speed
+  matches the spawning turn's.
+- **Streaming.** Session events are compacted (`model` text,
+  `tool` rows with signature and capped previews, `error`s,
+  `share_file` metadata, and a final `done` row), appended to the
+  record's capped in-memory history under a lock, and delivered
+  through the registry's `event_sink`; the server pushes them as
+  non-persistent `subagent_message` events (the subagent viewer
+  fetches recorded history from the registry on open, so reconnect
+  replays never flood the main event log). A subagent's `share_file`
+  call reaches the parent session's sharing machinery, so files it
+  shares are downloadable as usual.
+- **Artifacts.** The real-time message dump is the session dump
+  machinery itself (`session_id="subagent-{id}"` ->
+  `message-session-log-subagent-{id}.json`). At check, kill, and
+  natural termination the dump is copied into the pod at
+  `/workspace/subagents/{id}/messages.json`, with the final response
+  alongside as `response.md`; all copies are read-only and a kill
+  never destroys them, so every path reported to the model is true
+  when it reaches it. A kill is a graceful cancel (stop at the next
+  pause); its report names the paths immediately, and the completion
+  notice confirms the final artifacts afterwards.
+- **Completions.** The runner finalizes on every end (natural, cap,
+  kill, error): response fallback is the last assistant message in
+  history (a cancelled turn emits no final message), then the same
+  single completion notice fires as for processes. A kill by the model
+  suppresses the notice; a kill by the user delivers "was stopped by
+  the user".
+
 ## 8. The browser stack
 
 The stealth browser (Camoufox) behind `web_search` and the `browser`
@@ -1226,6 +1358,23 @@ endpoints: `POST /api/speech/transcribe` (multipart clip to text) and
 'pcm' replies are wrapped in a WAV container server-side). `main()` runs
 uvicorn.
 
+Background work surfaces: after the pod starts, the session record
+registers the registry's `event_sink` (subagent streaming as
+non-persistent `subagent_message` events) and `completion_sink` (a
+persistent `background_done` event plus the model-facing notice
+enqueued into the inbox as a harness notice, waking the idle worker or
+queueing behind an active turn). `GET
+/api/background/{client_id}/process/{id}/output?stdout_offset=&stderr_offset=`
+returns incremental base64 chunks plus sizes and state for the process
+viewer (tail runs before the size probe, so no chunk is ever
+duplicated); `GET
+/api/background/{client_id}/subagent/{id}/events` returns a subagent
+viewer's history. The WebSocket accepts `process_kill` and
+`subagent_kill` messages from the viewers' stop buttons, run off the
+event loop. Teardown (`new-chat`, janitor, shutdown) stops running
+subagents and drops the session's registry; the pod's processes die
+with the pod itself.
+
 Server auth (hardened boundaries): `main()` generates a per-process token
 (`AUTH_TOKEN`, `secrets.token_urlsafe`); the HTTP middleware then requires
 it on `/api/*` (header `X-Syna-Token` or `token` query; the query form
@@ -1267,7 +1416,7 @@ sources live in `webui/`:
   `webui/index-setup.html` + `webui/css/setup.css` + `webui/js/setup.js` are
   the first-run setup wizard.
 - `webui/css/`: style blocks (`base`, `ambient`, `chrome`, `chat`,
-  `composer`, `voice`), inlined in that order. The UI is dark-only:
+  `background`, `composer`, `voice`), inlined in that order. The UI is dark-only:
   `base.css` defines a single dark palette (`color-scheme: dark`), and
   no `prefers-color-scheme` branches remain anywhere in `webui/`.
 - `webui/js/`: script blocks (`ambient`, `sfx`, `markdown`, `chat`,
@@ -1427,6 +1576,27 @@ drops are ignored.
   rebuild the dock from the event log
   (queued pill events first, their delivery event later); new chat and
   disconnects clear it. The old in-chat `.queued-tag` is gone.
+- Background work has its own viewing layer (`background.css` plus a
+  `chat.js` section). Clicking a finished `process`, `subagent`, or
+  `wait_for` tool row opens a shared modal instead of the inline
+  detail: the id comes from the spawn's structured output or the row's
+  arguments (a `wait_for` row resolves its kind by asking the subagent
+  endpoint first). The process view polls the output endpoint every
+  second, appends base64-decoded chunks into two labeled panes
+  (stdout/stderr) that auto-follow while pinned to the bottom and trim
+  themselves past a cap; the subagent view fetches the recorded event
+  history once, renders it as simplified message rectangles (goal,
+  assistant text, compact tool rows, a done row), and appends live
+  `subagent_message` events by sequence number. Both carry a Stop
+  button sending `process_kill`/`subagent_kill` over the WebSocket,
+  disabled once the work is no longer running. Completion arrives as a
+  persistent `background_done` compact notice row (not a user bubble),
+  clickable to reopen the viewer.
+- Tool-activity sound fades: every tool-call event pokes the sfx
+  layer (`Sfx.poke()`), which ramps the tool-loop beat's gain back up
+  and schedules a fade to silence over 15 seconds, so a long
+  `wait_for` goes quiet instead of looping; the next tool activity
+  brings it back, and ambient state changes re-sync the gain.
 
 ## 11. Voice and narration
 

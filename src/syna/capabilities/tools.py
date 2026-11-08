@@ -51,6 +51,7 @@ from ..config import (
     load_command_timeout_s,
     load_output_limit_chars,
     load_tool_call_timeout_s,
+    load_wait_for_timeout,
 )
 from .editor import edit_file as e_edit_file
 from .editor import read_file as e_read_file
@@ -62,6 +63,17 @@ from .image_generation import (
 )
 from ..interaction import InteractionCancelled, InteractionError
 from ..interaction import ask as ask_interactive
+from .processes import (
+    NONINTERACTIVE_ENV_EXPORTS,
+    WAIT_FOR_MAX_S,
+    WAIT_FOR_POLL_INTERVAL_S,
+    check_process_state,
+    format_process_report,
+    kill_process,
+    registry_for,
+    spawn_process,
+    unknown_id_error,
+)
 from .speech import (
     EXTENSION_BY_MEDIA_TYPE,
     MAX_TTS_INPUT_CHARS,
@@ -75,8 +87,15 @@ from .speech import (
 from ..state import (
     ToolCancelled,
     get_call_output_path,
+    get_cancel_event,
     get_container,
     set_last_exit_code,
+)
+from .subagents import (
+    check_subagent,
+    kill_subagent,
+    spawn_subagent,
+    subagent_is_settled,
 )
 from .verification import run_verification as v_run_verification
 from .vision import describe_image as v_describe_image
@@ -103,14 +122,7 @@ BROWSER_COMMANDS = {
     "screenshot": Browser.screenshot,
 }
 
-NONINTERACTIVE_ENV_EXPORTS = (
-    "DEBIAN_FRONTEND=noninteractive PAGER=cat GIT_PAGER=cat"
-    " GIT_TERMINAL_PROMPT=0 PIP_NO_INPUT=1 PIP_PROGRESS_BAR=off"
-    " PYTHONUNBUFFERED=1 TERM=dumb NO_COLOR=1"
-)
-
 EXIT_CODE_MARKER_PATTERN = re.compile(r"\n<<<SYNA_EXIT=(\d+)>>>\s*$")
-
 COMMAND_TIMEOUT_MARGIN_S = 5
 COMMAND_KILL_GRACE_S = 5
 COMMAND_TIMEOUT_EXIT_CODES = {124, 137}
@@ -140,10 +152,10 @@ def _command_timeout_notice(exit_code: int, timeout_s: int) -> str:
         f"\n\nTIMEOUT: this execute_command call failed. The command {what}"
         f" after {timeout_s} seconds; {timeout_s} seconds is the maximum"
         " runtime of one execute_command call. The command is no longer"
-        " running and the output above is partial. For longer work, launch"
-        " it in the background (append `&`, or `nohup ... &`) with its"
-        " output redirected to a file, then check on it with later calls"
-        " instead of waiting on one."
+        " running and the output above is partial. For longer work, use"
+        " the process tool to run it detached: it keeps running, its"
+        " output streams to files you can check, and a notice arrives"
+        " when it finishes."
     )
 
 
@@ -670,6 +682,181 @@ def review_work(summary: str):
     return result
 
 
+def process(command: str, args: dict | None = None):
+    """
+    Run a bash command in the pod as a detached background process: spawn returns immediately and the process keeps running while you do other work; a notice arrives here automatically when it finishes. Use it for long-running work (servers, builds, big downloads, benchmark runs) that would outlive one execute_command call.
+    - `command` (string, required): `spawn`, `check`, or `kill`.
+    - `args` (object, required): parameters for that command; see the list below.
+
+    * `spawn`: `command` (string, required): the bash command to run; `name` (string, optional): a short id of your choice (letters, digits, dots, hyphens); otherwise one like process_0001 is assigned. Its stdout and stderr stream to /workspace/processes/{id}/stdout and stderr, and it is killed when it exceeds its runtime cap (exit code 124). Processes die with the pod.
+    * `check`: `process_id` (string, required). Returns state, running time, and the last characters of stdout and stderr.
+    * `kill`: `process_id` (string, required). Kills the whole process tree; the output files stay.
+
+    Example: process(command="spawn", args={"command": "python3 -m http.server 8080", "name": "server"})
+    """
+    args = args or {}
+    if command == "spawn":
+        spawn_command = args.get("command")
+        if not isinstance(spawn_command, str) or not spawn_command.strip():
+            set_last_exit_code(1)
+            return (
+                "ERROR: process spawn needs 'command': the bash command"
+                " to run, as a non-empty string."
+            )
+        result = spawn_process(spawn_command, name=args.get("name"))
+        if "error" in result:
+            set_last_exit_code(1)
+            return "ERROR: " + result["error"]
+        return result
+    if command in ("check", "kill"):
+        process_id = args.get("process_id")
+        if not isinstance(process_id, str) or not process_id.strip():
+            set_last_exit_code(1)
+            return (
+                f"ERROR: process {command} needs 'process_id': the id"
+                " the spawn returned."
+            )
+        if command == "check":
+            result = _check_process(process_id)
+        else:
+            result = kill_process(process_id, by="model")
+        if result.startswith("ERROR:"):
+            set_last_exit_code(1)
+        return result
+    set_last_exit_code(1)
+    return (
+        f"ERROR: unknown process command '{command}'. Available commands:"
+        " check, kill, spawn"
+    )
+
+
+def _check_process(process_id: str) -> str:
+    """Fresh state probe plus tails for one registered process."""
+    container = get_container()
+    registry = registry_for(container)
+    with registry.lock:
+        proc = registry.processes.get(process_id)
+    if proc is None:
+        set_last_exit_code(1)
+        return "ERROR: " + unknown_id_error(process_id)
+    try:
+        state, stdout, stderr = check_process_state(container, proc.dir)
+    except Exception as exc:
+        set_last_exit_code(1)
+        return f"ERROR: could not read the process output: {exc}"
+    return format_process_report(proc, state, stdout, stderr)
+
+
+def subagent(command: str, args: dict | None = None):
+    """
+    Delegate a self-contained task to a background subagent: a fresh instance of you with the same prompt, tools, and pod, running detached. Spawn returns immediately; a notice arrives here automatically when the subagent finishes. Use it for parallelizable or long-running subtasks; do the work yourself when later steps depend on your intermediate results. Subagents cannot ask the user questions, only a fixed number run at once, and a subagent cannot spawn subagents beyond the depth cap.
+    - `command` (string, required): `spawn`, `check`, or `kill`.
+    - `args` (object, required): parameters for that command; see the list below.
+
+    * `spawn`: `goal` (string, required): the task, self-contained and verifiable, naming its deliverable paths; `name` (string, optional): a short id of your choice; otherwise one like subagent_0001. It shares the pod with you: partition file work by path so concurrent subagents cannot overwrite each other.
+    * `check`: `subagent_id` (string, required). Returns state, running time, the tail of its message log, and its transcript path.
+    * `kill`: `subagent_id` (string, required). Stops it at its next pause; its transcript and any response stay in /workspace/subagents/{id}/.
+
+    Example: subagent(command="spawn", args={"goal": "Read every paper in /workspace/papers and write /workspace/related.md summarizing them", "name": "lit-review"})
+    """
+    args = args or {}
+    if command == "spawn":
+        goal = args.get("goal")
+        if not isinstance(goal, str) or not goal.strip():
+            set_last_exit_code(1)
+            return (
+                "ERROR: subagent spawn needs 'goal': the task for the"
+                " subagent, as a non-empty string."
+            )
+        result = spawn_subagent(goal, name=args.get("name"))
+        if "error" in result:
+            set_last_exit_code(1)
+            return "ERROR: " + result["error"]
+        return result
+    if command in ("check", "kill"):
+        subagent_id = args.get("subagent_id")
+        if not isinstance(subagent_id, str) or not subagent_id.strip():
+            set_last_exit_code(1)
+            return (
+                f"ERROR: subagent {command} needs 'subagent_id': the id"
+                " the spawn returned."
+            )
+        if command == "check":
+            result = check_subagent(subagent_id)
+        else:
+            result = kill_subagent(subagent_id, by="model")
+        if result.startswith("ERROR:"):
+            set_last_exit_code(1)
+        return result
+    set_last_exit_code(1)
+    return (
+        f"ERROR: unknown subagent command '{command}'. Available commands:"
+        " check, kill, spawn"
+    )
+
+
+def wait_for(id: str, max_wait_s: int | None = None):
+    """
+    Block until a background process or subagent finishes or is stopped, or until the wait times out. On timeout it reports "still running"; a notice arrives here automatically when it finishes anyway, so waiting again is optional and doing other work meanwhile is usually better.
+    - `id` (string, required): the process or subagent id.
+    - `max_wait_s` (integer, optional): seconds to wait at most; default 120.
+
+    Example: wait_for(id="build", max_wait_s=600)
+    """
+    if not isinstance(max_wait_s, int) or max_wait_s <= 0:
+        if max_wait_s is not None:
+            set_last_exit_code(1)
+            return "ERROR: max_wait_s must be a positive number of seconds."
+        max_wait_s = load_wait_for_timeout()
+    budget = min(max_wait_s, WAIT_FOR_MAX_S)
+    container = get_container()
+    registry = registry_for(container)
+    entry = registry.lookup(id)
+    if entry is None:
+        set_last_exit_code(1)
+        return "ERROR: " + unknown_id_error(id)
+    kind, record = entry
+    deadline = time.monotonic() + budget
+    while True:
+        entry = registry.lookup(id)
+        if entry is None:
+            set_last_exit_code(1)
+            return "ERROR: " + unknown_id_error(id)
+        kind, record = entry
+        if kind == "process":
+            if record.state != "running":
+                return _finished_process_wait(record, container)
+        else:
+            if subagent_is_settled(record):
+                return check_subagent(record.id, registry, container)
+        cancel_event = get_cancel_event()
+        if cancel_event is not None and cancel_event.is_set():
+            raise ToolCancelled()
+        if time.monotonic() >= deadline:
+            runtime = time.time() - record.started
+            return (
+                f"'{id}' is still running after waiting {budget:.0f}s"
+                f" (total runtime {runtime:.0f}s). It keeps running and a"
+                " notice arrives here automatically when it finishes. You"
+                " can wait again, check its current output"
+                f" (process check / subagent check), or do other work"
+                " meanwhile."
+            )
+        time.sleep(WAIT_FOR_POLL_INTERVAL_S)
+
+
+def _finished_process_wait(proc, container) -> str:
+    """The wait_for result when the waited process has ended."""
+    try:
+        state, stdout, stderr = check_process_state(container, proc.dir)
+    except Exception as exc:
+        return f"Process '{proc.id}' ended, but its output is unreadable: {exc}"
+    return (
+        format_process_report(proc, state, stdout, stderr)
+        + "\nIt finished during this wait."
+    )
+
+
 def _discard_browser_session(reason: str) -> None:
     """Drop the shared tool browser after a command was abandoned mid-flight.
 
@@ -709,4 +896,7 @@ TOOL_REGISTRY = {
     "share_file": share_file,
     "ask_user": ask_user,
     "review_work": review_work,
+    "process": process,
+    "subagent": subagent,
+    "wait_for": wait_for,
 }

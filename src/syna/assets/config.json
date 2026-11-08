@@ -43,6 +43,12 @@
   "pod_doh_bootstrap": "9.9.9.10",
   "pod_doh_bootstrap_alt": "149.112.112.10",
   "net_guard_doh_uri": "https://dns.google/resolve",
+  "process_max_runtime_s": 1200,
+  "subagent_max_runtime_s": 1800,
+  "max_subagent_depth": 3,
+  "max_concurrent_subagents": 4,
+  "wait_for_timeout": 120,
+  "check_tail_chars": 4000,
   "session_idle_timeout_min": 15,
   "upload_dest": "/home/user/uploads",
   "voice": {

@@ -87,6 +87,37 @@ def get_cancel_event() -> threading.Event | None:
     return getattr(_call_context, "cancel_event", None)
 
 
+def set_background_level(level: int | None) -> None:
+    """Record the subagent nesting depth of the current context.
+
+    Main-agent turns leave it unset (meaning 1). The dispatch layer
+    propagates it onto tool worker threads alongside the container, so
+    a `subagent` tool call executing deep inside a batch still knows
+    how deep the spawning agent itself is.
+    """
+    _call_context.background_level = level
+
+
+def get_background_level() -> int:
+    """Return the subagent nesting depth of the calling context, from 1."""
+    return getattr(_call_context, "background_level", None) or 1
+
+
+def set_background_allegro(enabled: bool | None) -> None:
+    """Record whether the running turn is in Allegro mode.
+
+    Set by `run_turn` and propagated by the dispatch layer like the
+    nesting level, so spawned subagents inherit the mode (its prompt
+    suffix and timings).
+    """
+    _call_context.background_allegro = enabled
+
+
+def get_background_allegro() -> bool:
+    """Whether the spawning turn runs in Allegro mode."""
+    return bool(getattr(_call_context, "background_allegro", None))
+
+
 def register_container(container: Container) -> None:
     """Bind a container to the calling thread so tools can resolve it."""
     _local.container = container

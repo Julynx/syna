@@ -36,11 +36,15 @@ from ..interaction import get_responder, register_responder, unregister_responde
 from .output import bounded_output
 from ..state import (
     ToolCancelled,
+    get_background_allegro,
+    get_background_level,
     get_container,
     get_registered_container,
     next_call_index,
     pop_last_exit_code,
     register_container,
+    set_background_allegro,
+    set_background_level,
     set_call_output_path,
     set_cancel_event,
     set_last_exit_code,
@@ -52,6 +56,7 @@ from ..capabilities.tools import (
     command_runtime_limit_s,
 )
 from ..capabilities.browser import browser_deadline_s
+from ..capabilities.processes import wait_for_deadline_s
 from ..capabilities.web_search import search_deadline_s
 from ..capabilities.verification import (
     REVIEW_TOOL_NAME,
@@ -222,17 +227,22 @@ def load_tool_call_timeout() -> float:
     return load_tool_call_timeout_s()
 
 
-def call_deadline_s(tool_name: str, tool_timeout_s: float | None) -> float | None:
+def call_deadline_s(
+    tool_name: str, tool_timeout_s: float | None, tool_arguments: dict | None = None
+) -> float | None:
     """Return the per-call deadline in seconds, or None when untimed.
 
     Regular tools are bounded by tool_call_timeout_s (subject to the
     calling thread's Allegro scale). ask_user waits for the user by
     design and review_work is bounded by the model client's own timeout
-    and retry policy, so neither gets a harness deadline. web_search and
-    browser enforce their own phase budgets (browser launch cap, search
-    or command budget); their deadlines are each tool's own worst-case
-    composition: a bug guard that only fires when the tool's internal
-    enforcement has failed, never the routine limit.
+    and retry policy, so neither gets a harness deadline. web_search
+    and browser enforce their own phase budgets (browser launch cap,
+    search or command budget); their deadlines are each tool's own
+    worst-case composition: a bug guard that only fires when the tool's
+    internal enforcement has failed, never the routine limit. wait_for
+    follows its own wait budget (from its arguments) plus slack, so a
+    wait that expires returns a graceful "still running" result instead
+    of being stopped by the harness.
     """
     if tool_name in ("ask_user", REVIEW_TOOL_NAME):
         return None
@@ -240,6 +250,8 @@ def call_deadline_s(tool_name: str, tool_timeout_s: float | None) -> float | Non
         return search_deadline_s()
     if tool_name == "browser":
         return browser_deadline_s()
+    if tool_name == "wait_for":
+        return wait_for_deadline_s(tool_arguments)
     return tool_timeout_s
 
 
@@ -333,6 +345,8 @@ def execute_tool_with_timeout(
     container = get_registered_container()
     responder = get_responder()
     log_provider = current_conversation_log_provider()
+    background_level = get_background_level()
+    background_allegro = get_background_allegro()
     finished = threading.Event()
     cancel_event = threading.Event()
     outcome: dict = {}
@@ -344,6 +358,8 @@ def execute_tool_with_timeout(
             register_responder(responder)
         if log_provider is not None:
             set_conversation_log_provider(log_provider)
+        set_background_level(background_level)
+        set_background_allegro(background_allegro)
         set_call_output_path(output_path)
         set_cancel_event(cancel_event)
         try:
@@ -354,6 +370,8 @@ def execute_tool_with_timeout(
             outcome["exit_code"] = pop_last_exit_code()
             set_call_output_path(None)
             set_cancel_event(None)
+            set_background_level(None)
+            set_background_allegro(None)
             pop_conversation_log_provider()
             unregister_responder()
             if container is not None:
@@ -795,7 +813,7 @@ def parse_and_execute_tools(
         )
 
         call_output_path = f"/tool_outputs/{next_call_index():04d}_{tool_name}.txt"
-        call_deadline = call_deadline_s(tool_name, tool_timeout_s)
+        call_deadline = call_deadline_s(tool_name, tool_timeout_s, tool_arguments)
         try:
             output, timed_out, exit_code = execute_tool_with_timeout(
                 tool_name, tool_arguments, call_deadline, call_output_path

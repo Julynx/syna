@@ -347,6 +347,20 @@ DEFAULT_USER_MESSAGES_DEST = "/user_messages"
 DEFAULT_ELIDE_USER_MESSAGE_HEAD_CHARS = 300
 DEFAULT_VERIFY_LOG_TAIL_CHARS = 128000
 
+# Background work. Processes and subagents get their own runtime caps,
+# independent of the per-call tool timeout: a detached process or
+# subagent outlives the tool call that spawned it. Subagent depth counts
+# nesting levels including main, so 3 = main -> subagent ->
+# sub-subagent, and a sub-subagent cannot spawn further. The concurrent
+# cap bounds API spend; wait_for follows its own deadline, not
+# tool_call_timeout_s. Tail sizes are measured in characters.
+DEFAULT_PROCESS_MAX_RUNTIME_S = 1200
+DEFAULT_SUBAGENT_MAX_RUNTIME_S = 1800
+DEFAULT_MAX_SUBAGENT_DEPTH = 3
+DEFAULT_MAX_CONCURRENT_SUBAGENTS = 4
+DEFAULT_WAIT_FOR_TIMEOUT = 120
+DEFAULT_CHECK_TAIL_CHARS = 4000
+
 
 def load_user_message_archive_min_chars() -> int:
     """Return the message length at which user messages are archived verbatim."""
@@ -372,15 +386,57 @@ def load_verify_log_tail_chars() -> int:
     return load_config().get("verify_log_tail_chars", DEFAULT_VERIFY_LOG_TAIL_CHARS)
 
 
+def load_process_max_runtime_s() -> int:
+    """Return the runtime cap of one detached pod process."""
+    return int(
+        load_config().get("process_max_runtime_s", DEFAULT_PROCESS_MAX_RUNTIME_S)
+    )
+
+
+def load_subagent_max_runtime_s() -> int:
+    """Return the runtime cap of one subagent turn."""
+    return int(
+        load_config().get("subagent_max_runtime_s", DEFAULT_SUBAGENT_MAX_RUNTIME_S)
+    )
+
+
+def load_max_subagent_depth() -> int:
+    """Return the subagent nesting depth cap, counting main."""
+    return int(load_config().get("max_subagent_depth", DEFAULT_MAX_SUBAGENT_DEPTH))
+
+
+def load_max_concurrent_subagents() -> int:
+    """Return how many subagents may run at once."""
+    return int(
+        load_config().get("max_concurrent_subagents", DEFAULT_MAX_CONCURRENT_SUBAGENTS)
+    )
+
+
+def load_wait_for_timeout() -> int:
+    """Return the default deadline of one wait_for call."""
+    return int(load_config().get("wait_for_timeout", DEFAULT_WAIT_FOR_TIMEOUT))
+
+
+def load_check_tail_chars() -> int:
+    """Return how many characters of output the check tools tail."""
+    return int(load_config().get("check_tail_chars", DEFAULT_CHECK_TAIL_CHARS))
+
+
 __all__ = [
     "asset_path",
     "get_data_home",
     "load_browser_launch_timeout_s",
+    "load_check_tail_chars",
     "load_command_timeout_s",
     "load_config",
     "load_max_cancel_wait_s",
+    "load_max_concurrent_subagents",
+    "load_max_subagent_depth",
     "load_output_limit_chars",
+    "load_process_max_runtime_s",
+    "load_subagent_max_runtime_s",
     "load_tool_call_timeout_s",
+    "load_wait_for_timeout",
     "load_web_search_timeout_s",
     "read_asset_text",
     "scale_seconds",

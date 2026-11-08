@@ -58,7 +58,7 @@ def test_timeout_124_gets_explicit_notice(monkeypatch: MonkeyPatch):
     assert "TIMEOUT: this execute_command call failed." in result
     assert "exit code 124" in result
     assert "50 seconds is the maximum runtime" in result
-    assert "nohup" in result
+    assert "process tool" in result
     print("PASS a timeout-killed command states what happened and the limit")
 
 

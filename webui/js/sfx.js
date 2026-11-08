@@ -351,15 +351,32 @@ const Sfx = (() => {
     const st = document.body.dataset.ambient || "idle";
     if (st === cur) return;
     cur = st;
-    for (const k in acts)
+    for (const k in acts) {
+      if (k === "tool") acts[k].gain.cancelScheduledValues(ctx.currentTime);
       acts[k].gain.setTargetAtTime(
         k === st ? 1 : 0,
         ctx.currentTime,
         k === st ? 0.3 : 0.5,
       );
+    }
     clearTimeout(timer);
     if (st !== "idle") loop();
   }
+
+  /* The tool-loop beat fades to silence over ~15 seconds of continuous
+     tool activity and comes back on the next poke, so a long wait
+     (wait_for on a background process or subagent) goes quiet instead
+     of looping. Ambient state changes re-sync the gain through sync(). */
+  function poke() {
+    if (!ctx || !acts.tool || cur !== "tool") return;
+    const g = acts.tool.gain;
+    const now = ctx.currentTime;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(Math.max(g.value, 0.001), now);
+    g.linearRampToValueAtTime(1, now + 0.3);
+    g.linearRampToValueAtTime(0, now + 15);
+  }
+
   function loop() {
     if (!on || !ctx || cur === "idle") return;
     if (window.Voice && Voice.speaking) {
@@ -400,6 +417,7 @@ const Sfx = (() => {
   return {
     unlock,
     play,
+    poke,
     setOn,
     get on() {
       return on;

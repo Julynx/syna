@@ -1280,6 +1280,204 @@ body.dragging #drop-overlay {
 }
 
 </style> <style>
+/* Background work modals: the process viewer and the subagent viewer
+   share one backdrop, header, and close/stop treatment. */
+
+.bg-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  z-index: 50;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.bg-modal-backdrop.open {
+  opacity: 1;
+}
+
+.bg-modal {
+  width: min(760px, 100%);
+  max-height: min(88vh, 860px);
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.65);
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-28px);
+  transition:
+    transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.25s ease;
+}
+.bg-modal-backdrop.open .bg-modal {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.bg-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.bg-modal-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  overflow: hidden;
+}
+.bg-modal-title .material-symbols-outlined {
+  flex: none;
+  font-size: 18px;
+  color: var(--accent);
+}
+.bg-modal-id {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bg-modal-state {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--muted);
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  user-select: none;
+}
+.bg-modal-state.running {
+  color: var(--warn);
+  border-color: var(--warn-line);
+}
+.bg-modal-state.done {
+  color: var(--ok);
+}
+.bg-modal-stop {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  color: var(--danger);
+}
+.bg-modal-stop .material-symbols-outlined {
+  font-size: 17px;
+}
+.bg-modal-stop:not(:disabled):hover {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+
+.bg-modal-body {
+  flex: 1;
+  min-height: 200px;
+  overflow-y: auto;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* Process viewer: two labeled output panes, lazily trimmed. */
+.bg-output-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.bg-output-pre {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-detail);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.bg-output-pre.stderr {
+  color: var(--muted);
+}
+
+/* Subagent viewer: message rectangles like the main chat, simplified. */
+.bg-msg {
+  padding: 9px 14px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+.bg-msg.goal {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  font-size: 13px;
+}
+.bg-msg.tool {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: var(--surface-detail);
+}
+.bg-msg.tool .bg-tool-name {
+  color: var(--text);
+  font-weight: 600;
+}
+.bg-msg.tool.failed {
+  color: var(--danger);
+  border-color: var(--danger-line);
+}
+.bg-msg.tool .bg-tool-out {
+  margin-top: 4px;
+  opacity: 0.85;
+}
+.bg-msg.error {
+  color: var(--danger);
+  border-color: var(--danger-line);
+  background: var(--danger-tint);
+}
+.bg-msg.done {
+  color: var(--ok);
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border-style: dashed;
+  text-align: center;
+  align-self: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bg-modal-backdrop,
+  .bg-modal {
+    transition: none;
+  }
+}
+
+</style> <style>
 footer {
   padding: 10px 12px;
   padding-bottom: max(16px, env(safe-area-inset-bottom));
@@ -2732,15 +2930,32 @@ const Sfx = (() => {
     const st = document.body.dataset.ambient || "idle";
     if (st === cur) return;
     cur = st;
-    for (const k in acts)
+    for (const k in acts) {
+      if (k === "tool") acts[k].gain.cancelScheduledValues(ctx.currentTime);
       acts[k].gain.setTargetAtTime(
         k === st ? 1 : 0,
         ctx.currentTime,
         k === st ? 0.3 : 0.5,
       );
+    }
     clearTimeout(timer);
     if (st !== "idle") loop();
   }
+
+  /* The tool-loop beat fades to silence over ~15 seconds of continuous
+     tool activity and comes back on the next poke, so a long wait
+     (wait_for on a background process or subagent) goes quiet instead
+     of looping. Ambient state changes re-sync the gain through sync(). */
+  function poke() {
+    if (!ctx || !acts.tool || cur !== "tool") return;
+    const g = acts.tool.gain;
+    const now = ctx.currentTime;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(Math.max(g.value, 0.001), now);
+    g.linearRampToValueAtTime(1, now + 0.3);
+    g.linearRampToValueAtTime(0, now + 15);
+  }
+
   function loop() {
     if (!on || !ctx || cur === "idle") return;
     if (window.Voice && Voice.speaking) {
@@ -2781,6 +2996,7 @@ const Sfx = (() => {
   return {
     unlock,
     play,
+    poke,
     setOn,
     get on() {
       return on;
@@ -3078,6 +3294,8 @@ const ICONS = {
   speakerOn: GLYPH("record_voice_over", "s-on"),
   speakerOff: GLYPH("voice_over_off", "s-off"),
   allegro: GLYPH("queue_music"),
+  subagent: GLYPH("account_tree"),
+  schedule: GLYPH("schedule"),
 };
 
 const allegro = (() => {
@@ -3148,6 +3366,9 @@ const TOOL_META = {
     icon: ICONS.factCheck,
     key: "summary",
   },
+  process: { verb: "Process", icon: ICONS.terminal },
+  subagent: { verb: "Subagent", icon: ICONS.subagent },
+  wait_for: { verb: "Waited for", icon: ICONS.schedule, key: "id" },
 };
 
 const DETAIL_CAP_CHARS = 6000;
@@ -4156,7 +4377,14 @@ function finishToolRow(event) {
   row.classList.add("toggleable");
   if (!row._detailBound) {
     row._detailBound = true;
-    row.addEventListener("click", () => toggleDetail(row));
+    const backgroundRef = !event.failed && backgroundIdFor(event);
+    if (backgroundRef) {
+      row.addEventListener("click", () =>
+        openBackgroundModal(backgroundRef.kind, backgroundRef.id),
+      );
+    } else {
+      row.addEventListener("click", () => toggleDetail(row));
+    }
   }
   updateAmbient();
 }
@@ -4303,7 +4531,9 @@ function render(event) {
     event.type !== "status" &&
     event.type !== "busy" &&
     event.type !== "ready" &&
-    event.type !== "compaction"
+    event.type !== "compaction" &&
+    event.type !== "subagent_message" &&
+    event.type !== "background_done"
   ) {
     resetToolRun();
   }
@@ -4353,8 +4583,26 @@ function render(event) {
         }
         break;
       }
+      Sfx.poke();
       if (event.status === "started") addToolRow(event);
       else finishToolRow(event);
+      break;
+    case "subagent_message":
+      if (
+        bgModal &&
+        bgModal.kind === "subagent" &&
+        bgModal.id === event.subagent_id &&
+        event.seq > bgModal.lastSeq
+      ) {
+        bgModal.lastSeq = event.seq;
+        appendBgEntry(event);
+      }
+      break;
+    case "background_done":
+      addBackgroundDoneRow(event);
+      if (bgModal && bgModal.id === event.id) {
+        setBgState("done", null, event.summary);
+      }
       break;
     case "file":
     case "file_sent":
@@ -4406,6 +4654,7 @@ function connect() {
     thinkingRow = null;
     resetAskState();
     clearQueuedMessages();
+    closeBackgroundModal();
     if (window.Voice) Voice.reset();
     setStatus("ready", "Ready");
     updateAmbient();
@@ -4583,6 +4832,339 @@ function uploadFiles(files) {
 
 const SPINNER_SVG =
   '<svg class="btn-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>';
+
+/* Background work modals: the process viewer (polled output) and the
+   subagent viewer (streamed message rectangles) share one modal shell.
+   Tool rows for process/subagent/wait_for open these instead of the
+   inline detail. */
+let bgModal = null;
+
+const BG_TRIM_CHARS = 160000;
+
+function backgroundIdFor(event) {
+  const name = event.name;
+  if (name === "process") {
+    const spawned = event.structured_output;
+    if (spawned && spawned.process_id) return { kind: "process", id: spawned.process_id };
+    const id = event.arguments && event.arguments.process_id;
+    return id ? { kind: "process", id } : null;
+  }
+  if (name === "subagent") {
+    const spawned = event.structured_output;
+    if (spawned && spawned.subagent_id) return { kind: "subagent", id: spawned.subagent_id };
+    const id = event.arguments && event.arguments.subagent_id;
+    return id ? { kind: "subagent", id } : null;
+  }
+  if (name === "wait_for") {
+    const id = event.arguments && event.arguments.id;
+    return id ? { kind: "either", id } : null;
+  }
+  return null;
+}
+
+function b64ToText(b64) {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function sendBgStop(_kind, id, btn) {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !bgModal) return;
+  ws.send(
+    JSON.stringify({
+      type: bgModal.kind === "process" ? "process_kill" : "subagent_kill",
+      id,
+    }),
+  );
+  if (btn) btn.disabled = true;
+  setBgState("stopping...");
+}
+
+function setBgState(state, exitCode, summary) {
+  if (!bgModal) return;
+  const chip = bgModal.stateChip;
+  const running = state === "running";
+  chip.classList.toggle("running", running);
+  chip.classList.toggle("done", state !== "running" && state !== "stopping");
+  chip.textContent =
+    summary ||
+    (state === "exited"
+      ? "exit " + (exitCode === null || exitCode === undefined ? "?" : exitCode)
+      : state);
+  if (bgModal.stopBtn) bgModal.stopBtn.disabled = !running;
+}
+
+function appendBgProcessText(section, text) {
+  if (!bgModal) return;
+  let box = bgModal.sections[section];
+  if (!box) {
+    const label = document.createElement("div");
+    label.className = "bg-output-label";
+    label.textContent = section;
+    box = document.createElement("pre");
+    box.className = "bg-output-pre" + (section === "stderr" ? " stderr" : "");
+    box._content = "";
+    bgModal.sections[section] = box;
+    bgModal.body.appendChild(label);
+    bgModal.body.appendChild(box);
+  }
+  const body = bgModal.body;
+  const nearBottom =
+    body.scrollHeight - body.scrollTop - body.clientHeight < 60;
+  box._content += text;
+  if (box._content.length > BG_TRIM_CHARS)
+    box._content = "[... trimmed ...]\n" + box._content.slice(-BG_TRIM_CHARS);
+  box.textContent = box._content;
+  if (nearBottom) body.scrollTop = body.scrollHeight;
+}
+
+function stopBgTimer() {
+  if (bgModal && bgModal.timer) {
+    clearInterval(bgModal.timer);
+    bgModal.timer = null;
+  }
+}
+
+function startProcessPolling(id) {
+  const token = bgModal;
+  let stdoutOffset = 0,
+    stderrOffset = 0;
+  const tick = async () => {
+    if (bgModal !== token) return;
+    let data = null,
+      gone = false;
+    try {
+      const res = await fetch(
+        withToken(
+          `${API_BASE}/api/background/${clientId}/process/${encodeURIComponent(id)}/output?stdout_offset=${stdoutOffset}&stderr_offset=${stderrOffset}`,
+        ),
+        { headers: authHeaders() },
+      );
+      if (res.status === 404) gone = true;
+      else if (res.ok) data = await res.json();
+    } catch (err) {
+      /* transient: retry on the next tick */
+    }
+    if (bgModal !== token) return;
+    if (gone) {
+      setBgState("gone");
+      stopBgTimer();
+      return;
+    }
+    if (!data) return;
+    if (data.stdout_b64) appendBgProcessText("stdout", b64ToText(data.stdout_b64));
+    if (data.stderr_b64) appendBgProcessText("stderr", b64ToText(data.stderr_b64));
+    stdoutOffset = data.stdout_size;
+    stderrOffset = data.stderr_size;
+    if (data.state !== "running") {
+      setBgState(data.state, data.exit_code);
+      stopBgTimer();
+    } else {
+      setBgState("running");
+    }
+  };
+  tick();
+  token.timer = setInterval(tick, 1000);
+}
+
+function subagentDoneSummary(meta) {
+  if (meta.end_reason === "runtime cap") return "stopped by its runtime cap";
+  if (meta.state === "killed")
+    return "stopped by the " + (meta.stopped_by || "user");
+  if (meta.end_reason === "error") return "ended with an error";
+  return "finished with a response";
+}
+
+function appendBgEntry(entry) {
+  if (!bgModal) return;
+  const el = document.createElement("div");
+  if (entry.kind === "model") {
+    el.className = "bg-msg model";
+    el.textContent = entry.content || "";
+  } else if (entry.kind === "tool") {
+    el.className = "bg-msg tool" + (entry.failed ? " failed" : "");
+    const name = document.createElement("span");
+    name.className = "bg-tool-name";
+    name.textContent =
+      (entry.name || "tool") + (entry.status === "finished" ? "" : " ...");
+    el.appendChild(name);
+    const out = entry.output_preview || entry.signature || "";
+    if (out) {
+      const outEl = document.createElement("div");
+      outEl.className = "bg-tool-out";
+      outEl.textContent = out;
+      el.appendChild(outEl);
+    }
+  } else if (entry.kind === "share") {
+    el.className = "bg-msg tool";
+    const name = document.createElement("span");
+    name.className = "bg-tool-name";
+    name.textContent =
+      "Shared file: " + ((entry.metadata && entry.metadata.name) || "");
+    el.appendChild(name);
+  } else if (entry.kind === "error") {
+    el.className = "bg-msg error";
+    el.textContent = entry.text || "";
+  } else if (entry.kind === "done") {
+    el.className = "bg-msg done";
+    el.textContent = entry.summary || "finished";
+  } else {
+    return;
+  }
+  const body = bgModal.body;
+  const nearBottom =
+    body.scrollHeight - body.scrollTop - body.clientHeight < 60;
+  body.appendChild(el);
+  if (nearBottom) body.scrollTop = body.scrollHeight;
+}
+
+function renderSubagentHistory(token, data) {
+  if (bgModal !== token) return;
+  const goal = document.createElement("div");
+  goal.className = "bg-msg goal";
+  goal.textContent = data.goal;
+  token.body.appendChild(goal);
+  for (const entry of data.events) appendBgEntry(entry);
+  token.lastSeq = data.events.length
+    ? data.events[data.events.length - 1].seq
+    : 0;
+  const stillRunning =
+    data.state === "running" || data.state === "stopping";
+  if (stillRunning) setBgState("running");
+  else setBgState(data.state, null, subagentDoneSummary(data));
+  token.body.scrollTop = token.body.scrollHeight;
+}
+
+async function openSubagentView(id) {
+  const token = bgModal;
+  let data = null;
+  try {
+    const res = await fetch(
+      withToken(
+        `${API_BASE}/api/background/${clientId}/subagent/${encodeURIComponent(id)}/events`,
+      ),
+      { headers: authHeaders() },
+    );
+    if (res.ok) data = await res.json();
+  } catch (err) {
+    /* fall through to the unavailable state */
+  }
+  if (bgModal !== token) return;
+  if (!data) {
+    setBgState("unavailable");
+    return;
+  }
+  renderSubagentHistory(token, data);
+}
+
+/* A wait_for row does not know which kind it waited on: the subagent
+   endpoint decides (a process id is not registered there). */
+async function resolveEitherView(id) {
+  const token = bgModal;
+  try {
+    const res = await fetch(
+      withToken(
+        `${API_BASE}/api/background/${clientId}/subagent/${encodeURIComponent(id)}/events`,
+      ),
+      { headers: authHeaders() },
+    );
+    if (bgModal !== token) return;
+    if (res.ok) {
+      const data = await res.json();
+      token.kind = "subagent";
+      token.iconEl.textContent = "account_tree";
+      renderSubagentHistory(token, data);
+      return;
+    }
+  } catch (err) {
+    /* not a subagent; try the process viewer */
+  }
+  if (bgModal !== token) return;
+  token.kind = "process";
+  token.iconEl.textContent = "terminal";
+  startProcessPolling(id);
+}
+
+function openBackgroundModal(kind, id) {
+  closeBackgroundModal();
+  const backdrop = document.createElement("div");
+  backdrop.className = "bg-modal-backdrop";
+  const modal = document.createElement("div");
+  modal.className = "bg-modal";
+  const header = document.createElement("div");
+  header.className = "bg-modal-header";
+  const title = document.createElement("div");
+  title.className = "bg-modal-title";
+  const iconEl = document.createElement("span");
+  iconEl.className = "material-symbols-outlined";
+  const idEl = document.createElement("span");
+  idEl.className = "bg-modal-id";
+  const stateChip = document.createElement("span");
+  stateChip.className = "bg-modal-state";
+  const stopBtn = document.createElement("button");
+  stopBtn.type = "button";
+  stopBtn.className = "icon-btn bg-modal-stop";
+  stopBtn.title = "Stop";
+  stopBtn.setAttribute("aria-label", "Stop");
+  stopBtn.innerHTML = ICONS.stop;
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "icon-btn";
+  closeBtn.title = "Close";
+  closeBtn.setAttribute("aria-label", "Close");
+  closeBtn.innerHTML = ICONS.close;
+  const body = document.createElement("div");
+  body.className = "bg-modal-body";
+  title.append(iconEl, idEl);
+  header.append(title, stateChip, stopBtn, closeBtn);
+  modal.append(header, body);
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+  requestAnimationFrame(() => backdrop.classList.add("open"));
+  bgModal = {
+    kind,
+    id,
+    backdrop,
+    body,
+    stateChip,
+    stopBtn,
+    iconEl,
+    timer: null,
+    lastSeq: 0,
+    sections: {},
+  };
+  idEl.textContent = id;
+  iconEl.textContent = kind === "process" ? "terminal" : "account_tree";
+  closeBtn.addEventListener("click", closeBackgroundModal);
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) closeBackgroundModal();
+  });
+  stopBtn.addEventListener("click", () => sendBgStop(kind, id, stopBtn));
+  Sfx.play("open");
+  if (kind === "process") startProcessPolling(id);
+  else if (kind === "subagent") openSubagentView(id);
+  else resolveEitherView(id);
+}
+
+function closeBackgroundModal() {
+  if (!bgModal) return;
+  const backdrop = bgModal.backdrop;
+  stopBgTimer();
+  bgModal = null;
+  backdrop.classList.remove("open");
+  setTimeout(() => backdrop.remove(), REDUCE ? 0 : 250);
+  Sfx.play("close");
+}
+
+function addBackgroundDoneRow(event) {
+  const row = document.createElement("div");
+  row.className = "event-row glass background-done";
+  row.textContent = `${event.kind === "process" ? "Process" : "Subagent"} '${event.id}' ${event.summary}`;
+  if (event.id) {
+    row.style.cursor = "pointer";
+    row.addEventListener("click", () => openBackgroundModal(event.kind, event.id));
+  }
+  append(row);
+}
 
 async function openSettingsModal() {
   const existing = document.querySelector(".settings-modal-backdrop");

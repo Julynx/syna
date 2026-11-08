@@ -15,6 +15,7 @@ CSS_FILES = [
     "ambient.css",
     "chrome.css",
     "chat.css",
+    "background.css",
     "composer.css",
     "voice.css",
 ]

@@ -7,6 +7,7 @@ import os
 import queue
 import re
 import secrets
+import shlex
 import shutil
 import sys
 import tempfile
@@ -43,7 +44,8 @@ from PIL import Image
 from pydantic import BaseModel
 
 from . import interaction, setup
-from .capabilities import speech
+from .capabilities import processes, speech, subagents
+from .protocol.channel import harness_notice, wrap_channel
 from .config import (
     DEFAULT_IMAGE_GENERATION_ENABLED,
     DEFAULT_IMAGE_MODEL,
@@ -244,6 +246,71 @@ class SessionRecord:
         """Signal the worker to stop; it releases the container and temp files."""
         self.release_pending_question()
         self.shutdown.set()
+        self.stop_background_work()
+
+    def stop_background_work(self):
+        """Stop this session's subagents and forget the registry.
+
+        Called on teardown (new chat, janitor reaping, server
+        shutdown): the pod is about to be destroyed, so its processes
+        die with it, and the subagent runners only need to stop
+        cleanly and record why. Registry entries are per-session; the
+        drop keeps the host-side table from leaking them.
+        """
+        if self.container is None:
+            return
+        registry = processes.registry_for(self.container)
+        with registry.lock:
+            records = list(registry.subagents.values())
+        for record in records:
+            if record.state != "running":
+                continue
+            record.stopped_by = "teardown"
+            record.kill_requested.set()
+            if record.session is not None:
+                record.session.cancel()
+        processes.drop_registry(self.container)
+
+    def _on_subagent_event(self, subagent_id: str, event: dict):
+        """Stream one subagent event to connected clients.
+
+        Non-persistent: the subagent viewer fetches the recorded
+        history from the registry on open, so replaying every stream
+        event into the reconnect history would flood it and evict the
+        main conversation.
+        """
+        self.push(
+            {"type": "subagent_message", "subagent_id": subagent_id, **event},
+            persistent=False,
+        )
+
+    def _on_background_completion(self, notice: dict):
+        """Announce finished background work and wake the worker.
+
+        The done event is persistent (a compact row the client keeps);
+        the model-facing notice travels through the same inbox user
+        messages take, so it wakes an idle worker or queues behind an
+        active turn as a harness notice.
+        """
+        self.push(
+            {
+                "type": "background_done",
+                "id": notice.get("id"),
+                "kind": notice.get("kind"),
+                "summary": notice.get("summary"),
+            }
+        )
+        model_notice = notice.get("model_notice")
+        if model_notice:
+            self.enqueue_message(
+                {
+                    "kind": "message",
+                    "id": uuid.uuid4().hex,
+                    "content": wrap_channel(
+                        "HARNESS_NOTICE", harness_notice(model_notice)
+                    ),
+                }
+            )
 
     def _on_session_event(self, event: dict):
         metadata = shared_file_metadata(event)
@@ -366,6 +433,9 @@ class SessionRecord:
             self.push({"type": "error", "text": f"Could not start container: {exc}"})
             return
         register_container(self.container)
+        registry = processes.registry_for(self.container)
+        registry.event_sink = self._on_subagent_event
+        registry.completion_sink = self._on_background_completion
         self.container_ready.set()
         self.container_starting = False
         logger.info("Container ready for session %s", self.client_id)
@@ -787,6 +857,86 @@ def download_file(client_id: str, token: str):
     return FileResponse(info["path"], filename=info["name"])
 
 
+@app.get("/api/background/{client_id}/process/{process_id}/output")
+def background_process_output(
+    client_id: str,
+    process_id: str,
+    stdout_offset: int = 0,
+    stderr_offset: int = 0,
+):
+    """Incremental stdout/stderr chunks for the process viewer modal.
+
+    The client polls with the byte offsets it has already shown and
+    receives base64 chunks beyond them plus the current sizes and the
+    process state. Tail runs before the size probe on purpose: the size
+    then covers exactly the bytes delivered, so no chunk is ever
+    duplicated on the next poll. Base64 keeps the chunk framing intact
+    whatever the process prints.
+    """
+    record = _sessions.get(client_id)
+    if record is None or record.container is None:
+        raise HTTPException(status_code=404, detail="Unknown session.")
+    registry = processes.registry_for(record.container)
+    with registry.lock:
+        proc = registry.processes.get(process_id)
+    if proc is None:
+        raise HTTPException(status_code=404, detail="Unknown process.")
+    dir_q = shlex.quote(proc.dir)
+    script = "\n".join(
+        [
+            f"dir={dir_q}",
+            f'tail -c +{max(0, stdout_offset) + 1} "$dir/stdout" 2>/dev/null | base64 -w0 || true',
+            "printf '\\n'",
+            'printf \'%s\\n\' "$(wc -c < "$dir/stdout" 2>/dev/null || echo 0)"',
+            f'tail -c +{max(0, stderr_offset) + 1} "$dir/stderr" 2>/dev/null | base64 -w0 || true',
+            "printf '\\n'",
+            'printf \'%s\\n\' "$(wc -c < "$dir/stderr" 2>/dev/null || echo 0)"',
+        ]
+    )
+    try:
+        view = processes.pod_exec(record.container, ["bash", "-c", script])
+    except Exception as exc:
+        logger.exception("Process output read failed for '%s'", process_id)
+        raise HTTPException(
+            status_code=502, detail=f"Could not read the process output: {exc}"
+        ) from exc
+    lines = view.split("\n")
+    padded = (lines + ["", "", "", ""])[:4]
+    stdout_b64, stdout_size, stderr_b64, stderr_size = (line.strip() for line in padded)
+    return {
+        "state": proc.state,
+        "exit_code": proc.exit_code,
+        "stdout_size": int(stdout_size or 0),
+        "stderr_size": int(stderr_size or 0),
+        "stdout_b64": stdout_b64,
+        "stderr_b64": stderr_b64,
+    }
+
+
+@app.get("/api/background/{client_id}/subagent/{subagent_id}/events")
+def background_subagent_events(client_id: str, subagent_id: str):
+    """The subagent viewer's history: goal, state, and streamed events."""
+    record = _sessions.get(client_id)
+    if record is None or record.container is None:
+        raise HTTPException(status_code=404, detail="Unknown session.")
+    registry = processes.registry_for(record.container)
+    with registry.lock:
+        record_subagent = registry.subagents.get(subagent_id)
+    if record_subagent is None:
+        raise HTTPException(status_code=404, detail="Unknown subagent.")
+    with record_subagent.events_lock:
+        events = list(record_subagent.events)
+    return {
+        "id": subagent_id,
+        "goal": record_subagent.goal,
+        "level": record_subagent.level,
+        "state": record_subagent.state,
+        "end_reason": record_subagent.end_reason,
+        "stopped_by": record_subagent.stopped_by,
+        "events": events,
+    }
+
+
 @app.get("/api/image/{client_id}")
 def serve_pod_image(client_id: str, path: str, download: bool = False):
     """Stream an image from the session pod for inline rendering.
@@ -1199,6 +1349,38 @@ async def _pump_events(subscriber: queue.Queue, websocket: WebSocket):
             return
 
 
+def _kill_background(record: SessionRecord, message_type: str, background_id: str):
+    """Run a modal's stop request off the event loop.
+
+    A kill talks to the pod (signals, artifact copies), which can take
+    seconds; blocking the WebSocket receive loop would stall every
+    other client message. Failures surface as error events.
+    """
+
+    def run():
+        try:
+            if record.container is None:
+                raise RuntimeError("the pod is not running")
+            if message_type == "process_kill":
+                processes.kill_process(
+                    background_id, container=record.container, by="user"
+                )
+            else:
+                subagents.kill_subagent(
+                    background_id, container=record.container, by="user"
+                )
+        except Exception as exc:
+            logger.exception("Modal kill failed for '%s'", background_id)
+            record.push(
+                {
+                    "type": "error",
+                    "text": f"Could not stop '{background_id}': {exc}",
+                }
+            )
+
+    threading.Thread(target=run, name="syna-modal-kill", daemon=True).start()
+
+
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """Two-way realtime channel between one client and its session.
@@ -1301,6 +1483,10 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             elif message_type == "stop":
                 record.session.cancel()
                 record.release_pending_question()
+            elif message_type in ("process_kill", "subagent_kill"):
+                background_id = str(data.get("id", "")).strip()
+                if background_id:
+                    _kill_background(record, message_type, background_id)
     except WebSocketDisconnect:
         pass
     finally:

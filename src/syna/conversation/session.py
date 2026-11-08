@@ -52,7 +52,7 @@ from ..protocol.context import (
 from ..protocol.parse import parse_and_execute_tools
 from ..protocol.tool_schemas import get_tool_definitions
 from ..protocol.user_messages import USER_MESSAGE_MARKER_TEMPLATE, archive_user_message
-from ..state import get_container
+from ..state import get_container, set_background_allegro
 
 OUTPUT_PREVIEW_CHARS = 512
 DETAIL_CAP_CHARS = 6000
@@ -320,6 +320,7 @@ class AgentSession:
         emit_tool_errors: bool = False,
         persist_outputs: bool = False,
         session_id: str | None = None,
+        excluded_tools: tuple[str, ...] = (),
     ):
         self.on_event = on_event or (lambda event: None)
         self.request_delay = request_delay
@@ -372,7 +373,11 @@ class AgentSession:
         self.thinking_effort = load_thinking_effort()
         self.client = create_model_client()
         self.model = self._require_model()
-        self.tool_definitions = get_tool_definitions()
+        self.tool_definitions = [
+            schema
+            for schema in get_tool_definitions()
+            if schema["function"]["name"] not in excluded_tools
+        ]
         self.allegro = False
         self._base_thinking_effort = self.thinking_effort
         msg = {"role": "system", "content": build_prompt(self.allegro)}
@@ -680,10 +685,12 @@ class AgentSession:
         sessions keep their configured timeouts.
         """
         set_timeout_scale(ALLEGRO_TIMEOUT_SCALE if self.allegro else None)
+        set_background_allegro(self.allegro)
         try:
             self._run_turn_loop(user_text)
         finally:
             set_timeout_scale(None)
+            set_background_allegro(None)
 
     def _run_turn_loop(self, user_text: str):
         logger = get_logger()
