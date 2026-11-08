@@ -1685,8 +1685,9 @@ drops are ignored.
   (`Stopped by user`, `Stopped by runtime cap`, `Exited 0`,
   `Ended with error`, `Finished`) — the header state chip hides then,
   so the outcome appears exactly once. Completion also arrives as a
-  persistent `background_done` compact notice row (not a user bubble),
-  clickable to reopen the viewer.
+  persistent `background_done` event; it renders no chat row (the
+  outcome lives in the work's tool row and the viewer modal), it just
+  refreshes the list and the open modal.
 - A top-bar `list_alt` button left of the settings icon appears once
   the chat has spawned its first process or subagent and stays visible
   for the chat's lifetime (a new chat tears the registry down and

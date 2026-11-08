@@ -1497,7 +1497,8 @@ function render(event) {
       }
       break;
     case "background_done":
-      addBackgroundDoneRow(event);
+      /* No chat row: the outcome lives in the work's tool row and the
+         panel's viewer modal; the event just refreshes those. */
       refreshBackgroundList();
       if (bgModal && bgModal.id === event.id) {
         setBgOutcome(bgEndLabel(event.kind, { summary: event.summary }));
@@ -2089,19 +2090,6 @@ function closeBackgroundModal() {
   backdrop.classList.remove("open");
   setTimeout(() => backdrop.remove(), REDUCE ? 0 : 250);
   Sfx.play("close");
-}
-
-function addBackgroundDoneRow(event) {
-  const row = document.createElement("div");
-  row.className = "event-row glass background-done";
-  row.textContent = `${event.kind === "process" ? "Process" : "Subagent"} '${event.id}' ${event.summary}`;
-  if (event.id) {
-    row.style.cursor = "pointer";
-    row.addEventListener("click", () =>
-      openBackgroundModal(event.kind, event.id),
-    );
-  }
-  append(row);
 }
 
 /* Top-bar indicator for running background work. A small poll keeps the
