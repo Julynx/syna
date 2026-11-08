@@ -1648,14 +1648,17 @@ drops are ignored.
   events). It opens a two-tab "Background work" modal (Subagents /
   Processes) of rectangular cards sorted by spawn time — running items
   first, a separator, then finished items; each card shows the name, a
-  command/goal snippet, and a state chip, and clicking one opens the
-  regular viewer modal for it.
-- Tool-activity sound fades: entering the tool ambient state schedules
-  the tool-loop beat's fade to silence over 15 seconds (and every
-  tool-call event pokes `Sfx.poke()`, which ramps the gain back up and
-  restarts the fade), so a long `wait_for` goes quiet instead of
-  looping; the next tool activity brings it back, and ambient state
-  changes re-sync the gain.
+  command/goal snippet, and a state chip with the elapsed runtime, and
+  clicking one opens the regular viewer modal for it.
+- Tool-activity sound fades: a running tool row arms the wait fade
+  (`Sfx.beginToolWait()` on the row, disarmed when it settles), and
+  entering the tool ambient state with the fade armed schedules the
+  tool-loop beat's fade to silence over 15 seconds; every tool-call
+  event pokes `Sfx.poke()`, which ramps the gain back up and restarts
+  the fade. A long `wait_for` goes quiet instead of looping; the next
+  tool activity brings it back, and ambient state changes re-sync the
+  gain. Narration reuses the tool ambience without arming the fade, so
+  spoken replies keep the beat.
 
 ## 11. Voice and narration
 

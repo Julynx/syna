@@ -146,6 +146,17 @@ def registry_for(container) -> PodRegistry:
         return registry
 
 
+def peek_registry(container) -> PodRegistry | None:
+    """Return the registry bound to a container, or None — never create.
+
+    Read-only probes (the server's stale-notice check) use this after a
+    possible teardown: registry_for would silently resurrect a dropped
+    registry, breaking its create-once contract.
+    """
+    with _registries_lock:
+        return _registries.get(id(container))
+
+
 def drop_registry(container) -> None:
     """Forget the registry bound to a container (session teardown).
 

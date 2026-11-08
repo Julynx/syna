@@ -718,6 +718,7 @@ function addToolRow(event) {
     '<span class="tool-text"></span>';
   row.querySelector(".tool-text").textContent = toolEventText(event);
   runningToolRow = row;
+  Sfx.beginToolWait();
   placeToolRow(row);
 }
 
@@ -1220,7 +1221,10 @@ function finishToolRow(event) {
     row = document.getElementById("tool-" + event.id);
   }
   row.classList.remove("running");
-  if (runningToolRow === row) runningToolRow = null;
+  if (runningToolRow === row) {
+    runningToolRow = null;
+    Sfx.endToolWait();
+  }
   row.classList.add("settling");
   setTimeout(() => row.classList.remove("settling"), 1200);
   if (!event.failed) row.classList.add("just-done");
@@ -1257,7 +1261,10 @@ function finishStaleToolRows() {
   const stale = document.querySelectorAll(".tool-row.running");
   stale.forEach((row) => {
     row.classList.remove("running");
-    if (runningToolRow === row) runningToolRow = null;
+    if (runningToolRow === row) {
+      runningToolRow = null;
+      Sfx.endToolWait();
+    }
   });
   if (stale.length) updateAmbient();
 }
@@ -1520,6 +1527,7 @@ function connect() {
     replayQueue = [];
     replayFlushPending = false;
     runningToolRow = null;
+    Sfx.endToolWait();
     openFileGroup = null;
     thinkingRow = null;
     resetAskState();
@@ -1664,6 +1672,7 @@ async function newChat() {
     toolRun = null;
     replayQueue = [];
     runningToolRow = null;
+    Sfx.endToolWait();
     openFileGroup = null;
     thinkingRow = null;
     resetAskState();
@@ -1790,31 +1799,6 @@ function setBgOutcome(label) {
   stopBtn.disabled = true;
   stopBtn.classList.add("ended");
   stopBtn.textContent = label;
-}
-
-/* Short termination labels for the footer button, derived from the
-   server summaries (live background_done events) or the structured
-   record fields (reopened modals). */
-function bgEndLabel(kind, meta) {
-  const summary = meta.summary || "";
-  if (kind === "process") {
-    if (summary === "stopped by the user") return "Stopped by user";
-    if (summary === "killed by its runtime cap") return "Stopped by runtime cap";
-    const exit = summary.match(/^exited with code (-?\d+)$/);
-    if (exit) return "Exited " + exit[1];
-    if (meta.state === "exited")
-      return "Exited " + (meta.exit_code ?? "?");
-    if (meta.state === "killed")
-      return meta.killed_by === "model" ? "Stopped by the model" : "Stopped by user";
-    return summary || "Finished";
-  }
-  if (summary === "stopped by its runtime cap") return "Stopped by runtime cap";
-  if (summary === "ended with an error") return "Ended with error";
-  if (summary === "finished with a response") return "Finished";
-  if (meta.state === "killed") return "Stopped by " + (meta.stopped_by || "user");
-  if (meta.end_reason === "runtime cap") return "Stopped by runtime cap";
-  if (meta.end_reason === "error") return "Ended with error";
-  return "Finished";
 }
 
 function appendBgProcessText(section, text) {
@@ -2119,19 +2103,6 @@ function closeBackgroundListModal() {
   Sfx.play("close");
 }
 
-/* Short per-row state for the list cards. */
-function bgListStateLabel(kind, row) {
-  if (row.state === "running") return "running";
-  if (kind === "process") {
-    if (row.state === "killed") return "stopped";
-    return "exit " + (row.exit_code ?? "?");
-  }
-  if (row.end_reason === "runtime cap") return "runtime cap";
-  if (row.state === "killed") return "stopped";
-  if (row.end_reason === "error") return "error";
-  return "finished";
-}
-
 function bgListCard(row, kind) {
   const card = document.createElement("button");
   card.type = "button";
@@ -2153,7 +2124,8 @@ function bgListCard(row, kind) {
   const chip = document.createElement("span");
   chip.className =
     "bglist-card-state" + (row.state === "running" ? " running" : "");
-  chip.textContent = bgListStateLabel(kind, row);
+  chip.textContent =
+    bgListStateLabel(kind, row) + " · " + bgRuntimeLabel(row.started);
   card.append(icon, main, chip);
   card.addEventListener("click", () => {
     closeBackgroundListModal();

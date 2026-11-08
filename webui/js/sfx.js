@@ -213,7 +213,8 @@ const Sfx = (() => {
     active = {},
     acts = {};
   let cur = "",
-    timer = null;
+    timer = null,
+    toolWait = false;
   try {
     on = localStorage.getItem("syna-sound") !== "off";
   } catch (e) {}
@@ -355,13 +356,11 @@ const Sfx = (() => {
     for (const k in acts) {
       const g = acts[k].gain;
       if (k === "tool") g.cancelScheduledValues(now);
-      if (k === st && k === "tool") {
-        /* Entering the tool loop schedules its own ~15 s fade to
-           silence, so a long wait goes quiet. Scheduling here (not in
-           poke()) is what makes the fade work for a single long tool
-           call such as wait_for: the poke fired at its start lands
-           before the ambient state flips to "tool", and sync() runs
-           on the state change itself. */
+      if (k === st && k === "tool" && toolWait) {
+        /* A running tool row armed the wait fade (beginToolWait):
+           attack, then fade to silence over ~15 s so a long wait goes
+           quiet. Narration reuses the tool ambience without arming it,
+           so spoken replies keep the beat. */
         g.setValueAtTime(Math.max(g.value, 0.001), now);
         g.linearRampToValueAtTime(1, now + 0.3);
         g.linearRampToValueAtTime(0, now + 15);
@@ -371,6 +370,21 @@ const Sfx = (() => {
     }
     clearTimeout(timer);
     if (st !== "idle") loop();
+  }
+
+  /* beginToolWait/endToolWait mark real tool activity (a running tool
+     row), as opposed to narration reusing the tool ambience: only real
+     tool waits fade to silence over ~15 seconds. */
+  function beginToolWait() {
+    toolWait = true;
+    /* The ambient state may already be "tool" (narration can hold it
+       there while a tool starts); schedule the fade right away. sync()
+       covers the ordinary case, where the state flips afterwards. */
+    if (cur === "tool") poke();
+  }
+
+  function endToolWait() {
+    toolWait = false;
   }
 
   /* A poke is real tool activity: restore the beat and restart its
@@ -426,6 +440,8 @@ const Sfx = (() => {
     unlock,
     play,
     poke,
+    beginToolWait,
+    endToolWait,
     setOn,
     get on() {
       return on;

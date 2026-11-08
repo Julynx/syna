@@ -331,7 +331,9 @@ class SessionRecord:
         """Whether wait_for already returned this record's final report."""
         if self.container is None:
             return False
-        registry = processes.registry_for(self.container)
+        registry = processes.peek_registry(self.container)
+        if registry is None:
+            return False
         entry = registry.lookup(background_id)
         return entry is not None and entry[1].collected_by_wait_for
 

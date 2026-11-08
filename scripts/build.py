@@ -23,6 +23,7 @@ JS_FILES = [
     "ambient.js",
     "sfx.js",
     "markdown.js",
+    "bg_labels.js",
     "chat.js",
     "speech_chunker.js",
     "voice.js",
