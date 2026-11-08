@@ -1672,7 +1672,9 @@ drops are ignored.
   asking the subagent endpoint first). The process view polls the output endpoint every
   second, appends base64-decoded chunks into two labeled panes
   (stdout/stderr) that auto-follow while pinned to the bottom and trim
-  themselves past a cap; the subagent view fetches the recorded event
+  themselves past a cap; until the first chunk arrives the body shows a
+  muted "No output yet." note instead of an empty box (removed by the
+  first append); the subagent view fetches the recorded event
   history once, renders it as simplified message rectangles (goal,
   assistant text, compact tool rows), and appends live
   `subagent_message` events by sequence number. Both carry a

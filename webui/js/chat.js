@@ -1838,6 +1838,10 @@ function appendBgProcessText(section, text) {
   if (!bgModal) return;
   let box = bgModal.sections[section];
   if (!box) {
+    if (bgModal.emptyNote) {
+      bgModal.emptyNote.remove();
+      bgModal.emptyNote = null;
+    }
     const label = document.createElement("div");
     label.className = "bg-output-label";
     label.textContent = section;
@@ -1869,6 +1873,13 @@ function startProcessPolling(id) {
   const token = bgModal;
   let stdoutOffset = 0,
     stderrOffset = 0;
+  /* Until output arrives the body would be a blank box; the note is
+     removed by the first appendBgProcessText call. */
+  const emptyNote = document.createElement("div");
+  emptyNote.className = "bg-empty-note";
+  emptyNote.textContent = "No output yet.";
+  token.body.appendChild(emptyNote);
+  token.emptyNote = emptyNote;
   const tick = async () => {
     if (bgModal !== token) return;
     let data = null,
