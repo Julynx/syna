@@ -1642,9 +1642,11 @@ drops are ignored.
   so the outcome appears exactly once. Completion also arrives as a
   persistent `background_done` compact notice row (not a user bubble),
   clickable to reopen the viewer.
-- A top-bar `list_alt` button left of the settings icon appears while
-  at least one process or subagent is running (polled from the list
-  endpoint every 4s, refreshed instantly on spawn and completion
+- A top-bar `list_alt` button left of the settings icon appears once
+  the chat has spawned its first process or subagent and stays visible
+  for the chat's lifetime (a new chat tears the registry down and
+  clears it; so does closing the app). It is fed by the list endpoint
+  (polled every 4s, refreshed instantly on spawn and completion
   events). It opens a two-tab "Background work" modal (Subagents /
   Processes) of rectangular cards sorted by spawn time — running items
   first, a separator, then finished items; each card shows the name, a

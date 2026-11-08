@@ -1663,6 +1663,7 @@ async function newChat() {
       headers: authHeaders(),
     });
     if (!response.ok) throw new Error("HTTP " + response.status);
+    if (bgBtn) bgBtn.hidden = true;
     if (ws) {
       ws.onclose = null;
       ws.close();
@@ -2075,10 +2076,14 @@ async function refreshBackgroundList() {
   } catch (err) {
     bgListData = { processes: [], subagents: [] };
   }
-  const running =
-    bgListData.processes.some((row) => row.state === "running") ||
-    bgListData.subagents.some((row) => row.state === "running");
-  if (bgBtn) bgBtn.hidden = !running;
+  /* The button appears with the chat's first spawn and then stays for
+     the chat's lifetime: the registry never releases records, so any
+     row at all means work was spawned. Only a new chat (registry torn
+     down -> 404/empty) or closing the app clears it. */
+  const hasWork =
+    (bgListData.processes && bgListData.processes.length > 0) ||
+    (bgListData.subagents && bgListData.subagents.length > 0);
+  if (bgBtn) bgBtn.hidden = !hasWork;
   return bgListData;
 }
 
