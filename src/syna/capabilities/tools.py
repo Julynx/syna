@@ -154,9 +154,7 @@ def _command_timeout_notice(exit_code: int, timeout_s: int) -> str:
         f" after {timeout_s} seconds; {timeout_s} seconds is the maximum"
         " runtime of one execute_command call. The command is no longer"
         " running and the output above is partial. For longer work, use"
-        " the process tool to run it detached: it keeps running, its"
-        " output streams to files you can check, and a notice arrives"
-        " when it finishes."
+        " the process tool."
     )
 
 
@@ -686,15 +684,13 @@ def review_work(summary: str):
 
 def process(command: str, args: dict | None = None):
     """
-    Run a bash command in the pod as a detached background process: spawn returns immediately and the process keeps running while you do other work; a notice arrives here automatically when it finishes. Use it for long-running work (servers, builds, big downloads, benchmark runs) that would outlive one execute_command call.
-    - `command` (string, required): `spawn`, `check`, or `kill`.
-    - `args` (object, required): parameters for that command; see the list below.
+    Run a command as a detached background process. The spawn call returns immediately with a process name, while the command keeps running in the pod. Spawning a process allows you to keep working while its command runs, or wait for it by name using the `wait_for` tool. You will be notified with a message when a process finishes. Use this tool over execute_command for long-running commands.
+    - `command` (string, required): must be either `spawn`, `check`, or `kill`.
+    - `args` (object, required): the arguments for that command; see the list below.
 
-    * `spawn`: `command` (string, required): the bash command to run; `name` (string, optional): a short id of your choice (letters, digits, dots, hyphens); otherwise one like process_0001 is assigned. Its stdout and stderr stream to /workspace/processes/{id}/stdout and stderr, and it is killed when it exceeds its runtime cap (exit code 124). Processes die with the pod.
-    * `check`: `process_id` (string, required). Returns state, running time, and the last characters of stdout and stderr.
-    * `kill`: `process_id` (string, required). Kills the whole process tree; the output files stay.
-
-    Example: process(command="spawn", args={"command": "python3 -m http.server 8080", "name": "server"})
+    * `spawn`: `command` (string, required): the bash command to run; `name` (string, optional): a short string of your choice (letters, digits, dots, hyphens). Generated programatically if not specified.
+    * `check`: `process_id` (string, required). Returns state, running time, and the last characters of stdout and stderr for the named process.
+    * `kill`: `process_id` (string, required). Kills the named process, preserving its output files.
     """
     args = args or {}
     if command == "spawn":
@@ -751,15 +747,14 @@ def _check_process(process_id: str) -> str:
 
 def subagent(command: str, args: dict | None = None):
     """
-    Delegate a self-contained task to a background subagent: a fresh instance of you with the same prompt, tools, and pod, running detached. Spawn returns immediately; a notice arrives here automatically when the subagent finishes. Use it for parallelizable or long-running subtasks; do the work yourself when later steps depend on your intermediate results. Subagents cannot ask the user questions, only a fixed number run at once, and a subagent cannot spawn subagents beyond the depth cap.
-    - `command` (string, required): `spawn`, `check`, or `kill`.
-    - `args` (object, required): parameters for that command; see the list below.
+    Delegate a task to a subagent. The spawn call returns immediately with a subagent name, while the task keeps running in the background. Spawning a subagent allows you to keep working while it performs its task, or wait for it by name using the `wait_for` tool. You will be notified with a message when a subagent finishes. Subagents share the same pod, only use them for parallel-safe tasks, and plan ahead to avoid race conditions. Subagents cannot ask questions to the user, you must handle that yourself.
 
-    * `spawn`: `goal` (string, required): the task, self-contained and verifiable, naming its deliverable paths; `name` (string, optional): a short id of your choice; otherwise one like subagent_0001. It shares the pod with you: partition file work by path so concurrent subagents cannot overwrite each other.
+    - `command` (string, required): must be either `spawn`, `check`, or `kill`.
+    - `args` (object, required): the arguments for that command; see the list below.
+
+    * `spawn`: `goal` (string, required): the task, self-contained and verifiable, naming its deliverable paths; `name` (string, optional): a short string of your choice (letters, digits, dots, hyphens). Generated programatically if not specified.
     * `check`: `subagent_id` (string, required). Returns state, running time, the tail of its message log, and its transcript path.
     * `kill`: `subagent_id` (string, required). Stops it at its next pause; its transcript and any response stay in /workspace/subagents/{id}/.
-
-    Example: subagent(command="spawn", args={"goal": "Read every paper in /workspace/papers and write /workspace/related.md summarizing them", "name": "lit-review"})
     """
     args = args or {}
     if command == "spawn":
@@ -799,11 +794,9 @@ def subagent(command: str, args: dict | None = None):
 
 def wait_for(id: str, max_wait_s: int | None = None):
     """
-    Block until a background process or subagent finishes or is stopped, or until the wait times out. On timeout it reports "still running"; a notice arrives here automatically when it finishes anyway, so waiting again is optional and doing other work meanwhile is usually better.
+    Sleep until the named process or subagent finishes. If you can, you should keep working while a process or a subagent runs; you will be notified with a message when they finish. Only call this tool if you have nothing to do until the named process or subagent finishes.
     - `id` (string, required): the process or subagent id.
     - `max_wait_s` (integer, optional): seconds to wait at most; default 120.
-
-    Example: wait_for(id="build", max_wait_s=600)
     """
     if (
         not isinstance(max_wait_s, int)

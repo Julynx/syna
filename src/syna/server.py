@@ -81,8 +81,7 @@ CONTAINER_START_TIMEOUT_S = 120
 EVENT_LOG_MAX_ITEMS = 500
 JANITOR_INTERVAL_S = 15
 CONTAINER_STARTING_TEXT = (
-    "Starting the container engine... (the first start installs the pod's"
-    " DNS resolver and can take a minute)"
+    "Starting the container engine, please wait..."
 )
 NEW_CHAT_STOP_TIMEOUT_S = 20
 IMAGE_CACHE_LIMIT = 32
