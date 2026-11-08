@@ -84,6 +84,7 @@ class SubagentRecord:
     goal: str
     level: int
     started: float = field(default_factory=time.time)
+    runtime_cap_s: int | None = None
     state: str = "running"
     end_reason: str | None = None
     stopped_by: str | None = None
@@ -98,6 +99,18 @@ class SubagentRecord:
     notified: bool = False
     collected_by_wait_for: bool = False
     allegro: bool = False
+
+
+def subagent_runtime_cap_s(record: SubagentRecord) -> int:
+    """The subagent's effective runtime cap in seconds.
+
+    Every report and the cap timer read the record's own cap, so a
+    spawn with a custom cap is reported and enforced consistently; the
+    configured default covers records built without one.
+    """
+    if record.runtime_cap_s is not None:
+        return record.runtime_cap_s
+    return load_subagent_max_runtime_s()
 
 
 def _cap(text: str, limit: int = STREAM_CAP_CHARS) -> str:
@@ -125,6 +138,7 @@ def spawn_subagent(
     registry: PodRegistry | None = None,
     container=None,
     session_factory=None,
+    runtime_cap_s: int | None = None,
 ) -> dict:
     """Start a detached subagent; return its spawn report.
 
@@ -177,6 +191,7 @@ def spawn_subagent(
         id=subagent_id,
         goal=goal,
         level=level + 1,
+        runtime_cap_s=runtime_cap_s,
         allegro=get_background_allegro(),
         dump_host_path=get_session_dump_path(f"subagent-{subagent_id}"),
     )
@@ -198,7 +213,7 @@ def spawn_subagent(
     return {
         "name": subagent_id,
         "level": record.level,
-        "max_runtime_s": load_subagent_max_runtime_s(),
+        "max_runtime_s": subagent_runtime_cap_s(record),
     }
 
 
@@ -245,7 +260,7 @@ def _run_subagent(
         if record.allegro:
             session.set_allegro(True)
         cap_timer = threading.Timer(
-            load_subagent_max_runtime_s(),
+            subagent_runtime_cap_s(record),
             _on_cap_fired,
             args=(record, session),
         )
@@ -377,7 +392,7 @@ def subagent_completion_notice(record: SubagentRecord) -> str:
     if record.end_reason == "runtime cap":
         outcome = (
             "was stopped by its runtime cap (the cap is"
-            f" {load_subagent_max_runtime_s()} seconds)"
+            f" {subagent_runtime_cap_s(record)} seconds)"
         )
     elif record.state == "killed":
         outcome = f"was stopped by the {record.stopped_by or 'user'}"
@@ -520,7 +535,7 @@ def check_subagent(
         header = (
             f"Subagent '{subagent_id}': running (nesting level"
             f" {record.level} of {max_depth}, runtime {runtime:.0f}s of a"
-            f" {load_subagent_max_runtime_s()}s cap)."
+            f" {subagent_runtime_cap_s(record)}s cap)."
         )
     elif record.state == "killed":
         header = (

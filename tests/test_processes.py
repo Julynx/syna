@@ -125,6 +125,19 @@ def test_spawn_failure_releases_the_id(monkeypatch):
     assert "doomed" not in registry.processes
 
 
+def test_reports_use_the_record_runtime_cap(monkeypatch):
+    monkeypatch.setattr(processes, "load_process_max_runtime_s", lambda: 1200)
+    capped = ProcessRecord(
+        id="p1", command="x", dir="/workspace/processes/p1", runtime_cap_s=5
+    )
+    assert "5s cap" in format_process_report(capped, "running", "", "")
+    capped.exit_code = CAP_EXIT_CODE
+    capped.state = "exited"
+    assert "the cap is 5 seconds" in process_completion_notice(capped)
+    default = ProcessRecord(id="p2", command="x", dir="/workspace/processes/p2")
+    assert "1200s cap" in format_process_report(default, "running", "", "")
+
+
 def test_check_reports_state_and_tails(monkeypatch):
     registry = fresh_registry()
     proc = ProcessRecord(id="p1", command="x", dir="/workspace/processes/p1")

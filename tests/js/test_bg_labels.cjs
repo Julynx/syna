@@ -16,6 +16,7 @@ const {
   bgEndLabel,
   bgListStateLabel,
   bgRuntimeLabel,
+  bgCallLabel,
 } = require("../../webui/js/bg_labels.js");
 
 const tests = [];
@@ -162,6 +163,23 @@ test("runtime labels format compact durations", () => {
   assert.strictEqual(bgRuntimeLabel(now - 3600), "1h00m");
   assert.strictEqual(bgRuntimeLabel(now - 3660), "1h01m");
   assert.strictEqual(bgRuntimeLabel(now + 30), "0s", "clock skew clamps to zero");
+});
+
+test("dispatch call labels name the action and the work", () => {
+  assert.strictEqual(bgCallLabel("process", "spawn", "ticker"), 'Spawned process "ticker"');
+  assert.strictEqual(bgCallLabel("process", "check", "ticker"), 'Checked process "ticker"');
+  assert.strictEqual(bgCallLabel("process", "kill", "ticker"), 'Killed process "ticker"');
+  assert.strictEqual(bgCallLabel("subagent", "spawn", "filedemo"), 'Spawned subagent "filedemo"');
+  assert.strictEqual(bgCallLabel("subagent", "check", "filedemo"), 'Checked subagent "filedemo"');
+  assert.strictEqual(bgCallLabel("subagent", "kill", "filedemo"), 'Killed subagent "filedemo"');
+});
+
+test("dispatch call labels survive missing pieces", () => {
+  assert.strictEqual(bgCallLabel("process", "spawn", ""), "Spawned process");
+  assert.strictEqual(bgCallLabel("subagent", "check", ""), "Checked subagent");
+  assert.strictEqual(bgCallLabel("process", "", ""), "process");
+  assert.strictEqual(bgCallLabel("subagent", "unknown", "x"), 'subagent "x"');
+  assert.strictEqual(bgCallLabel("other", "spawn", ""), "other");
 });
 
 /* ------------------------------------------------------------------ */

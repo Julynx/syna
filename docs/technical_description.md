@@ -168,8 +168,8 @@ from the canonical constants in `config.py`.
 | `net_guard_doh_uri`                 | The browser guard's poison-check resolver (default `https://dns.google/resolve`, JSON DoH over HTTP/1.1; empty uses the system resolver): destination checks resolve through it first so a poisoning resolver cannot tilt the decision, with the system resolver as fallback, which is also the view the browser's TRR mode 2 falls back to. Its job is classification (private vs public vs unresolvable), not IP equality with the browser's own resolver. |
 | `pod_memory_mb`                     | Pod memory ceiling in MB (default 8192). Protects the host from runaway processes inside the pod; does not restrict what the model may do inside it.                                                                                                                          |
 | `pod_pids_limit`                    | Pod process-count ceiling (default 512), guarding against fork bombs.                                                                                                                                                                                                         |
-| `process_max_runtime_s`             | Runtime cap of one detached pod process (default 1200). Enforced pod-side by a `timeout` wrapper; a capped process exits with code 124.                                                                                                                                       |
-| `subagent_max_runtime_s`            | Runtime cap of one subagent turn (default 1800). Enforced through the session's cancel event; the turn ends as "stopped by the runtime cap".                                                                                                                                  |
+| `process_max_runtime_s`             | Runtime cap of one detached pod process (default 1200), applied when a spawn omits `max_runtime_s`. Enforced pod-side by a `timeout` wrapper; a capped process exits with code 124.                                                                                            |
+| `subagent_max_runtime_s`            | Runtime cap of one subagent turn (default 1800), applied when a spawn omits `max_runtime_s`. Enforced through the session's cancel event; the turn ends as "stopped by the runtime cap".                                                                                       |
 | `max_subagent_depth`                | Subagent nesting levels allowed, counting main (default 3: main -> subagent -> sub-subagent; a sub-subagent cannot spawn further).                                                                                                                                            |
 | `max_concurrent_subagents`          | How many subagents may run at once (default 4). A spawn beyond the cap is refused; spend protection.                                                                                                                                                                          |
 | `wait_for_timeout`                  | Default deadline of one `wait_for` call (default 120). The wait follows its own budget (plus slack), not `tool_call_timeout_s`; on expiry it returns "still running", never an error.                                                                                         |
@@ -994,7 +994,7 @@ threads by `parse.py` like the container binding; failures follow the
 ### `src/syna/capabilities/processes.py`
 
 Detached background processes in the pod, behind the `process` tool
-(subcommands `spawn`, `check`, `kill`). Also the home of the per-session
+(actions `spawn`, `check`, `kill`). Also the home of the per-session
 background registry shared with `subagents.py` (which imports it; this
 module never imports session machinery, so there is no cycle).
 
@@ -1026,7 +1026,7 @@ module never imports session machinery, so there is no cycle).
   "id" only appears in internal code, logs, and this document.
 - **spawn.** One exec starts `setsid bash -c <launcher>`: the launcher
   is a session leader detached from the exec call, backgrounds
-  `timeout -k 10 {process_max_runtime_s}` (no `setsid` around it, so
+  `timeout -k 10 {cap}` (no `setsid` around it, so
   `$!` and `wait` still target timeout itself), records timeout's pid
   into the process's `pgid` file, and records timeout's exit status as
   the process's `exit_code`. Verified live: GNU timeout makes itself
@@ -1039,7 +1039,11 @@ module never imports session machinery, so there is no cycle).
   Spawn polls briefly for the `pgid` file and fails cleanly when it
   never appears. Exit code 124 means the runtime cap fired; a manual
   kill of the group reports 128+signal through the same file. No
-  host-side reaper: processes die with the pod.
+  host-side reaper: processes die with the pod. A spawn's
+  `max_runtime_s` argument overrides the configured cap for that one
+  process; the chosen cap is stored on the record, so every report
+  (check, wait_for, completion notice) quotes the cap that actually
+  wraps the command.
 - **check/kill.** `check_process_state` probes state and tails
   (bytes-capped pod-side, base64-framed so the output cannot fool the
   marker parse, truncated to `check_tail_chars` host-side).
@@ -1075,7 +1079,7 @@ module never imports session machinery, so there is no cycle).
 ### `src/syna/capabilities/subagents.py`
 
 Background subagents: full `AgentSession` instances on their own
-threads, behind the `subagent` tool (same subcommand shape). Same
+threads, behind the `subagent` tool (same action shape). Same
 system prompt, model configuration, and shared pod; `AgentSession` is
 imported lazily inside the runner (importing it at module level would
 close a cycle: tools -> here -> session -> parse -> tools).
@@ -1093,9 +1097,11 @@ close a cycle: tools -> here -> session -> parse -> tools).
   by the spawning agent, and the verifier's conversation provider does
   not exist on its threads anyway), and `share_file` (what reaches the
   user is the spawning agent's call, based on the subagent's report).
-- **Runtime cap.** A `threading.Timer` at `subagent_max_runtime_s`
-  calls `session.cancel()`; the turn unwinds at the next pause and is
-  recorded as "stopped by the runtime cap". Allegro inheritance: a
+- **Runtime cap.** A `threading.Timer` at the record's runtime cap
+  (the spawn's `max_runtime_s`, else `subagent_max_runtime_s`) calls
+  `session.cancel()`; the turn unwinds at the next pause and is
+  recorded as "stopped by the runtime cap", and the same cap value is
+  quoted by every report. Allegro inheritance: a
   subagent spawned from an Allegro turn gets `set_allegro(True)` (the
   prompt suffix and the lighter runtime profile), so delegated speed
   matches the spawning turn's.
@@ -1596,6 +1602,12 @@ drops are ignored.
   on commands containing single quotes (Python repr switches to double
   quotes and the first single-quoted span won, e.g. heredoc commands
   showing "EOF"). The signature parser remains only as a replay fallback.
+  The dispatch tools (`process`, `subagent`) render their collapsed
+  label from the call's `action` ("Spawned process", "Checked
+  subagent", ...); for spawns without an explicit `name` the label
+  starts bare and gains the auto-generated name from the spawn result
+  (`structured_output`) when the row settles, matching the reported
+  artifact paths.
 - Images in Syna's replies (`![](/workspace/....png)`) render inline:
   `applyImagePolicy` rewrites pod-absolute sources to
   `GET /api/image/{client_id}?path=...` (lazy-loaded, with an

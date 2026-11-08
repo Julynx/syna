@@ -158,6 +158,54 @@ def test_runtime_cap_ends_the_turn(monkeypatch):
     assert record.cap_fired.is_set()
 
 
+def test_spawn_runtime_cap_is_reported_and_enforced(monkeypatch):
+    registry = fresh_registry()
+    container = FakeContainer()
+    for name, value in (
+        ("get_container", lambda: container),
+        ("register_container", lambda c: None),
+        ("unregister_container", lambda: None),
+        ("load_subagent_max_runtime_s", lambda: 1800),
+        ("load_max_subagent_depth", lambda: 3),
+    ):
+        monkeypatch.setattr(subagents, name, value)
+    timer_intervals = []
+    real_timer = threading.Timer
+
+    class RecordingTimer(real_timer):
+        def __init__(self, interval, function, args=None, kwargs=None):
+            super().__init__(interval, function, args, kwargs)
+            timer_intervals.append(interval)
+
+    monkeypatch.setattr(threading, "Timer", RecordingTimer)
+
+    def factory(record, reg):
+        return FakeSession(record)
+
+    result = spawn_subagent(
+        "do the thing",
+        registry=registry,
+        container=container,
+        session_factory=factory,
+        runtime_cap_s=42,
+    )
+    assert "error" not in result, result
+    assert result["max_runtime_s"] == 42
+    record = registry.subagents[result["name"]]
+    assert record.runtime_cap_s == 42
+    for _ in range(400):
+        if record.state != "running":
+            break
+        time.sleep(0.005)
+    assert timer_intervals == [42]
+    capped = SubagentRecord(id="sx2", goal="g", level=2, runtime_cap_s=42)
+    registry.subagents["sx2"] = capped
+    assert "42s cap" in check_subagent("sx2", registry, container)
+    capped.state = "finished"
+    capped.end_reason = "runtime cap"
+    assert "the cap is 42 seconds" in subagent_completion_notice(capped)
+
+
 def test_excluded_tools_list():
     assert set(SUBAGENT_EXCLUDED_TOOLS) == {
         "ask_user",

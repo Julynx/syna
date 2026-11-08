@@ -682,18 +682,40 @@ def review_work(summary: str):
     return result
 
 
-def process(command: str, args: dict | None = None):
+def _runtime_cap_argument(args: dict) -> tuple[int | None, str | None]:
+    """Validate the optional max_runtime_s spawn argument.
+
+    Returns (seconds, None) when the argument is absent or a positive
+    integer, and (None, message) otherwise; bools are rejected although
+    isinstance would pass them as int.
+    """
+    value = args.get("max_runtime_s")
+    if value is None:
+        return None, None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None, (
+            "'max_runtime_s' must be a positive integer number of"
+            f" seconds; got {value!r}."
+        )
+    return value, None
+
+
+def process(action: str, args: dict | None = None):
     """
     Run a command as a detached background process. The spawn call returns immediately with a process name, while the command keeps running in the pod. Spawning a process allows you to keep working while its command runs, or wait for it by name using the `wait_for` tool. You will be notified with a message when a process finishes. Use this tool over execute_command for long-running commands.
-    - `command` (string, required): must be either `spawn`, `check`, or `kill`.
-    - `args` (object, required): the arguments for that command; see the list below.
+    - `action` (string, required): must be either `spawn`, `check`, or `kill`.
+    - `args` (object, required): the arguments for that action; see the list below.
 
-    * `spawn`: `command` (string, required): the bash command to run; `name` (string, optional): a short string of your choice (letters, digits, dots, hyphens). Generated programatically if not specified.
+    * `spawn`: `command` (string, required): the bash command to run; `name` (string, optional): a short string of your choice (letters, digits, dots, hyphens). Generated programatically if not specified; `max_runtime_s` (integer, optional): seconds the process may run before its runtime cap kills it; the configured default applies when omitted.
     * `check`: `name` (string, required): the process name the spawn returned. Returns state, running time, and the last characters of stdout and stderr.
     * `kill`: `name` (string, required): the process name the spawn returned. Kills the process, preserving its output files.
     """
     args = args or {}
-    if command == "spawn":
+    if action == "spawn":
+        runtime_cap_s, cap_error = _runtime_cap_argument(args)
+        if cap_error:
+            set_last_exit_code(1)
+            return "ERROR: process spawn: " + cap_error
         spawn_command = args.get("command")
         if not isinstance(spawn_command, str) or not spawn_command.strip():
             set_last_exit_code(1)
@@ -701,20 +723,22 @@ def process(command: str, args: dict | None = None):
                 "ERROR: process spawn needs 'command': the bash command"
                 " to run, as a non-empty string."
             )
-        result = spawn_process(spawn_command, name=args.get("name"))
+        result = spawn_process(
+            spawn_command, name=args.get("name"), runtime_cap_s=runtime_cap_s
+        )
         if "error" in result:
             set_last_exit_code(1)
             return "ERROR: " + result["error"]
         return result
-    if command in ("check", "kill"):
+    if action in ("check", "kill"):
         process_name = args.get("name")
         if not isinstance(process_name, str) or not process_name.strip():
             set_last_exit_code(1)
             return (
-                f"ERROR: process {command} needs 'name': the process"
+                f"ERROR: process {action} needs 'name': the process"
                 " name the spawn returned."
             )
-        if command == "check":
+        if action == "check":
             result = _check_process(process_name)
         else:
             result = kill_process(process_name, by="model")
@@ -723,7 +747,7 @@ def process(command: str, args: dict | None = None):
         return result
     set_last_exit_code(1)
     return (
-        f"ERROR: unknown process command '{command}'. Available commands:"
+        f"ERROR: unknown process action '{action}'. Available actions:"
         " check, kill, spawn"
     )
 
@@ -745,19 +769,23 @@ def _check_process(process_id: str) -> str:
     return format_process_report(proc, state, stdout, stderr)
 
 
-def subagent(command: str, args: dict | None = None):
+def subagent(action: str, args: dict | None = None):
     """
     Delegate a task to a subagent. The spawn call returns immediately with a subagent name, while the task keeps running in the background. Spawning a subagent allows you to keep working while it performs its task, or wait for it by name using the `wait_for` tool. You will be notified with a message when a subagent finishes. Subagents share the same pod, only use them for parallel-safe tasks, and plan ahead to avoid race conditions. Subagents cannot ask questions to the user, you must handle that yourself.
 
-    - `command` (string, required): must be either `spawn`, `check`, or `kill`.
-    - `args` (object, required): the arguments for that command; see the list below.
+    - `action` (string, required): must be either `spawn`, `check`, or `kill`.
+    - `args` (object, required): the arguments for that action; see the list below.
 
-    * `spawn`: `goal` (string, required): the task, self-contained and verifiable, naming its deliverable paths; `name` (string, optional): a short string of your choice (letters, digits, dots, hyphens). Generated programatically if not specified.
+    * `spawn`: `goal` (string, required): the task, self-contained and verifiable, naming its deliverable paths; `name` (string, optional): a short string of your choice (letters, digits, dots, hyphens). Generated programatically if not specified; `max_runtime_s` (integer, optional): seconds the subagent may work before its runtime cap stops it; the configured default applies when omitted.
     * `check`: `name` (string, required): the subagent name the spawn returned. Returns state, running time, the tail of its message log, and its transcript path.
     * `kill`: `name` (string, required): the subagent name the spawn returned. Stops it at its next pause; its transcript and any response stay in /workspace/subagents/{name}/.
     """
     args = args or {}
-    if command == "spawn":
+    if action == "spawn":
+        runtime_cap_s, cap_error = _runtime_cap_argument(args)
+        if cap_error:
+            set_last_exit_code(1)
+            return "ERROR: subagent spawn: " + cap_error
         goal = args.get("goal")
         if not isinstance(goal, str) or not goal.strip():
             set_last_exit_code(1)
@@ -765,20 +793,22 @@ def subagent(command: str, args: dict | None = None):
                 "ERROR: subagent spawn needs 'goal': the task for the"
                 " subagent, as a non-empty string."
             )
-        result = spawn_subagent(goal, name=args.get("name"))
+        result = spawn_subagent(
+            goal, name=args.get("name"), runtime_cap_s=runtime_cap_s
+        )
         if "error" in result:
             set_last_exit_code(1)
             return "ERROR: " + result["error"]
         return result
-    if command in ("check", "kill"):
+    if action in ("check", "kill"):
         subagent_name = args.get("name")
         if not isinstance(subagent_name, str) or not subagent_name.strip():
             set_last_exit_code(1)
             return (
-                f"ERROR: subagent {command} needs 'name': the subagent"
+                f"ERROR: subagent {action} needs 'name': the subagent"
                 " name the spawn returned."
             )
-        if command == "check":
+        if action == "check":
             result = check_subagent(subagent_name)
         else:
             result = kill_subagent(subagent_name, by="model")
@@ -787,7 +817,7 @@ def subagent(command: str, args: dict | None = None):
         return result
     set_last_exit_code(1)
     return (
-        f"ERROR: unknown subagent command '{command}'. Available commands:"
+        f"ERROR: unknown subagent action '{action}'. Available actions:"
         " check, kill, spawn"
     )
 

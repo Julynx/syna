@@ -210,12 +210,10 @@ const TOOL_META = {
   process: {
     verb: "Process",
     icon: ICONS.terminal,
-    keys: ["name"],
   },
   subagent: {
     verb: "Subagent",
     icon: ICONS.subagent,
-    keys: ["name", "goal"],
   },
   wait_for: { verb: "Waited for", icon: ICONS.schedule, key: "name" },
 };
@@ -249,16 +247,6 @@ function firstQuotedArg(signature) {
 function primaryArg(event) {
   const meta = TOOL_META[event.name];
   const args = event.arguments || null;
-  // The dispatch tools nest their real arguments one level down
-  // (`{command, args}`), so the identifying value lives in `args`.
-  if (meta && meta.keys && args) {
-    const nested = args.args && typeof args.args === "object" ? args.args : {};
-    for (const k of meta.keys) {
-      const value = args[k] !== undefined ? args[k] : nested[k];
-      if (value !== undefined && value !== null && String(value).length)
-        return String(value);
-    }
-  }
   if (args && meta && meta.key) {
     const value = args[meta.key];
     if (value !== undefined && value !== null) return String(value);
@@ -470,9 +458,34 @@ function toolEventText(event) {
   const meta = TOOL_META[event.name];
   if (!meta) return truncateArg(event.signature);
   if (event.name === "browser") return browserEventText(event);
+  if (event.name === "process" || event.name === "subagent")
+    return dispatchEventText(event);
   const arg = truncateArg(primaryArg(event));
   let verb = meta.verb;
   return verb + (arg ? ' "' + arg + '"' : "");
+}
+
+/* The dispatch tools carry their action and the background work's name
+   one level down (`{action, args}`), and a spawn's auto-generated name
+   only exists once the spawn result arrives (structured_output), so the
+   label starts bare and gains the name when the row settles. */
+function dispatchEventText(event) {
+  const args = event.arguments || null;
+  const nested =
+    args && args.args && typeof args.args === "object" ? args.args : {};
+  const action =
+    args && args.action != null
+      ? String(args.action)
+      : (String(event.signature).match(/\baction= *'([^']*)'/) || [])[1] || "";
+  let name = nested.name ? String(nested.name) : "";
+  if (!name && args && args.name != null) name = String(args.name);
+  if (!name && event.structured_output && event.structured_output.name)
+    name = String(event.structured_output.name);
+  if (!name) {
+    const match = String(event.signature).match(/'name':\s*'([^']*)'/);
+    if (match) name = match[1];
+  }
+  return bgCallLabel(event.name, action, truncateArg(name));
 }
 
 const WEB_VERBS = {

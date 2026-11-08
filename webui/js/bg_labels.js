@@ -74,6 +74,26 @@ function bgRuntimeLabel(started) {
   return hours + "h" + String(minutes % 60).padStart(2, "0") + "m";
 }
 
+/* Collapsed tool-row label for the dispatch tools (process, subagent):
+   the action names the verb, and the trailing name identifies the
+   background work the call targeted or produced. */
+function bgCallLabel(kind, action, name) {
+  const verbs = {
+    process: {
+      spawn: "Spawned process",
+      check: "Checked process",
+      kill: "Killed process",
+    },
+    subagent: {
+      spawn: "Spawned subagent",
+      check: "Checked subagent",
+      kill: "Killed subagent",
+    },
+  };
+  const verb = (verbs[kind] || {})[action] || kind;
+  return verb + (name ? ' "' + name + '"' : "");
+}
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { bgEndLabel, bgListStateLabel, bgRuntimeLabel };
+  module.exports = { bgEndLabel, bgListStateLabel, bgRuntimeLabel, bgCallLabel };
 }

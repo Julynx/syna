@@ -88,11 +88,24 @@ class ProcessRecord:
     dir: str
     started: float = field(default_factory=time.time)
     pgid: int | None = None
+    runtime_cap_s: int | None = None
     state: str = "running"
     exit_code: int | None = None
     killed_by: str | None = None
     notified: bool = False
     collected_by_wait_for: bool = False
+
+
+def process_runtime_cap_s(proc: ProcessRecord) -> int:
+    """The process's effective runtime cap in seconds.
+
+    Every report reads the record's own cap, so a spawn with a custom
+    cap is reported and enforced consistently; the configured default
+    covers records built without one.
+    """
+    if proc.runtime_cap_s is not None:
+        return proc.runtime_cap_s
+    return load_process_max_runtime_s()
 
 
 class PodRegistry:
@@ -328,6 +341,7 @@ def spawn_process(
         id=process_id,
         command=command,
         dir=f"{PROCESS_DIR_ROOT}/{process_id}",
+        runtime_cap_s=runtime_cap_s,
     )
     exec_script = _spawn_launcher(proc, command, runtime_cap_s)
     try:
@@ -538,7 +552,7 @@ def process_completion_notice(proc: ProcessRecord) -> str:
     if proc.exit_code == CAP_EXIT_CODE:
         outcome = (
             "hit its runtime cap and was killed"
-            f" (the cap is {load_process_max_runtime_s()} seconds)"
+            f" (the cap is {process_runtime_cap_s(proc)} seconds)"
         )
     elif proc.killed_by == "user":
         outcome = "was stopped by the user"
@@ -656,7 +670,7 @@ def format_process_report(
     if state == "running":
         header = (
             f"Process '{proc.id}': running (runtime {runtime:.0f}s of a"
-            f" {load_process_max_runtime_s()}s cap)."
+            f" {process_runtime_cap_s(proc)}s cap)."
         )
     else:
         code = state.split(":", 1)[1] if ":" in state else "?"
