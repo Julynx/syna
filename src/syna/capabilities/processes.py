@@ -42,7 +42,9 @@ NONINTERACTIVE_ENV_EXPORTS = (
     " PYTHONUNBUFFERED=1 TERM=dumb NO_COLOR=1"
 )
 
-ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*")
+
+MAX_ID_CHARS = 64
 
 PROCESS_DIR_ROOT = "/workspace/processes"
 SUBAGENT_DIR_ROOT = "/workspace/subagents"
@@ -171,12 +173,13 @@ def reserve_id(registry: PodRegistry, kind: str, name: str | None) -> tuple:
     """
     if name is not None:
         name = str(name).strip()
-        if not ID_PATTERN.match(name):
+        if len(name) > MAX_ID_CHARS or not ID_PATTERN.fullmatch(name):
             return None, (
-                f"You cannot use '{name}' as an id: ids may be 1 to 64"
-                " characters of letters, digits, dots, underscores, and"
-                " hyphens, starting with a letter or digit. Pick another"
-                " name, or omit it to get an automatic one."
+                f"You cannot use '{name}' as an id: ids may be 1 to"
+                f" {MAX_ID_CHARS} characters of letters, digits,"
+                " underscores, and hyphens, with single dots between"
+                " them (no leading, trailing, or doubled dots). Pick"
+                " another name, or omit it to get an automatic one."
             )
         with registry.lock:
             if name in registry.taken_ids:
@@ -214,6 +217,24 @@ def unknown_id_error(background_id: str) -> str:
     )
 
 
+def requested_wait_budget_s(arguments: dict | None) -> int | None:
+    """The positive wait budget a validated wait_for call asked for.
+
+    The single coercion shared by the deadline builder and the tool
+    body, so both read `max_wait_s` the same way. None means "use the
+    configured default" (absent) or "invalid" (zero, negative, or the
+    wrong type slipped past validation); the tool body rejects the
+    invalid case, the deadline builder just falls back to the default.
+    """
+    if not arguments:
+        return None
+    value = arguments.get("max_wait_s")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = int(value)
+    return value if value > 0 else None
+
+
 def wait_for_deadline_s(arguments: dict | None) -> float:
     """The harness deadline of one wait_for call, from its arguments.
 
@@ -221,15 +242,9 @@ def wait_for_deadline_s(arguments: dict | None) -> float:
     capped at WAIT_FOR_MAX_S; the harness deadline adds slack so the
     tool's graceful "still running" return wins over the stop request.
     """
-    budget = load_wait_for_timeout()
-    if arguments:
-        try:
-            requested = int(arguments.get("max_wait_s") or 0)
-        except (TypeError, ValueError):
-            requested = 0
-        if requested > 0:
-            budget = min(requested, WAIT_FOR_MAX_S)
-    return float(budget + WAIT_FOR_DEADLINE_SLACK_S)
+    requested = requested_wait_budget_s(arguments)
+    budget = requested if requested else load_wait_for_timeout()
+    return float(min(budget, WAIT_FOR_MAX_S) + WAIT_FOR_DEADLINE_SLACK_S)
 
 
 def _spawn_launcher(proc: ProcessRecord, command: str, max_runtime_s: int) -> str:
@@ -397,11 +412,12 @@ def _watch_processes(registry: PodRegistry, container) -> None:
     logger = get_logger()
     try:
         while registry.active:
-            running = [
-                proc
-                for proc in list(registry.processes.values())
-                if proc.state in ("running", "killed")
-            ]
+            with registry.lock:
+                running = [
+                    proc
+                    for proc in list(registry.processes.values())
+                    if proc.state in ("running", "killed")
+                ]
             if not running:
                 time.sleep(WATCHER_POLL_INTERVAL_S)
                 continue
@@ -654,10 +670,16 @@ def kill_process(
     """Kill a process tree and report the outcome.
 
     Killing signals the command's process group (TERM, then SIGKILL
-    after a grace, both pod-side), never destroys artifacts. The exit
-    marker lands when the launcher notices `timeout` exit, usually
-    within moments; a kill call reports the state as of right now and
-    the completion machinery keeps the record honest afterwards.
+    after a grace, both pod-side), never destroys artifacts. The whole
+    operation, state mutation through probe and report, holds the
+    registry lock, so it cannot interleave with the completion
+    watcher's finalize pass (the lock never waits on anything that
+    would take it again; the pod call lock is strictly inner).
+
+    The exit marker lands when the launcher notices `timeout` exit,
+    usually within moments; a kill call reports the state as of right
+    now and the completion machinery keeps the record honest
+    afterwards.
     """
     if container is None:
         container = get_container()
@@ -667,43 +689,41 @@ def kill_process(
         proc = registry.processes.get(process_id)
         if proc is None:
             return "ERROR: " + unknown_id_error(process_id)
-        was_running = proc.state == "running"
-        if was_running:
-            proc.state = "killed"
-            proc.killed_by = by
-            if by == "model":
-                proc.notified = True
-    if not was_running:
+        if proc.state != "running":
+            state, stdout, stderr = check_process_state(container, proc.dir)
+            return (
+                format_process_report(proc, state, stdout, stderr)
+                + " It had already finished before this kill call."
+            )
+        proc.state = "killed"
+        proc.killed_by = by
+        if by == "model":
+            proc.notified = True
+        dir_q = shlex.quote(proc.dir)
+        script = "\n".join(
+            [
+                f"dir={dir_q}",
+                'pgid=$(cat "$dir/pgid" 2>/dev/null || true)',
+                'code=$(cat "$dir/exit_code" 2>/dev/null || true)',
+                'if [ -z "$code" ] && [ -n "$pgid" ]; then',
+                '  kill -- -"$pgid" 2>/dev/null || true',
+                '  (sleep 2; kill -9 -- -"$pgid" 2>/dev/null || true) &',
+                "fi",
+            ]
+        )
+        try:
+            pod_exec(container, ["bash", "-c", script])
+        except Exception as exc:
+            get_logger().warning("Kill signal for '%s' failed: %s", process_id, exc)
+            return (
+                f"ERROR: the kill signal for process '{process_id}' failed:"
+                f" {exc}. It may already be gone with the pod; check with"
+                " process check."
+            )
+        get_logger().info("Process '%s' killed by %s.", process_id, by)
         state, stdout, stderr = check_process_state(container, proc.dir)
         return (
             format_process_report(proc, state, stdout, stderr)
-            + " It had already finished before this kill call."
+            + " Stop signals sent to the whole process group; the exit code"
+            " lands in the record when the process actually ends."
         )
-    dir_q = shlex.quote(proc.dir)
-    script = "\n".join(
-        [
-            f"dir={dir_q}",
-            'pgid=$(cat "$dir/pgid" 2>/dev/null || true)',
-            'code=$(cat "$dir/exit_code" 2>/dev/null || true)',
-            'if [ -z "$code" ] && [ -n "$pgid" ]; then',
-            '  kill -- -"$pgid" 2>/dev/null || true',
-            '  (sleep 2; kill -9 -- -"$pgid" 2>/dev/null || true) &',
-            "fi",
-        ]
-    )
-    try:
-        pod_exec(container, ["bash", "-c", script])
-    except Exception as exc:
-        get_logger().warning("Kill signal for '%s' failed: %s", process_id, exc)
-        return (
-            f"ERROR: the kill signal for process '{process_id}' failed:"
-            f" {exc}. It may already be gone with the pod; check with"
-            " process check."
-        )
-    get_logger().info("Process '%s' killed by %s.", process_id, by)
-    state, stdout, stderr = check_process_state(container, proc.dir)
-    return (
-        format_process_report(proc, state, stdout, stderr)
-        + " Stop signals sent to the whole process group; the exit code"
-        " lands in the record when the process actually ends."
-    )

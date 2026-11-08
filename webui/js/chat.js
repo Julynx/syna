@@ -1833,13 +1833,6 @@ function appendBgEntry(entry) {
       outEl.textContent = out;
       el.appendChild(outEl);
     }
-  } else if (entry.kind === "share") {
-    el.className = "bg-msg tool";
-    const name = document.createElement("span");
-    name.className = "bg-tool-name";
-    name.textContent =
-      "Shared file: " + ((entry.metadata && entry.metadata.name) || "");
-    el.appendChild(name);
   } else if (entry.kind === "error") {
     el.className = "bg-msg error";
     el.textContent = entry.text || "";

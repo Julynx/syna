@@ -803,7 +803,11 @@ def wait_for(id: str, max_wait_s: int | None = None):
 
     Example: wait_for(id="build", max_wait_s=600)
     """
-    if not isinstance(max_wait_s, int) or max_wait_s <= 0:
+    if (
+        not isinstance(max_wait_s, int)
+        or isinstance(max_wait_s, bool)
+        or max_wait_s <= 0
+    ):
         if max_wait_s is not None:
             set_last_exit_code(1)
             return "ERROR: max_wait_s must be a positive number of seconds."

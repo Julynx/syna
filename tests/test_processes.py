@@ -50,7 +50,20 @@ def test_id_validation_accepts_and_rejects():
     registry = fresh_registry()
     accepted, error = reserve_id(registry, "process", "my-job.1_x")
     assert accepted == "my-job.1_x" and error is None
-    for bad in ["", "-lead", "has space", "slash/ed", "x" * 65, "café"]:
+    for bad in [
+        "",
+        "-lead",
+        "has space",
+        "slash/ed",
+        "x" * 65,
+        "café",
+        "..",
+        ".",
+        "...",
+        ".hidden",
+        "a..b",
+        "trailing.",
+    ]:
         _, error = reserve_id(registry, "process", bad)
         assert error, bad
 
@@ -161,6 +174,22 @@ def test_kill_signals_the_group_and_keeps_artifacts(monkeypatch):
     assert registry.completion_sink is None or True
     assert proc.state == "exited" and proc.exit_code == 0
     assert proc.notified
+
+
+def test_kill_on_finished_process_reports_snapshot(monkeypatch):
+    registry = fresh_registry()
+    proc = ProcessRecord(id="p1", command="x", dir="/d")
+    proc.state = "exited"
+    proc.exit_code = 0
+    registry.processes["p1"] = proc
+    monkeypatch.setattr(
+        processes, "check_process_state", lambda c, d: ("exited:0", "", "")
+    )
+    report = kill_process(
+        "p1", registry=registry, container=FakeContainer(), by="model"
+    )
+    assert "already finished" in report
+    assert proc.killed_by is None, "a settled record keeps its own story"
 
 
 def test_unknown_id_error_explains_recovery():
@@ -284,7 +313,13 @@ def test_wait_for_deadline_composition(monkeypatch):
     assert processes.wait_for_deadline_s(None) == 130.0
     assert processes.wait_for_deadline_s({"max_wait_s": 30}) == 40.0
     assert processes.wait_for_deadline_s({"max_wait_s": 99999}) == 3610.0
+    # Invalid and hostile values fall back to the default budget; the
+    # tool body rejects them, the deadline never amplifies them.
     assert processes.wait_for_deadline_s({"max_wait_s": "bogus"}) == 130.0
+    assert processes.wait_for_deadline_s({"max_wait_s": -5}) == 130.0
+    assert processes.wait_for_deadline_s({"max_wait_s": 0}) == 130.0
+    assert processes.wait_for_deadline_s({"max_wait_s": True}) == 130.0
+    assert processes.requested_wait_budget_s({"max_wait_s": 2.0}) == 2
 
 
 def main():
@@ -298,6 +333,7 @@ def main():
             test_check_reports_state_and_tails,
             test_tail_script_caps_bytes_and_frames_base64,
             test_kill_signals_the_group_and_keeps_artifacts,
+            test_kill_on_finished_process_reports_snapshot,
             test_unknown_id_error_explains_recovery,
             test_finalize_fires_one_completion_notice,
             test_completion_notice_text_carries_paths,

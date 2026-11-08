@@ -164,6 +164,7 @@ def test_excluded_tools_list():
         "text_to_speech",
         "text_to_image",
         "review_work",
+        "share_file",
     }
 
 
@@ -206,6 +207,22 @@ def test_kill_by_user_keeps_the_notice(monkeypatch):
     kill_subagent(record.id, registry=registry, container=container, by="user")
     assert record.stopped_by == "user"
     assert not record.notified
+
+
+def test_kill_on_finished_subagent_reports_snapshot():
+    registry = fresh_registry()
+    record = SubagentRecord(id="sa", goal="g", level=2)
+    record.state = "finished"
+    record.end_reason = "response"
+    record.response = "the answer"
+    record.dump_host_path = None
+    registry.subagents["sa"] = record
+    report = kill_subagent(
+        "sa", registry=registry, container=FakeContainer(), by="model"
+    )
+    assert "already finished" in report
+    assert "the answer" in report
+    assert record.stopped_by is None
 
 
 def test_kill_before_start(monkeypatch):
@@ -302,18 +319,6 @@ def test_compact_event_shapes():
         }
     )
     assert tool["kind"] == "tool" and tool["output_preview"] == "files"
-    share = _compact_event(
-        {
-            "type": "tool_call",
-            "status": "finished",
-            "name": "share_file",
-            "structured_output": {"path": "/w", "name": "f", "is_dir": False},
-        }
-    )
-    assert share == {
-        "kind": "share",
-        "metadata": {"path": "/w", "name": "f", "is_dir": False},
-    }
     assert _compact_event({"type": "status", "text": "Thinking..."}) is None
 
 
@@ -419,6 +424,7 @@ def main():
             test_session_factory_filters_tool_schemas,
             test_kill_marks_record_and_cancels_session,
             test_kill_by_user_keeps_the_notice,
+            test_kill_on_finished_subagent_reports_snapshot,
             test_kill_before_start,
             test_artifacts_copied_at_finalize,
             test_dump_tail_keeps_whole_messages_within_budget,

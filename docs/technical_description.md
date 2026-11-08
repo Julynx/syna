@@ -1034,7 +1034,10 @@ module never imports session machinery, so there is no cycle).
   with the id, a one-line UI summary, and the model-facing notice. The
   server pushes the summary as a `background_done` event and enqueues
   the notice into the parent worker's inbox, which wakes an idle
-  worker or queues behind an active turn.
+  worker or queues behind an active turn. All pod calls serialize over
+  bollard's single HTTP connection, so a notice can lag behind a
+  long-running `execute_command` on the same pod; a late notice is
+  still a correct one.
 
 ### `src/syna/capabilities/subagents.py`
 
@@ -1055,7 +1058,8 @@ close a cycle: tools -> here -> session -> parse -> tools).
   (`AgentSession(excluded_tools=...)` seam): `ask_user`,
   `text_to_speech`, `text_to_image`, `review_work` (its work is judged
   by the spawning agent, and the verifier's conversation provider does
-  not exist on its threads anyway).
+  not exist on its threads anyway), and `share_file` (what reaches the
+  user is the spawning agent's call, based on the subagent's report).
 - **Runtime cap.** A `threading.Timer` at `subagent_max_runtime_s`
   calls `session.cancel()`; the turn unwinds at the next pause and is
   recorded as "stopped by the runtime cap". Allegro inheritance: a
@@ -1079,7 +1083,11 @@ close a cycle: tools -> here -> session -> parse -> tools).
   `/workspace/subagents/{id}/messages.json`, with the final response
   alongside as `response.md`; all copies are read-only and a kill
   never destroys them, so every path reported to the model is true
-  when it reaches it. A kill is a graceful cancel (stop at the next
+  when it reaches it (the copy always precedes the report; the
+  check-path copy is deliberately unconditional so the model always
+  reads the latest snapshot). Kill and the runner's finalize pass
+  serialize on the registry lock, so a kill report cannot interleave
+  with a completion. A kill is a graceful cancel (stop at the next
   pause); its report names the paths immediately, and the completion
   notice confirms the final artifacts afterwards.
 - **Completions.** The runner finalizes on every end (natural, cap,

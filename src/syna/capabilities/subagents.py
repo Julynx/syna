@@ -56,13 +56,17 @@ from .processes import (
 )
 
 # Tools a background worker cannot use: asking the user (it must decide
-# autonomously), the expensive media generators, and self-review (its
-# work is judged by the spawning agent, not a reviewer of its own).
+# autonomously), the expensive media generators, self-review (its work
+# is judged by the spawning agent, not a reviewer of its own), and
+# share_file (what reaches the user is the spawning agent's call,
+# based on the subagent's report; a detached worker does not decide
+# what the user downloads).
 SUBAGENT_EXCLUDED_TOOLS = (
     "ask_user",
     "text_to_speech",
     "text_to_image",
     "review_work",
+    "share_file",
 )
 
 # Cap on the streamed event history kept per subagent for the UI modal.
@@ -327,13 +331,6 @@ def _compact_event(event: dict) -> dict | None:
             "name": event.get("name"),
             "signature": _cap(event.get("signature"), 500),
         }
-        structured = event.get("structured_output")
-        if (
-            event.get("name") == "share_file"
-            and event.get("status") == "finished"
-            and isinstance(structured, dict)
-        ):
-            return {"kind": "share", "metadata": structured}
         if event.get("status") == "finished":
             compact["output_preview"] = _cap(event.get("output_preview"), 2000)
             if event.get("failed"):
@@ -570,9 +567,15 @@ def kill_subagent(
     """Stop a subagent and report its artifacts; never destroys them.
 
     The stop is a graceful cancel: the subagent ends at its next pause,
-    usually within moments. Artifacts are copied into the pod right
-    here so the reported paths are true immediately, and again when the
-    runner actually ends (with the final transcript and response).
+    usually within moments. The whole operation holds the registry
+    lock, so it cannot interleave with the runner's finalize pass; the
+    runner (which needs the same lock to record its completion) waits
+    and finalizes cleanly afterwards. Artifacts are copied into the pod
+    right here so the reported paths are true immediately, and again
+    when the runner actually ends (with the final transcript and
+    response). The settled path re-reads through `check_subagent`
+    outside the lock: a settled state is monotonic, so the racy window
+    cannot change the answer.
     """
     if container is None:
         container = get_container()
@@ -582,23 +585,25 @@ def kill_subagent(
         record = registry.subagents.get(subagent_id)
         if record is None:
             return "ERROR: " + unknown_id_error(subagent_id)
-        was_running = record.state == "running"
-        if was_running:
+        settled = record.state != "running"
+        if not settled:
             record.stopped_by = by
             record.kill_requested.set()
             if by == "model":
                 record.notified = True
-    if not was_running:
+            if record.session is not None:
+                record.session.cancel()
+            try:
+                copy_subagent_artifacts(record, container)
+            except Exception:
+                get_logger().exception("Subagent '%s' artifact copy failed", record.id)
+    if settled:
+        # A settled state is monotonic, so re-reading outside the lock
+        # (check_subagent takes it itself) cannot change the answer.
         return (
             check_subagent(subagent_id, registry, container)
             + "\nIt had already finished before this kill call."
         )
-    if record.session is not None:
-        record.session.cancel()
-    try:
-        copy_subagent_artifacts(record, container)
-    except Exception:
-        get_logger().exception("Subagent '%s' artifact copy failed", record.id)
     runtime = time.time() - record.started
     pod_dir = f"{SUBAGENT_DIR_ROOT}/{subagent_id}"
     get_logger().info("Subagent '%s' kill requested by %s.", subagent_id, by)
