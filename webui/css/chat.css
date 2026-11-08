@@ -26,9 +26,13 @@
 
 /* A freshly inserted child is measured at its intrinsic-size placeholder
    until the next rendering pass; growIn marks it .entering to render it
-   for real while its entrance animation plays. */
+   for real while its entrance animation plays. While entering, the
+   starting-style transition may only fade: growIn already drives the
+   motion (height and margin), and a second transform transition with a
+   different curve and duration makes the entrance kink mid-flight. */
 #chat > .entering {
   content-visibility: visible;
+  transition-property: opacity, filter;
 }
 
 @media (min-width: 1024px) {

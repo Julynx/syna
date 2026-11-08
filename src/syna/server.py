@@ -1506,6 +1506,14 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         for event in history:
             await websocket.send_json(event)
         await websocket.send_json({"type": "history_done"})
+        # The replayed backlog ends on the last persisted event, which is
+        # often a "Thinking..." status notice: busy/ready are pushed
+        # non-persistent by design, so nothing in the log would ever
+        # clear the pill after a reload. One authoritative live event
+        # settles the client on the worker's actual turn state.
+        await websocket.send_json(
+            {"type": "busy" if record.busy.is_set() else "ready"}
+        )
     except Exception:
         with record.event_log_lock:
             if subscriber in record.subscribers:

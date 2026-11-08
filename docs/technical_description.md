@@ -1519,7 +1519,20 @@ wrapped in a `<style>`/`<script>` tag. Two cascade/scoping gotchas:
   long tasks after the fix. Because a freshly inserted child measures at
   its intrinsic-size placeholder until the next rendering pass, `growIn`
   marks entering elements `.entering` (exempted from content-visibility)
-  so entrance animations measure and reveal the real height.
+  so entrance animations measure and reveal the real height. `.entering`
+  also pins `transition-property` to `opacity, filter` while it is on:
+  the `@starting-style` transform slide would otherwise run concurrently
+  with `growIn`'s height/margin motion on a different curve and duration,
+  kinking the entrance mid-flight. When motion is skipped (reduced
+  motion, or nothing to reveal), `.entering` still covers one painted
+  frame — dropping it immediately would let content-visibility show the
+  next frame at the placeholder size, and the element would flash tall
+  and snap to its real height. After `history_done` the WebSocket sends
+  one live `busy`/`ready` event reflecting the worker's actual turn
+  state: the persisted log ends on the last persistent event (often a
+  "Thinking..." status notice, as busy/ready are non-persistent by
+  design), which would otherwise leave the stale pill up forever after
+  a reload.
 
 ### Client behavior
 

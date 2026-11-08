@@ -751,13 +751,17 @@ const boxOf = (el, cs) => ({
 });
 
 function growIn(el, delay) {
-  if (REDUCE || replaying || !el.isConnected) return;
-  /* A freshly inserted child of #chat is measured at its intrinsic-size
-     placeholder until the browser's next rendering pass, so force a real
-     render for the duration of the entrance animation. */
+  if (replaying || !el.isConnected) return;
   el.classList.add("entering");
-  if (!el.getBoundingClientRect().height) {
-    el.classList.remove("entering");
+  if (REDUCE || !el.getBoundingClientRect().height) {
+    /* No motion (reduced motion, or nothing to reveal): still render
+       the element for real for one painted frame. Dropping .entering
+       immediately would let content-visibility show the next frame at
+       the contain-intrinsic-size placeholder, and the element would
+       flash tall and snap to its real height. */
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => el.classList.remove("entering")),
+    );
     return;
   }
   const cs = getComputedStyle(el);
