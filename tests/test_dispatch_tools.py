@@ -56,9 +56,7 @@ def test_process_spawn_without_cap_sends_none(monkeypatch):
 def test_process_rejects_invalid_runtime_caps(monkeypatch):
     _captured(monkeypatch, "spawn_process", {})
     for value in ("5", 0, -3, 2.5, True, [5]):
-        result = tools.process(
-            "spawn", {"command": "sleep 1", "max_runtime_s": value}
-        )
+        result = tools.process("spawn", {"command": "sleep 1", "max_runtime_s": value})
         assert result.startswith("ERROR: process spawn:"), (value, result)
         assert "positive integer" in result
     print("PASS process spawn rejects non-positive-integer caps")

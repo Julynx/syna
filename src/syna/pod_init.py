@@ -257,7 +257,4 @@ def shared_copy_notice(report: dict) -> str:
         noun = "file" if files == 1 else "files"
     else:
         noun = "items"
-    return (
-        f"Copied {len(copied)} {noun} from {host_dir} into"
-        f" {report['pod_path']}."
-    )
+    return f"Copied {len(copied)} {noun} from {host_dir} into {report['pod_path']}."

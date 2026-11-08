@@ -81,9 +81,7 @@ from .capabilities.tools import _reset_browser
 CONTAINER_START_TIMEOUT_S = 120
 EVENT_LOG_MAX_ITEMS = 500
 JANITOR_INTERVAL_S = 15
-CONTAINER_STARTING_TEXT = (
-    "Starting the container engine, please wait..."
-)
+CONTAINER_STARTING_TEXT = "Starting the container engine, please wait..."
 NEW_CHAT_STOP_TIMEOUT_S = 20
 IMAGE_CACHE_LIMIT = 32
 SERVER_ENTRY_POINT = "syna-server"
@@ -310,11 +308,7 @@ class SessionRecord:
             return
         kind = notice.get("kind")
         background_id = notice.get("id")
-        if (
-            kind
-            and background_id
-            and self._wait_for_collected(kind, background_id)
-        ):
+        if kind and background_id and self._wait_for_collected(kind, background_id):
             return
         self.enqueue_message(
             {
@@ -322,9 +316,7 @@ class SessionRecord:
                 "id": uuid.uuid4().hex,
                 "bg_kind": kind,
                 "bg_id": background_id,
-                "content": wrap_channel(
-                    "HARNESS_NOTICE", harness_notice(model_notice)
-                ),
+                "content": wrap_channel("HARNESS_NOTICE", harness_notice(model_notice)),
             }
         )
 
@@ -471,9 +463,7 @@ class SessionRecord:
         self.container_starting = True
         self.push({"type": "status", "text": CONTAINER_STARTING_TEXT}, persistent=False)
         try:
-            self.container = create_container(
-                shared_copy_sink=self._on_shared_copy
-            )
+            self.container = create_container(shared_copy_sink=self._on_shared_copy)
         except Exception as exc:
             logger.exception("Container creation failed for session %s", self.client_id)
             self.container_starting = False
@@ -1524,9 +1514,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         # non-persistent by design, so nothing in the log would ever
         # clear the pill after a reload. One authoritative live event
         # settles the client on the worker's actual turn state.
-        await websocket.send_json(
-            {"type": "busy" if record.busy.is_set() else "ready"}
-        )
+        await websocket.send_json({"type": "busy" if record.busy.is_set() else "ready"})
     except Exception:
         with record.event_log_lock:
             if subscriber in record.subscribers:
