@@ -86,6 +86,9 @@ footer {
   background: var(--surface-soft);
   color: var(--text);
 }
+.icon-btn[hidden] {
+  display: none;
+}
 .icon-btn:disabled {
   opacity: 0.35;
   cursor: default;

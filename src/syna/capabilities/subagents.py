@@ -96,6 +96,7 @@ class SubagentRecord:
     events_lock: threading.Lock = field(default_factory=threading.Lock)
     event_seq: int = 0
     notified: bool = False
+    collected_by_wait_for: bool = False
     allegro: bool = False
 
 
@@ -400,7 +401,9 @@ def _finalize_subagent(registry: PodRegistry, record: SubagentRecord, container)
     Runs on the runner thread at every end: natural, runtime cap, kill,
     or error. Artifact copies are best-effort (a dead pod cannot receive
     them); the host-side dump always remains. Notice firing is the same
-    single-producer path the process capability uses.
+    single-producer path the process capability uses, skipped when the
+    model already learned the outcome (it killed the subagent itself, or
+    wait_for already returned the final report).
     """
     try:
         copy_subagent_artifacts(record, container)
@@ -410,7 +413,7 @@ def _finalize_subagent(registry: PodRegistry, record: SubagentRecord, container)
         registry, record, {"kind": "done", "summary": subagent_status_summary(record)}
     )
     with registry.lock:
-        already_known = record.notified
+        already_known = record.notified or record.collected_by_wait_for
         record.notified = True
     get_logger().info("Subagent '%s' %s.", record.id, subagent_status_summary(record))
     if not already_known:

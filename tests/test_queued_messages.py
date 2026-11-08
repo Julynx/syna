@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from syna.conversation.session import AgentSession
 from syna.capabilities.tools import TOOL_REGISTRY
+from syna.capabilities.processes import ProcessRecord, registry_for
 from syna.server import SessionRecord, _inbox_item_from_message
 from _runner import run_suite
 from test_tool_feedback import FakeChat, FakeMessage, _make_tool_call
@@ -201,6 +202,35 @@ def test_requeue_injections_returns_undelivered_messages():
     print("PASS undelivered injections fall back to the inbox as new turns")
 
 
+def test_background_notice_queueing_and_wait_for_drop():
+    record = _make_record()
+    record.container = object()
+    pushed = []
+    record.push = lambda event, **kwargs: pushed.append(event)
+    registry = registry_for(record.container)
+    proc = ProcessRecord(id="p1", command="x", dir="/d")
+    registry.processes["p1"] = proc
+
+    record._on_background_completion(
+        {"kind": "process", "id": "p1", "summary": "s", "model_notice": "n"}
+    )
+    assert len(record.inbox) == 1
+    assert record.inbox[0]["bg_id"] == "p1"
+    assert record.inbox[0]["bg_kind"] == "process"
+    assert len(pushed) == 1 and pushed[0]["type"] == "background_done"
+    assert not record._notice_is_stale({"bg_kind": "process", "bg_id": "p1"})
+
+    proc.collected_by_wait_for = True
+    assert record._notice_is_stale({"bg_kind": "process", "bg_id": "p1"})
+    assert not record._notice_is_stale({"bg_id": None})
+    record._on_background_completion(
+        {"kind": "process", "id": "p1", "summary": "s", "model_notice": "n"}
+    )
+    assert len(record.inbox) == 1, "the collected outcome is not enqueued twice"
+    assert len(pushed) == 2, "the UI still learns about the completion"
+    print("PASS wait_for collection suppresses the duplicate wake notice")
+
+
 def main():
     run_suite(
         [
@@ -213,6 +243,7 @@ def main():
             test_injected_message_reaches_the_model_in_the_next_request,
             test_injection_emits_user_message_event_with_id,
             test_requeue_injections_returns_undelivered_messages,
+            test_background_notice_queueing_and_wait_for_drop,
         ]
     )
 

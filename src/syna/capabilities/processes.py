@@ -92,6 +92,7 @@ class ProcessRecord:
     exit_code: int | None = None
     killed_by: str | None = None
     notified: bool = False
+    collected_by_wait_for: bool = False
 
 
 class PodRegistry:
@@ -455,9 +456,10 @@ def _finalize_process(registry: PodRegistry, proc: ProcessRecord, exit_marker: s
 
     The model is woken through the completion sink with the artifact
     paths, unless it already learned the outcome (it killed the process
-    itself, or a kill call set the flag first). A kill call marks the
-    record killed before the pod confirms the exit, so this also runs
-    for killed processes: the real exit code still lands in the record.
+    itself, a kill call set the flag first, or wait_for already returned
+    the final report). A kill call marks the record killed before the pod
+    confirms the exit, so this also runs for killed processes: the real
+    exit code still lands in the record.
     """
     with registry.lock:
         if proc.state not in ("running", "killed"):
@@ -467,7 +469,7 @@ def _finalize_process(registry: PodRegistry, proc: ProcessRecord, exit_marker: s
         except ValueError:
             proc.exit_code = None
         proc.state = "exited"
-        already_known = proc.notified
+        already_known = proc.notified or proc.collected_by_wait_for
         proc.notified = True
     if already_known:
         return

@@ -827,6 +827,7 @@ def wait_for(name: str, max_wait_s: int | None = None):
                 return _finished_process_wait(record, container)
         else:
             if subagent_is_settled(record):
+                record.collected_by_wait_for = True
                 return check_subagent(record.id, registry, container)
         cancel_event = get_cancel_event()
         if cancel_event is not None and cancel_event.is_set():
@@ -845,7 +846,12 @@ def wait_for(name: str, max_wait_s: int | None = None):
 
 
 def _finished_process_wait(proc, container) -> str:
-    """The wait_for result when the waited process has ended."""
+    """The wait_for result when the waited process has ended.
+
+    Marks the record collected first: the completion watcher must not
+    fire the wake notice for an outcome wait_for just reported itself.
+    """
+    proc.collected_by_wait_for = True
     try:
         state, stdout, stderr = check_process_state(container, proc.dir)
     except Exception as exc:

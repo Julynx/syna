@@ -80,6 +80,45 @@ def test_returns_immediately_on_settled_subagent(monkeypatch):
     assert "the answer" in result
 
 
+def test_wait_for_collection_suppresses_the_process_notice(monkeypatch):
+    registry = fresh_registry()
+    seen = []
+    registry.completion_sink = lambda payload: seen.append(payload)
+    proc = ProcessRecord(id="done", command="x", dir="/d")
+    registry.processes["done"] = proc
+    make_tools_isolated(monkeypatch, registry)
+    monkeypatch.setattr(
+        tools,
+        "check_process_state",
+        lambda c, d: ("exited:0", "out", "err"),
+    )
+
+    result = tools.wait_for(name="done")
+    assert "finished with exit code 0" in result
+    assert proc.collected_by_wait_for
+    processes._finalize_process(registry, proc, "0")
+    assert seen == [], "the process ending on its own must notify once"
+
+
+def test_wait_for_collection_suppresses_the_subagent_notice(monkeypatch):
+    registry = fresh_registry()
+    seen = []
+    registry.completion_sink = lambda payload: seen.append(payload)
+    record = SubagentRecord(id="sa", goal="g", level=2)
+    record.state = "finished"
+    record.end_reason = "response"
+    record.response = "the answer"
+    record.dump_host_path = None
+    registry.subagents["sa"] = record
+    make_tools_isolated(monkeypatch, registry)
+
+    result = tools.wait_for(name="sa")
+    assert "finished with a response" in result
+    assert record.collected_by_wait_for
+    processes._finalize_subagent(registry, record, FakeContainer())
+    assert seen == [], "the subagent ending on its own must notify once"
+
+
 def test_polls_until_the_process_finishes(monkeypatch):
     registry = fresh_registry()
     proc = ProcessRecord(id="slow", command="x", dir="/d")

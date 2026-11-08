@@ -1,5 +1,6 @@
 /* Background work modals: the process viewer and the subagent viewer
-   share one backdrop, header, and close/stop treatment. */
+   share one backdrop, header, and close treatment, plus a full-width
+   stop footer that doubles as the termination indicator. */
 
 .bg-modal-backdrop {
   position: fixed;
@@ -87,18 +88,47 @@
 .bg-modal-state.done {
   color: var(--ok);
 }
-.bg-modal-stop {
+.bg-modal-footer {
   flex: none;
-  width: 32px;
-  height: 32px;
-  color: var(--danger);
+  display: flex;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
 }
-.bg-modal-stop .material-symbols-outlined {
-  font-size: 17px;
+.bg-modal-stop {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--danger);
+  background: transparent;
+  border: 1px solid var(--danger-line);
+  border-radius: 10px;
+  cursor: pointer;
 }
 .bg-modal-stop:not(:disabled):hover {
   background: var(--danger-tint);
-  color: var(--danger);
+}
+.bg-modal-stop:disabled {
+  cursor: default;
+}
+/* Ended state: the button becomes the termination indicator — a faded
+   red dotted card with the short outcome centered inside it. */
+.bg-modal-stop.ended {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 500;
+  background: var(--danger-tint);
+  border-style: dotted;
+  opacity: 0.8;
+  text-align: center;
+  text-wrap: balance;
+  padding: 8px 16px;
+  height: auto;
+  min-height: 36px;
 }
 
 .bg-modal-body {
@@ -178,19 +208,114 @@
   border-color: var(--danger-line);
   background: var(--danger-tint);
 }
-.bg-msg.done {
-  color: var(--ok);
-  font-size: 12px;
-  padding: 5px 12px;
-  border-radius: 999px;
-  border-style: dashed;
-  text-align: center;
-  align-self: center;
-}
 
 @media (prefers-reduced-motion: reduce) {
   .bg-modal-backdrop,
   .bg-modal {
     transition: none;
   }
+}
+
+/* Background work list: the top-bar indicator's two-tab modal. */
+.bglist-modal {
+  width: min(560px, 100%);
+}
+.bglist-tabs {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px 0;
+}
+.bglist-tab {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.bglist-tab.active {
+  color: var(--text);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+.bglist-list {
+  flex: 1;
+  min-height: 180px;
+  max-height: 58vh;
+  overflow-y: auto;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.bglist-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.bglist-card:hover {
+  border-color: var(--accent-line);
+}
+.bglist-card .material-symbols-outlined {
+  flex: none;
+  font-size: 18px;
+  color: var(--accent);
+}
+.bglist-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bglist-card-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+.bglist-card-meta {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bglist-card-state {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  user-select: none;
+}
+.bglist-card-state.running {
+  color: var(--warn);
+  border-color: var(--warn-line);
+}
+.bglist-separator {
+  flex: none;
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+.bglist-empty {
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+  padding: 20px 0;
 }

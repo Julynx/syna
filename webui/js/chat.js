@@ -7,6 +7,7 @@ const attachBtn = document.getElementById("attach-btn");
 const allegroBtn = document.getElementById("allegro-btn");
 const newchatBtn = document.getElementById("newchat-btn");
 const settingsBtn = document.getElementById("settings-btn");
+const bgBtn = document.getElementById("bg-btn");
 const fileInput = document.getElementById("file-input");
 const statusRow = document.createElement("div");
 statusRow.className = "inline-status glass";
@@ -135,6 +136,7 @@ const ICONS = {
   allegro: GLYPH("queue_music"),
   subagent: GLYPH("account_tree"),
   schedule: GLYPH("schedule"),
+  work: GLYPH("list_alt"),
 };
 
 const allegro = (() => {
@@ -1441,9 +1443,14 @@ function render(event) {
         }
         break;
       }
-      Sfx.poke();
       if (event.status === "started") addToolRow(event);
       else finishToolRow(event);
+      Sfx.poke();
+      if (
+        event.status !== "started" &&
+        (event.name === "process" || event.name === "subagent")
+      )
+        refreshBackgroundList();
       break;
     case "subagent_message":
       if (
@@ -1453,13 +1460,18 @@ function render(event) {
         event.seq > bgModal.lastSeq
       ) {
         bgModal.lastSeq = event.seq;
-        appendBgEntry(event);
+        if (event.kind === "done") {
+          setBgOutcome(bgEndLabel("subagent", { summary: event.summary }));
+        } else {
+          appendBgEntry(event);
+        }
       }
       break;
     case "background_done":
       addBackgroundDoneRow(event);
+      refreshBackgroundList();
       if (bgModal && bgModal.id === event.id) {
-        setBgState("done", null, event.summary);
+        setBgOutcome(bgEndLabel(event.kind, { summary: event.summary }));
       }
       break;
     case "file":
@@ -1516,6 +1528,7 @@ function connect() {
     if (window.Voice) Voice.reset();
     setStatus("ready", "Ready");
     updateAmbient();
+    refreshBackgroundList();
   };
 
   ws.onmessage = (message) => {
@@ -1740,15 +1753,68 @@ function sendBgStop(_kind, id, btn) {
 function setBgState(state, exitCode, summary) {
   if (!bgModal) return;
   const chip = bgModal.stateChip;
-  const running = state === "running";
-  chip.classList.toggle("running", running);
-  chip.classList.toggle("done", state !== "running" && state !== "stopping");
-  chip.textContent =
-    summary ||
-    (state === "exited"
-      ? "exit " + (exitCode === null || exitCode === undefined ? "?" : exitCode)
-      : state);
-  if (bgModal.stopBtn) bgModal.stopBtn.disabled = !running;
+  const stopBtn = bgModal.stopBtn;
+  if (state === "running") {
+    chip.hidden = false;
+    chip.classList.add("running");
+    chip.classList.remove("done");
+    chip.textContent = "running";
+    stopBtn.disabled = false;
+    stopBtn.classList.remove("ended");
+    stopBtn.textContent = "Stop";
+    return;
+  }
+  if (state === "stopping...") {
+    chip.hidden = false;
+    chip.classList.remove("running", "done");
+    chip.textContent = "stopping…";
+    stopBtn.disabled = true;
+    stopBtn.classList.remove("ended");
+    stopBtn.textContent = "Stopping…";
+    return;
+  }
+  if (state === "gone" || state === "unavailable") {
+    setBgOutcome(state === "gone" ? "Gone" : "Unavailable");
+    return;
+  }
+  setBgOutcome(bgEndLabel(bgModal.kind, { state, exit_code: exitCode, summary }));
+}
+
+/* Once the work ends, the footer button stops being a button: disabled,
+   outcome-styled, and carrying the short termination label. The header
+   chip hides, so the outcome appears exactly once. */
+function setBgOutcome(label) {
+  if (!bgModal) return;
+  bgModal.stateChip.hidden = true;
+  const stopBtn = bgModal.stopBtn;
+  stopBtn.disabled = true;
+  stopBtn.classList.add("ended");
+  stopBtn.textContent = label;
+}
+
+/* Short termination labels for the footer button, derived from the
+   server summaries (live background_done events) or the structured
+   record fields (reopened modals). */
+function bgEndLabel(kind, meta) {
+  const summary = meta.summary || "";
+  if (kind === "process") {
+    if (summary === "stopped by the user") return "Stopped by user";
+    if (summary === "killed by its runtime cap") return "Stopped by runtime cap";
+    const exit = summary.match(/^exited with code (-?\d+)$/);
+    if (exit) return "Exited " + exit[1];
+    if (meta.state === "exited")
+      return "Exited " + (meta.exit_code ?? "?");
+    if (meta.state === "killed")
+      return meta.killed_by === "model" ? "Stopped by the model" : "Stopped by user";
+    return summary || "Finished";
+  }
+  if (summary === "stopped by its runtime cap") return "Stopped by runtime cap";
+  if (summary === "ended with an error") return "Ended with error";
+  if (summary === "finished with a response") return "Finished";
+  if (meta.state === "killed") return "Stopped by " + (meta.stopped_by || "user");
+  if (meta.end_reason === "runtime cap") return "Stopped by runtime cap";
+  if (meta.end_reason === "error") return "Ended with error";
+  return "Finished";
 }
 
 function appendBgProcessText(section, text) {
@@ -1814,7 +1880,7 @@ function startProcessPolling(id) {
     stdoutOffset = data.stdout_size;
     stderrOffset = data.stderr_size;
     if (data.state !== "running") {
-      setBgState(data.state, data.exit_code);
+      setBgOutcome(bgEndLabel("process", data));
       stopBgTimer();
     } else {
       setBgState("running");
@@ -1822,14 +1888,6 @@ function startProcessPolling(id) {
   };
   tick();
   token.timer = setInterval(tick, 1000);
-}
-
-function subagentDoneSummary(meta) {
-  if (meta.end_reason === "runtime cap") return "stopped by its runtime cap";
-  if (meta.state === "killed")
-    return "stopped by the " + (meta.stopped_by || "user");
-  if (meta.end_reason === "error") return "ended with an error";
-  return "finished with a response";
 }
 
 function appendBgEntry(entry) {
@@ -1855,9 +1913,6 @@ function appendBgEntry(entry) {
   } else if (entry.kind === "error") {
     el.className = "bg-msg error";
     el.textContent = entry.text || "";
-  } else if (entry.kind === "done") {
-    el.className = "bg-msg done";
-    el.textContent = entry.summary || "finished";
   } else {
     return;
   }
@@ -1881,7 +1936,7 @@ function renderSubagentHistory(token, data) {
   const stillRunning =
     data.state === "running" || data.state === "stopping";
   if (stillRunning) setBgState("running");
-  else setBgState(data.state, null, subagentDoneSummary(data));
+  else setBgOutcome(bgEndLabel("subagent", data));
   token.body.scrollTop = token.body.scrollHeight;
 }
 
@@ -1951,12 +2006,6 @@ function openBackgroundModal(kind, id) {
   idEl.className = "bg-modal-id";
   const stateChip = document.createElement("span");
   stateChip.className = "bg-modal-state";
-  const stopBtn = document.createElement("button");
-  stopBtn.type = "button";
-  stopBtn.className = "icon-btn bg-modal-stop";
-  stopBtn.title = "Stop";
-  stopBtn.setAttribute("aria-label", "Stop");
-  stopBtn.innerHTML = ICONS.stop;
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.className = "icon-btn";
@@ -1965,9 +2014,16 @@ function openBackgroundModal(kind, id) {
   closeBtn.innerHTML = ICONS.close;
   const body = document.createElement("div");
   body.className = "bg-modal-body";
+  const footer = document.createElement("div");
+  footer.className = "bg-modal-footer";
+  const stopBtn = document.createElement("button");
+  stopBtn.type = "button";
+  stopBtn.className = "bg-modal-stop";
+  stopBtn.textContent = "Stop";
   title.append(iconEl, idEl);
-  header.append(title, stateChip, stopBtn, closeBtn);
-  modal.append(header, body);
+  header.append(title, stateChip, closeBtn);
+  footer.append(stopBtn);
+  modal.append(header, body, footer);
   backdrop.appendChild(modal);
   document.body.appendChild(backdrop);
   requestAnimationFrame(() => backdrop.classList.add("open"));
@@ -2015,6 +2071,185 @@ function addBackgroundDoneRow(event) {
     row.addEventListener("click", () => openBackgroundModal(event.kind, event.id));
   }
   append(row);
+}
+
+/* Top-bar indicator for running background work. A small poll keeps the
+   button honest even when a spawn or completion event is missed; the
+   explicit refreshes after those events keep it instant. */
+let bgListTimer = null;
+let bgListData = { processes: [], subagents: [] };
+
+async function refreshBackgroundList() {
+  try {
+    const res = await fetch(
+      withToken(`${API_BASE}/api/background/${clientId}/list`),
+      { headers: authHeaders() },
+    );
+    bgListData = res.ok
+      ? await res.json()
+      : { processes: [], subagents: [] };
+  } catch (err) {
+    bgListData = { processes: [], subagents: [] };
+  }
+  const running =
+    bgListData.processes.some((row) => row.state === "running") ||
+    bgListData.subagents.some((row) => row.state === "running");
+  if (bgBtn) bgBtn.hidden = !running;
+  return bgListData;
+}
+
+function startBgListPolling() {
+  if (bgListTimer) return;
+  refreshBackgroundList();
+  bgListTimer = setInterval(refreshBackgroundList, 4000);
+}
+
+let bgListModal = null;
+
+function closeBackgroundListModal() {
+  if (!bgListModal) return;
+  const backdrop = bgListModal.backdrop;
+  if (bgListModal.timer) {
+    clearInterval(bgListModal.timer);
+    bgListModal.timer = null;
+  }
+  bgListModal = null;
+  backdrop.classList.remove("open");
+  setTimeout(() => backdrop.remove(), REDUCE ? 0 : 250);
+  Sfx.play("close");
+}
+
+/* Short per-row state for the list cards. */
+function bgListStateLabel(kind, row) {
+  if (row.state === "running") return "running";
+  if (kind === "process") {
+    if (row.state === "killed") return "stopped";
+    return "exit " + (row.exit_code ?? "?");
+  }
+  if (row.end_reason === "runtime cap") return "runtime cap";
+  if (row.state === "killed") return "stopped";
+  if (row.end_reason === "error") return "error";
+  return "finished";
+}
+
+function bgListCard(row, kind) {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "bglist-card";
+  const icon = document.createElement("span");
+  icon.className = "material-symbols-outlined";
+  icon.textContent = kind === "process" ? "terminal" : "account_tree";
+  const main = document.createElement("span");
+  main.className = "bglist-card-main";
+  const name = document.createElement("span");
+  name.className = "bglist-card-name";
+  name.textContent = row.name;
+  const meta = document.createElement("span");
+  meta.className = "bglist-card-meta";
+  meta.textContent = (
+    kind === "process" ? row.command || "" : row.goal || ""
+  ).slice(0, 140);
+  main.append(name, meta);
+  const chip = document.createElement("span");
+  chip.className =
+    "bglist-card-state" + (row.state === "running" ? " running" : "");
+  chip.textContent = bgListStateLabel(kind, row);
+  card.append(icon, main, chip);
+  card.addEventListener("click", () => {
+    closeBackgroundListModal();
+    openBackgroundModal(kind, row.name);
+  });
+  return card;
+}
+
+function renderBgListTab() {
+  if (!bgListModal) return;
+  const kind = bgListModal.kind;
+  const list = bgListModal.list;
+  list.textContent = "";
+  const rows = bgListData[kind === "process" ? "processes" : "subagents"] || [];
+  const running = rows.filter((row) => row.state === "running");
+  const finished = rows.filter((row) => row.state !== "running");
+  if (running.length)
+    for (const row of running) list.appendChild(bgListCard(row, kind));
+  if (running.length && finished.length) {
+    const separator = document.createElement("div");
+    separator.className = "bglist-separator";
+    list.appendChild(separator);
+  }
+  for (const row of finished) list.appendChild(bgListCard(row, kind));
+  if (!running.length && !finished.length) {
+    const empty = document.createElement("div");
+    empty.className = "bglist-empty";
+    empty.textContent =
+      kind === "process" ? "No processes yet." : "No subagents yet.";
+    list.appendChild(empty);
+  }
+}
+
+function openBackgroundListModal() {
+  if (bgListModal) return;
+  closeBackgroundModal();
+  const backdrop = document.createElement("div");
+  backdrop.className = "bg-modal-backdrop";
+  const modal = document.createElement("div");
+  modal.className = "bg-modal bglist-modal";
+  const header = document.createElement("div");
+  header.className = "bg-modal-header";
+  const title = document.createElement("div");
+  title.className = "bg-modal-title";
+  const iconEl = document.createElement("span");
+  iconEl.className = "material-symbols-outlined";
+  iconEl.textContent = "list_alt";
+  const titleText = document.createElement("span");
+  titleText.className = "bg-modal-id";
+  titleText.textContent = "Background work";
+  title.append(iconEl, titleText);
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "icon-btn";
+  closeBtn.title = "Close";
+  closeBtn.setAttribute("aria-label", "Close");
+  closeBtn.innerHTML = ICONS.close;
+  header.append(title, closeBtn);
+  const tabs = document.createElement("div");
+  tabs.className = "bglist-tabs";
+  const list = document.createElement("div");
+  list.className = "bglist-list";
+  modal.append(header, tabs, list);
+  backdrop.appendChild(modal);
+  document.body.appendChild(backdrop);
+  requestAnimationFrame(() => backdrop.classList.add("open"));
+  bgListModal = { backdrop, tabs, list, kind: "subagent", timer: null };
+  for (const kind of ["subagent", "process"]) {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "bglist-tab";
+    tab.textContent = kind === "process" ? "Processes" : "Subagents";
+    tab.dataset.kind = kind;
+    tab.addEventListener("click", () => {
+      bgListModal.kind = kind;
+      paintBgListTabs();
+      renderBgListTab();
+    });
+    tabs.appendChild(tab);
+  }
+  function paintBgListTabs() {
+    for (const tab of tabs.children)
+      tab.classList.toggle("active", tab.dataset.kind === bgListModal.kind);
+  }
+  closeBtn.addEventListener("click", closeBackgroundListModal);
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) closeBackgroundListModal();
+  });
+  const refresh = async () => {
+    await refreshBackgroundList();
+    if (bgListModal) renderBgListTab();
+  };
+  paintBgListTabs();
+  refresh();
+  bgListModal.timer = setInterval(refresh, 2000);
+  Sfx.play("open");
 }
 
 async function openSettingsModal() {
@@ -2646,6 +2881,11 @@ if (settingsBtn) {
   settingsBtn.innerHTML = ICONS.settings;
   settingsBtn.addEventListener("click", openSettingsModal);
 }
+if (bgBtn) {
+  bgBtn.innerHTML = ICONS.work;
+  bgBtn.addEventListener("click", openBackgroundListModal);
+}
+startBgListPolling();
 setSendState();
 input.focus();
 

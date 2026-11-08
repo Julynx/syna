@@ -213,6 +213,18 @@ def test_finalize_fires_one_completion_notice():
     assert "runtime cap" in payload["summary"]
 
 
+def test_wait_for_collection_suppresses_the_notice():
+    registry = fresh_registry()
+    seen = []
+    registry.completion_sink = lambda payload: seen.append(payload)
+    proc = ProcessRecord(id="p10", command="x", dir="/d")
+    registry.processes["p10"] = proc
+    proc.collected_by_wait_for = True
+    processes._finalize_process(registry, proc, "0")
+    assert seen == [], "wait_for already reported this outcome"
+    assert proc.state == "exited" and proc.exit_code == 0
+
+
 def test_completion_notice_text_carries_paths():
     proc = ProcessRecord(id="p2", command="x", dir="/workspace/processes/p2")
     proc.state = "exited"

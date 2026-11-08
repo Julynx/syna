@@ -290,7 +290,11 @@ class SessionRecord:
         The done event is persistent (a compact row the client keeps);
         the model-facing notice travels through the same inbox user
         messages take, so it wakes an idle worker or queues behind an
-        active turn as a harness notice.
+        active turn as a harness notice. When wait_for already returned
+        the final report, the notice is suppressed instead: work that
+        ends on its own must reach the model exactly once. The queued
+        item keeps the background identity so the worker can drop it at
+        dequeue time if wait_for collected the outcome in between.
         """
         self.push(
             {
@@ -301,16 +305,47 @@ class SessionRecord:
             }
         )
         model_notice = notice.get("model_notice")
-        if model_notice:
-            self.enqueue_message(
-                {
-                    "kind": "message",
-                    "id": uuid.uuid4().hex,
-                    "content": wrap_channel(
-                        "HARNESS_NOTICE", harness_notice(model_notice)
-                    ),
-                }
-            )
+        if not model_notice:
+            return
+        kind = notice.get("kind")
+        background_id = notice.get("id")
+        if (
+            kind
+            and background_id
+            and self._wait_for_collected(kind, background_id)
+        ):
+            return
+        self.enqueue_message(
+            {
+                "kind": "message",
+                "id": uuid.uuid4().hex,
+                "bg_kind": kind,
+                "bg_id": background_id,
+                "content": wrap_channel(
+                    "HARNESS_NOTICE", harness_notice(model_notice)
+                ),
+            }
+        )
+
+    def _wait_for_collected(self, kind: str, background_id: str) -> bool:
+        """Whether wait_for already returned this record's final report."""
+        if self.container is None:
+            return False
+        registry = processes.registry_for(self.container)
+        entry = registry.lookup(background_id)
+        return entry is not None and entry[1].collected_by_wait_for
+
+    def _notice_is_stale(self, item: dict) -> bool:
+        """Whether a queued background notice lost the race to wait_for.
+
+        wait_for sets the record's collected flag when it returns the
+        final report; a notice enqueued before that must not wake the
+        model with the same outcome a second time.
+        """
+        background_id = item.get("bg_id")
+        if not background_id:
+            return False
+        return self._wait_for_collected(item.get("bg_kind") or "", background_id)
 
     def _on_session_event(self, event: dict):
         metadata = shared_file_metadata(event)
@@ -373,6 +408,13 @@ class SessionRecord:
             while not self.shutdown.is_set():
                 item = self._next_message(timeout=1.0)
                 if item is None or item.get("kind") != "message":
+                    continue
+                if self._notice_is_stale(item):
+                    logger.info(
+                        "Dropping the completion notice for '%s': wait_for"
+                        " already reported its outcome.",
+                        item["bg_id"],
+                    )
                     continue
                 if self.container is None:
                     self._start_container()
@@ -906,11 +948,50 @@ def background_process_output(
     return {
         "state": proc.state,
         "exit_code": proc.exit_code,
+        "killed_by": proc.killed_by,
         "stdout_size": int(stdout_size or 0),
         "stderr_size": int(stderr_size or 0),
         "stdout_b64": stdout_b64,
         "stderr_b64": stderr_b64,
     }
+
+
+@app.get("/api/background/{client_id}/list")
+def background_list(client_id: str):
+    """Every registered background work record, oldest spawn first.
+
+    Feeds the top-bar indicator and its list modal: the button is
+    visible while at least one process or subagent is running, and the
+    modal lists running work first, then finished work.
+    """
+    record = _sessions.get(client_id)
+    if record is None or record.container is None:
+        raise HTTPException(status_code=404, detail="Unknown session.")
+    registry = processes.registry_for(record.container)
+    with registry.lock:
+        process_rows = [
+            {
+                "name": proc.id,
+                "state": proc.state,
+                "started": proc.started,
+                "command": proc.command,
+                "exit_code": proc.exit_code,
+            }
+            for proc in sorted(registry.processes.values(), key=lambda p: p.started)
+        ]
+        subagent_rows = [
+            {
+                "name": sub.id,
+                "state": sub.state,
+                "started": sub.started,
+                "goal": sub.goal,
+                "level": sub.level,
+                "end_reason": sub.end_reason,
+                "stopped_by": sub.stopped_by,
+            }
+            for sub in sorted(registry.subagents.values(), key=lambda s: s.started)
+        ]
+    return {"processes": process_rows, "subagents": subagent_rows}
 
 
 @app.get("/api/background/{client_id}/subagent/{subagent_id}/events")

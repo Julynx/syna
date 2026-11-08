@@ -1056,7 +1056,15 @@ module never imports session machinery, so there is no cycle).
   with the id, a one-line UI summary, and the model-facing notice. The
   server pushes the summary as a `background_done` event and enqueues
   the notice into the parent worker's inbox, which wakes an idle
-  worker or queues behind an active turn. All pod calls serialize over
+  worker or queues behind an active turn — unless `wait_for` already
+  returned the final report: it sets the record's
+  `collected_by_wait_for` flag, finalize skips the notice for it, the
+  server skips enqueueing it, and a notice already queued when
+  `wait_for` collected the outcome is dropped at dequeue time
+  (`_notice_is_stale`), so work that ends on its own reaches the model
+  exactly once. Collection via `check` never sets the flag: a check
+  racing the real end may legitimately produce two messages. All pod
+  calls serialize over
   bollard's single HTTP connection, so a notice can lag behind a
   long-running `execute_command` on the same pod; a late notice is
   still a correct one. A failed probe is retried: only consecutive
@@ -1396,13 +1404,17 @@ registers the registry's `event_sink` (subagent streaming as
 non-persistent `subagent_message` events) and `completion_sink` (a
 persistent `background_done` event plus the model-facing notice
 enqueued into the inbox as a harness notice, waking the idle worker or
-queueing behind an active turn). `GET
+queueing behind an active turn — suppressed entirely when `wait_for`
+already reported the outcome). `GET
 /api/background/{client_id}/process/{id}/output?stdout_offset=&stderr_offset=`
-returns incremental base64 chunks plus sizes and state for the process
-viewer (tail runs before the size probe, so no chunk is ever
-duplicated); `GET
+returns incremental base64 chunks plus sizes, state, and `killed_by`
+for the process viewer (tail runs before the size probe, so no chunk is
+ever duplicated); `GET
 /api/background/{client_id}/subagent/{id}/events` returns a subagent
-viewer's history. The WebSocket accepts `process_kill` and
+viewer's history; `GET /api/background/{client_id}/list` returns every
+registered process and subagent with its state and spawn time, oldest
+first, for the top-bar indicator and its list modal. The WebSocket
+accepts `process_kill` and
 `subagent_kill` messages from the viewers' stop buttons, run off the
 event loop. Teardown (`new-chat`, janitor, shutdown) stops running
 subagents and drops the session's registry; the pod's processes die
@@ -1619,17 +1631,31 @@ drops are ignored.
   (stdout/stderr) that auto-follow while pinned to the bottom and trim
   themselves past a cap; the subagent view fetches the recorded event
   history once, renders it as simplified message rectangles (goal,
-  assistant text, compact tool rows, a done row), and appends live
-  `subagent_message` events by sequence number. Both carry a Stop
-  button sending `process_kill`/`subagent_kill` over the WebSocket,
-  disabled once the work is no longer running. Completion arrives as a
+  assistant text, compact tool rows), and appends live
+  `subagent_message` events by sequence number. Both carry a
+  full-width Stop button in a footer below the output, sending
+  `process_kill`/`subagent_kill` over the WebSocket. The button doubles
+  as the termination indicator: once the work ends it is disabled,
+  restyled as a faded red dotted card, and shows the short outcome
+  (`Stopped by user`, `Stopped by runtime cap`, `Exited 0`,
+  `Ended with error`, `Finished`) — the header state chip hides then,
+  so the outcome appears exactly once. Completion also arrives as a
   persistent `background_done` compact notice row (not a user bubble),
   clickable to reopen the viewer.
-- Tool-activity sound fades: every tool-call event pokes the sfx
-  layer (`Sfx.poke()`), which ramps the tool-loop beat's gain back up
-  and schedules a fade to silence over 15 seconds, so a long
-  `wait_for` goes quiet instead of looping; the next tool activity
-  brings it back, and ambient state changes re-sync the gain.
+- A top-bar `list_alt` button left of the settings icon appears while
+  at least one process or subagent is running (polled from the list
+  endpoint every 4s, refreshed instantly on spawn and completion
+  events). It opens a two-tab "Background work" modal (Subagents /
+  Processes) of rectangular cards sorted by spawn time — running items
+  first, a separator, then finished items; each card shows the name, a
+  command/goal snippet, and a state chip, and clicking one opens the
+  regular viewer modal for it.
+- Tool-activity sound fades: entering the tool ambient state schedules
+  the tool-loop beat's fade to silence over 15 seconds (and every
+  tool-call event pokes `Sfx.poke()`, which ramps the gain back up and
+  restarts the fade), so a long `wait_for` goes quiet instead of
+  looping; the next tool activity brings it back, and ambient state
+  changes re-sync the gain.
 
 ## 11. Voice and narration
 
