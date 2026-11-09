@@ -87,6 +87,7 @@ class SubagentRecord:
     goal: str
     level: int
     started: float = field(default_factory=time.time)
+    started_at: float | None = None
     finished_at: float | None = None
     parent_id: str | None = None
     runtime_cap_s: int | None = None
@@ -104,6 +105,7 @@ class SubagentRecord:
     notified: bool = False
     outcome_collected: bool = False
     allegro: bool = False
+    last_wait_ended_at: float | None = None
 
 
 def subagent_runtime_cap_s(record: SubagentRecord) -> int:

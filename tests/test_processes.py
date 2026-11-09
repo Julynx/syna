@@ -90,7 +90,7 @@ def test_auto_ids_skip_taken_and_count_per_kind():
 
 def test_spawn_registers_and_starts_watcher(monkeypatch):
     registry = fresh_registry()
-    container = FakeContainer({"pgid": "4242"})
+    container = FakeContainer({"PGID": "PGID 4242\nSTARTED 1794185400.250"})
     monkeypatch.setattr(processes, "_ensure_watcher", lambda r, c: None)
     result = spawn_process(
         "python3 build.py",
@@ -103,6 +103,7 @@ def test_spawn_registers_and_starts_watcher(monkeypatch):
     assert result["max_runtime_s"] == 99
     proc = registry.processes["build"]
     assert proc.pgid == 4242
+    assert proc.started_at == 1794185400.250
     assert proc.dir == "/workspace/processes/build"
     exec_script = container.calls[0][-1]
     assert "setsid bash -c" in exec_script
@@ -111,7 +112,16 @@ def test_spawn_registers_and_starts_watcher(monkeypatch):
     assert 'printf %s "$bg" > ' in exec_script
     assert "/workspace/processes/build/stdout" in exec_script
     assert "> /workspace/processes/build/exit_code" in exec_script
-    assert "date +%s > " in exec_script and "finished_at" in exec_script
+    assert "date +%s.%N > " in exec_script and "finished_at" in exec_script
+    started_line = next(
+        line for line in exec_script.splitlines() if "started_at" in line
+    )
+    timeout_line = next(
+        line for line in exec_script.splitlines() if "timeout -k" in line
+    )
+    assert exec_script.index(started_line) < exec_script.index(timeout_line), (
+        "the start stamp must be written before timeout begins counting"
+    )
 
 
 def test_spawn_failure_releases_the_id(monkeypatch):
@@ -135,7 +145,10 @@ def test_spawn_stamps_the_parent_record(monkeypatch):
     monkeypatch.setattr(processes, "_ensure_watcher", lambda r, c: None)
     set_background_record(None)
     top = spawn_process(
-        "x", name="top", registry=registry, container=FakeContainer({"pgid": "1"})
+        "x",
+        name="top",
+        registry=registry,
+        container=FakeContainer({"PGID": "PGID 1\nSTARTED 1794185400.1"}),
     )
     assert registry.processes[top["name"]].parent_id is None
     set_background_record(SubagentRecord(id="par", goal="g", level=2))
@@ -144,7 +157,7 @@ def test_spawn_stamps_the_parent_record(monkeypatch):
             "x",
             name="nested",
             registry=registry,
-            container=FakeContainer({"pgid": "2"}),
+            container=FakeContainer({"PGID": "PGID 2\nSTARTED 1794185400.2"}),
         )
         assert registry.processes[nested["name"]].parent_id == "par"
     finally:
@@ -209,6 +222,48 @@ def test_check_process_state_parses_the_end_stamp():
     )
     state, stdout, stderr, ended = processes.check_process_state(missing_stamp, "/d")
     assert ended is None
+
+
+def test_spawn_markers_parse_pgid_and_started_stamp():
+    container = FakeContainer({"PGID": "PGID 4242\nSTARTED 1794185400.250"})
+    pgid, started_at = processes._read_spawn_markers(container, "/d")
+    assert pgid == 4242 and started_at == 1794185400.25
+
+
+def test_spawn_markers_survive_a_date_without_nanoseconds():
+    """A `date` without %N support must not poison the runtime.
+
+    The stamp parse fails, started_at stays None, and reports fall
+    back to the host-clock measurement instead of crashing or using a
+    garbage epoch.
+    """
+    container = FakeContainer({"PGID": "PGID 7\nSTARTED 1794185400.N"})
+    pgid, started_at = processes._read_spawn_markers(container, "/d")
+    assert pgid == 7 and started_at is None
+    assert processes._parse_epoch("") is None
+    assert processes._parse_epoch("not-a-number") is None
+
+
+def test_ended_runtime_prefers_the_pod_clock_stamps():
+    """Runtime from the launcher's stamps beats the host-clock mix.
+
+    The live log caught this: a 5s cap was reported as 4s because
+    finished_at (pod clock) was compared against started (host clock,
+    stamped before the spawn exec). With both pod stamps present the
+    host values are irrelevant, skew included.
+    """
+    proc = ProcessRecord(id="p9", command="x", dir="/d")
+    proc.started = 1000.0
+    proc.started_at = 1002.0
+    proc.finished_at = 1007.0
+    assert processes._ended_runtime_s(proc) == 5.0
+    only_end = ProcessRecord(id="p10", command="x", dir="/d")
+    only_end.started = 1000.0
+    only_end.finished_at = 1005.0
+    assert processes._ended_runtime_s(only_end) == 5.0
+    nothing = ProcessRecord(id="p11", command="x", dir="/d")
+    nothing.started = time.time() - 3.0
+    assert abs(processes._ended_runtime_s(nothing) - 3.0) < 0.1
 
 
 def test_kill_signals_the_group_and_keeps_artifacts(monkeypatch):
@@ -561,6 +616,9 @@ def main():
             test_adopt_end_time_prefers_the_pod_stamp,
             test_finalize_uses_the_launcher_stamp,
             test_check_process_state_parses_the_end_stamp,
+            test_spawn_markers_parse_pgid_and_started_stamp,
+            test_spawn_markers_survive_a_date_without_nanoseconds,
+            test_ended_runtime_prefers_the_pod_clock_stamps,
             test_watcher_notices_exit_and_keeps_looping,
             test_watcher_stops_when_the_pod_dies,
             test_watcher_survives_a_transient_poll_failure,

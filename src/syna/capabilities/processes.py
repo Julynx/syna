@@ -87,6 +87,7 @@ class ProcessRecord:
     command: str
     dir: str
     started: float = field(default_factory=time.time)
+    started_at: float | None = None
     finished_at: float | None = None
     parent_id: str | None = None
     pgid: int | None = None
@@ -96,6 +97,7 @@ class ProcessRecord:
     killed_by: str | None = None
     notified: bool = False
     outcome_collected: bool = False
+    last_wait_ended_at: float | None = None
 
 
 def process_runtime_cap_s(proc: ProcessRecord) -> int:
@@ -290,10 +292,12 @@ def _spawn_launcher(proc: ProcessRecord, command: str, max_runtime_s: int) -> st
 
     The runtime cap exits with code 124; a manual kill of the group
     leaves the launcher to report 128+signal through the same
-    exit_code file. The launcher stamps the true end time (epoch
-    seconds) next to the exit code, so reports quote the real runtime
-    even when the completion watcher polls late (a long-running
-    execute_command on the same pod delays its next poll).
+    exit_code file. The launcher stamps the start and the true end
+    time (epoch seconds, sub-second where `date` supports %N) in the
+    pod's own clock, so reports quote the real runtime regardless of
+    host/pod clock skew or spawn-dispatch latency, even when the
+    completion watcher polls late (a long-running execute_command on
+    the same pod delays its next poll).
     """
     dir_q = shlex.quote(proc.dir)
     inner = (
@@ -306,13 +310,14 @@ def _spawn_launcher(proc: ProcessRecord, command: str, max_runtime_s: int) -> st
             f"mkdir -p {dir_q}",
             "cd /workspace || cd /",
             f"export {NONINTERACTIVE_ENV_EXPORTS}",
+            f"date +%s.%N > {dir_q}/started_at",
             f"setsid timeout -k {TIMEOUT_KILL_GRACE_S} {max_runtime_s}"
             f" bash -c {shlex.quote(inner)} </dev/null >/dev/null 2>&1 &",
             "bg=$!",
             f'printf %s "$bg" > {dir_q}/pgid',
             'wait "$bg"',
             f'printf %s "$?" > {dir_q}/exit_code',
-            f"date +%s > {dir_q}/finished_at",
+            f"date +%s.%N > {dir_q}/finished_at",
         ]
     )
     return f"setsid bash -c {shlex.quote(launcher)} </dev/null >/dev/null 2>&1 &"
@@ -354,7 +359,7 @@ def spawn_process(
     exec_script = _spawn_launcher(proc, command, runtime_cap_s)
     try:
         pod_exec(container, ["bash", "-c", exec_script])
-        pgid = _read_pgid(container, proc.dir)
+        pgid, started_at = _read_spawn_markers(container, proc.dir)
     except Exception as exc:
         with registry.lock:
             registry.processes.pop(process_id, None)
@@ -373,6 +378,7 @@ def spawn_process(
             )
         }
     proc.pgid = pgid
+    proc.started_at = started_at
     with registry.lock:
         registry.processes[process_id] = proc
     _ensure_watcher(registry, container)
@@ -390,22 +396,56 @@ def spawn_process(
     }
 
 
-def _read_pgid(container, pod_dir: str) -> int | None:
-    """Poll for the process group id file; None when it never appears."""
+def _read_spawn_markers(container, pod_dir: str) -> tuple[int | None, float | None]:
+    """Poll for the launcher's pgid and started_at markers.
+
+    Returns (pgid, started_at); pgid None when it never appears (the
+    launcher never got that far), started_at None when the stamp is
+    missing or unparseable. The launcher writes started_at before it
+    starts `timeout` and pgid right after, so a pgid implies the start
+    stamp on any launcher that has one.
+    """
     pgid_q = shlex.quote(f"{pod_dir}/pgid")
+    stamp_q = shlex.quote(f"{pod_dir}/started_at")
     deadline = time.monotonic() + PGID_WAIT_S
     while time.monotonic() < deadline:
         try:
             out = pod_exec(
                 container,
-                ["bash", "-c", f"cat {pgid_q} 2>/dev/null || true"],
+                [
+                    "bash",
+                    "-c",
+                    f'printf "PGID %s\\n" "$(cat {pgid_q} 2>/dev/null)";'
+                    f' printf "STARTED %s" "$(cat {stamp_q} 2>/dev/null)"',
+                ],
             ).strip()
         except Exception:
-            return None
-        if out.isdigit():
-            return int(out)
+            return None, None
+        pgid_value, stamp_value = "", ""
+        for line in out.splitlines():
+            if line.startswith("PGID "):
+                pgid_value = line[len("PGID ") :].strip()
+            elif line.startswith("STARTED "):
+                stamp_value = line[len("STARTED ") :].strip()
+        if pgid_value.isdigit():
+            return int(pgid_value), _parse_epoch(stamp_value)
         time.sleep(0.1)
-    return None
+    return None, None
+
+
+def _parse_epoch(text: str) -> float | None:
+    """Parse a launcher epoch stamp; None when absent or malformed.
+
+    Stamps are written with `date +%s.%N`; a `date` without %N support
+    appends a literal N, which fails the float parse and falls back to
+    the host-clock measurement instead of poisoning the runtime.
+    """
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
 
 
 def _ensure_watcher(registry: PodRegistry, container) -> None:
@@ -606,10 +646,15 @@ def process_completion_notice(proc: ProcessRecord) -> str:
 def _ended_runtime_s(record) -> float:
     """Seconds a finished piece of work actually ran.
 
-    Prefers the recorded end time; a record whose end was never marked
-    (finalize lagged behind a report path) falls back to now, which is
-    the old at-report measurement and still better than nothing.
+    Prefers the launcher's own pod-clock stamps (start and end), which
+    are immune to host/pod clock skew and to the spawn dispatch latency
+    baked into the host-side `started`. A record missing either stamp
+    falls back: the recorded end time against the host start when the
+    end is known, else now, which is the old at-report measurement and
+    still better than nothing.
     """
+    if record.started_at is not None and record.finished_at is not None:
+        return record.finished_at - record.started_at
     end = record.finished_at if record.finished_at is not None else time.time()
     return end - record.started
 
@@ -661,8 +706,9 @@ def _tail_script(pod_dir: str) -> str:
     cannot be fooled by the process's own output. Byte counts bound the
     transfer (4 bytes per character covers any UTF-8); the character
     truncation to the configured tail size happens host-side. The
-    launcher's `finished_at` stamp (epoch seconds) rides along so a
-    late report can quote the true end time.
+    launcher's `finished_at` stamp (pod-clock epoch, sub-second where
+    supported) rides along so a late report can quote the true end
+    time.
     """
     dir_q = shlex.quote(pod_dir)
     byte_cap = load_check_tail_chars() * 4

@@ -1059,7 +1059,15 @@ module never imports session machinery, so there is no cycle).
   buffering: redirected output is block-buffered otherwise) with
   output going to `/workspace/processes/{id}/stdout` and `stderr`.
   Spawn polls briefly for the `pgid` file and fails cleanly when it
-  never appears. Exit code 124 means the runtime cap fired; a manual
+  never appears. The launcher also stamps `started_at` (pod clock,
+  right before `timeout` begins) alongside `pgid`, and stamps
+  `finished_at` when `timeout` returns; both stamps are pod-clock
+  epoch seconds with sub-second precision where `date` supports `%N`,
+  so ended runtimes (`finished_at - started_at`) are immune to
+  host/pod clock skew and to the spawn dispatch latency baked into
+  the host-side `started` field. A stamp a pod's `date` cannot write
+  with sub-second precision parses as None and reports fall back to
+  the host clock. Exit code 124 means the runtime cap fired; a manual
   kill of the group reports 128+signal through the same file. No
   host-side reaper: processes die with the pod. A spawn's
   `max_runtime_s` argument overrides the configured cap for that one
@@ -1106,12 +1114,31 @@ module never imports session machinery, so there is no cycle).
   time is the launcher's own pod-side stamp, adopted by finalize and
   every report path, so a watcher poll delayed by a long-running
   `execute_command` on the same pod still reports the true runtime.
+  When the launcher's `started_at` stamp is also present, the runtime
+  is `finished_at - started_at`, both pod-clock, rather than a
+  pod-to-host clock mix (a 5s cap was once reported as "after 4s"
+  that way). Reports for still-running work keep the host clock,
+  which is self-consistent.
   All pod calls serialize over bollard's single HTTP connection, so a
   notice can still lag behind a long-running `execute_command`; a late
   notice is a correct one. A failed probe is retried: only consecutive
   failures declare the pod gone, so one transient error under load
   cannot silence notices for the rest of the session (observed live
   before the retry existed).
+  `wait_for` waits on the record's real state, not on "settled": for
+  a subagent whose stop was already requested it keeps waiting until
+  the record leaves `running` (the stop lands at the subagent's next
+  pause), because a requested stop is not an outcome — the old
+  behavior returned the mid-state check output instantly and pushed
+  the model into a blocking `execute_command sleep` workaround
+  (observed live). At the deadline on such a record the tool reports
+  "still stopping" and repeats that a notice arrives when it has
+  fully stopped. A wait whose first probe already reads ended says
+  precisely when the work finished — "already finished when this
+  wait started", or "finished Ns after your previous wait ended"
+  (each record remembers `last_wait_ended_at` from the wait that
+  timed out) — instead of the misleading "finished during this wait"
+  the old text used for both cases.
 
 ### `src/syna/capabilities/subagents.py`
 

@@ -97,7 +97,6 @@ from .subagents import (
     check_subagent,
     kill_subagent,
     spawn_subagent,
-    subagent_is_settled,
 )
 from .verification import run_verification as v_run_verification
 from .vision import describe_image as v_describe_image
@@ -835,7 +834,7 @@ def subagent(action: str, args: dict):
 
 def wait_for(name: str, max_wait_s: int | None = None):
     """
-    Sleep until the named process or subagent finishes. If you can, you should keep working while a process or a subagent runs; you will be notified with a message when work you spawned finishes. Only call this tool if you have nothing to do until the named process or subagent finishes.
+    Sleep until the named process or subagent finishes. If you can, you should keep working while a process or a subagent runs; you will be notified with a message when work you spawned finishes. Only call this tool if you have nothing to do until the named process or subagent finishes. The wait lasts until the work actually ends: for a subagent whose stop was already requested, that means until it has fully stopped.
     - `name` (string, required): the process or subagent name.
     - `max_wait_s` (integer, optional): seconds to wait at most; default 120.
     """
@@ -857,23 +856,33 @@ def wait_for(name: str, max_wait_s: int | None = None):
         return "ERROR: " + unknown_id_error(name)
     kind, record = entry
     deadline = time.monotonic() + budget
+    waited = False
     while True:
         entry = registry.lookup(name)
         if entry is None:
             set_last_exit_code(1)
             return "ERROR: " + unknown_id_error(name)
         kind, record = entry
-        if kind == "process":
-            if record.state != "running":
-                return _finished_process_wait(record, container)
-        else:
-            if subagent_is_settled(record):
-                return check_subagent(record.id, registry, container)
+        if record.state != "running":
+            if kind == "process":
+                return _finished_process_wait(record, container, waited)
+            return check_subagent(record.id, registry, container)
         cancel_event = get_cancel_event()
         if cancel_event is not None and cancel_event.is_set():
             raise ToolCancelled()
         if time.monotonic() >= deadline:
+            record.last_wait_ended_at = time.time()
             runtime = time.time() - record.started
+            if kind != "process" and record.kill_requested.is_set():
+                return (
+                    f"'{name}' is still stopping after waiting"
+                    f" {budget:.0f}s (total runtime {runtime:.0f}s). A"
+                    " stop was already requested; it takes effect at the"
+                    " subagent's next pause, and a notice arrives here"
+                    " when it has fully stopped. You can wait again,"
+                    " check its current transcript (subagent check), or"
+                    " do other work meanwhile."
+                )
             return (
                 f"'{name}' is still running after waiting {budget:.0f}s"
                 f" (total runtime {runtime:.0f}s). It keeps running and a"
@@ -883,16 +892,20 @@ def wait_for(name: str, max_wait_s: int | None = None):
                 " meanwhile."
             )
         time.sleep(WAIT_FOR_POLL_INTERVAL_S)
+        waited = True
 
 
-def _finished_process_wait(proc, container) -> str:
+def _finished_process_wait(proc, container, waited: bool) -> str:
     """The wait_for result when the waited process has ended.
 
     Marks the record collected first: the completion watcher must not
     fire the wake notice for an outcome wait_for just reported itself.
     A probe that still reads running (a kill was recorded but the exit
     marker has not landed) collects nothing and promises the notice, so
-    the real exit code still reaches the model.
+    the real exit code still reaches the model. `waited` distinguishes
+    a genuine wake (the process ended while this call slept) from a
+    process that had already ended before the call, so the timing
+    sentence tells the model the truth about when it finished.
     """
     try:
         state, stdout, stderr, ended = check_process_state(container, proc.dir)
@@ -908,8 +921,31 @@ def _finished_process_wait(proc, container) -> str:
     proc.outcome_collected = True
     return (
         format_process_report(proc, state, stdout, stderr)
-        + "\nIt finished during this wait."
+        + "\n"
+        + _wait_outcome_timing(proc, waited)
     )
+
+
+def _wait_outcome_timing(proc, waited: bool) -> str:
+    """The wait_for timing sentence for an already-ended process.
+
+    A first probe that already reads ended means the process finished
+    before this call: either while the model was working since its
+    previous wait timed out, or long before. The launcher's end stamp
+    against the previous wait's end distinguishes the two.
+    """
+    if waited:
+        return "It finished during this wait."
+    if (
+        proc.last_wait_ended_at is not None
+        and proc.finished_at is not None
+        and proc.finished_at > proc.last_wait_ended_at
+    ):
+        gap = proc.finished_at - proc.last_wait_ended_at
+        if gap < 1:
+            return "It finished moments after your previous wait ended."
+        return f"It finished {gap:.0f}s after your previous wait ended."
+    return "It was already finished when this wait started."
 
 
 def _discard_browser_session(reason: str) -> None:

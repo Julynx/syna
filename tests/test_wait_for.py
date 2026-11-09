@@ -62,7 +62,7 @@ def test_returns_immediately_on_finished_process(monkeypatch):
     result = tools.wait_for(name="done")
     assert "finished with exit code 0" in result
     assert "out text" in result and "err text" in result
-    assert "It finished during this wait" in result
+    assert "already finished when this wait started" in result, result
 
 
 def test_returns_immediately_on_settled_subagent(monkeypatch):
@@ -78,6 +78,52 @@ def test_returns_immediately_on_settled_subagent(monkeypatch):
     result = tools.wait_for(name="sa")
     assert "finished with a response" in result
     assert "the answer" in result
+
+
+def test_wait_timing_reports_the_gap_after_a_previous_wait(monkeypatch):
+    """A process that finished between waits says so, precisely.
+
+    The live log caught the old wording: proc5-long finished 9s after a
+    10s wait timed out, and the next wait_for (which returned in under
+    a second) still claimed it "finished during this wait".
+    """
+    registry = fresh_registry()
+    proc = ProcessRecord(id="gap", command="x", dir="/d")
+    proc.state = "exited"
+    proc.exit_code = 0
+    proc.finished_at = 1100.0
+    proc.last_wait_ended_at = 1091.0
+    registry.processes["gap"] = proc
+    make_tools_isolated(monkeypatch, registry)
+    monkeypatch.setattr(
+        tools,
+        "check_process_state",
+        lambda c, d: ("exited:0", "", "", 1100.0),
+    )
+    result = tools.wait_for(name="gap")
+    assert "finished 9s after your previous wait ended" in result, result
+
+
+def test_wait_timing_keeps_the_wake_sentence_for_a_genuine_wait(monkeypatch):
+    """A process that ends while the call sleeps reads as a wake."""
+    registry = fresh_registry()
+    proc = ProcessRecord(id="wake", command="x", dir="/d")
+    registry.processes["wake"] = proc
+    make_tools_isolated(monkeypatch, registry)
+    monkeypatch.setattr(processes, "WAIT_FOR_POLL_INTERVAL_S", 0.0)
+    monkeypatch.setattr(
+        tools,
+        "check_process_state",
+        lambda c, d: ("exited:0", "", "", None),
+    )
+
+    def fake_sleep(seconds):
+        proc.state = "exited"
+        proc.exit_code = 0
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+    result = tools.wait_for(name="wake")
+    assert "It finished during this wait." in result, result
 
 
 def test_wait_for_collection_suppresses_the_process_notice(monkeypatch):
@@ -206,10 +252,18 @@ def test_deadline_budget_is_the_tools_own(monkeypatch):
     assert parse.call_deadline_s("think", 60.0, {}) == 60.0
 
 
-def test_subagent_kill_request_ends_the_wait(monkeypatch):
+def test_wait_for_keeps_waiting_after_a_kill_request(monkeypatch):
+    """A requested stop does not end the wait; the stop landing does.
+
+    The live log caught this: after `subagent kill`, wait_for returned
+    the mid-state check output instantly, three times, until the model
+    fell back to a blocking `execute_command sleep 45` workaround.
+    The wait must last until the record actually leaves running.
+    """
     registry = fresh_registry()
     record = SubagentRecord(id="sa", goal="g", level=2)
     record.dump_host_path = None
+    record.kill_requested.set()
     registry.subagents["sa"] = record
     make_tools_isolated(monkeypatch, registry)
     monkeypatch.setattr(processes, "WAIT_FOR_POLL_INTERVAL_S", 0.0)
@@ -221,17 +275,47 @@ def test_subagent_kill_request_ends_the_wait(monkeypatch):
 
     def fake_sleep(seconds):
         clock[0] += max(seconds, 1.0)
-        record.kill_requested.set()
+        if clock[0] >= 5.0:
+            record.state = "killed"
+            record.stopped_by = "model"
 
     monkeypatch.setattr(time, "monotonic", fake_monotonic)
     monkeypatch.setattr(time, "sleep", fake_sleep)
     monkeypatch.setattr(tools, "time", time)
 
-    result = tools.wait_for(name="sa")
-    # A kill leaves it still "running" until the runner confirms; the
-    # wait sees the request and reports through check, which shows the
-    # stop is pending (state running, kill requested -> settled).
-    assert result
+    result = tools.wait_for(name="sa", max_wait_s=60)
+    assert "stopped by the model" in result, result
+    assert clock[0] >= 5.0, "the wait must not end before the stop lands"
+
+
+def test_wait_for_deadline_on_a_killed_running_subagent_reports_stopping(
+    monkeypatch,
+):
+    """At the deadline, a stop-requested subagent reads as stopping."""
+    registry = fresh_registry()
+    record = SubagentRecord(id="sa", goal="g", level=2)
+    record.dump_host_path = None
+    record.kill_requested.set()
+    registry.subagents["sa"] = record
+    make_tools_isolated(monkeypatch, registry)
+    monkeypatch.setattr(processes, "WAIT_FOR_POLL_INTERVAL_S", 0.0)
+
+    clock = [0.0]
+
+    def fake_monotonic():
+        return clock[0]
+
+    def fake_sleep(seconds):
+        clock[0] += max(seconds, 1.0)
+
+    monkeypatch.setattr(time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+    monkeypatch.setattr(tools, "time", time)
+
+    result = tools.wait_for(name="sa", max_wait_s=30)
+    assert "still stopping" in result, result
+    assert "next pause" in result and "fully stopped" in result
+    assert record.last_wait_ended_at is not None
 
 
 def test_max_wait_s_validation(monkeypatch):
@@ -248,11 +332,14 @@ def main():
         [
             test_unknown_id_is_an_error_with_recovery_path,
             test_returns_immediately_on_finished_process,
+            test_wait_timing_reports_the_gap_after_a_previous_wait,
+            test_wait_timing_keeps_the_wake_sentence_for_a_genuine_wait,
             test_returns_immediately_on_settled_subagent,
             test_polls_until_the_process_finishes,
             test_timeout_returns_still_running_not_an_error,
             test_deadline_budget_is_the_tools_own,
-            test_subagent_kill_request_ends_the_wait,
+            test_wait_for_keeps_waiting_after_a_kill_request,
+            test_wait_for_deadline_on_a_killed_running_subagent_reports_stopping,
             test_wait_for_killed_process_with_pending_exit_keeps_the_notice,
             test_max_wait_s_validation,
         ]
