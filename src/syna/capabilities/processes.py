@@ -805,6 +805,11 @@ def format_process_report(
                 f"Process '{proc.id}': finished; the runtime cap killed"
                 f" it (exit code {CAP_EXIT_CODE}) after {runtime:.0f}s."
             )
+        elif proc.killed_by == "model":
+            header = (
+                f"Process '{proc.id}': stopped by you (exit code"
+                f" {code}) after {runtime:.0f}s."
+            )
         elif proc.killed_by == "user":
             header = (
                 f"Process '{proc.id}': stopped by the user (exit code"
@@ -837,19 +842,18 @@ def kill_process(
     after a grace, both pod-side), never destroys artifacts. The kill
     then blocks — bounded, because the pod-side SIGKILL follow-up
     guarantees the end — until the exit lands, so the response carries
-    the final exit code and no follow-up notice is needed. Only a
-    response that really delivered the outcome suppresses the notice:
-    a model kill marks the record collected then; a user kill leaves
-    the flags alone so the completion notice still tells the model the
-    work was stopped. The pathological timeout path (a process
-    surviving SIGKILL, e.g. stuck in uninterruptible sleep) also
-    leaves the flags alone and promises the notice. The whole
-    operation, state mutation through the bounded wait and report,
-    holds the registry lock, so it cannot interleave with the
-    completion watcher's finalize pass (the lock never waits on
-    anything that would take it again; the pod call lock is strictly
-    inner). The exit marker lands when the launcher notices `timeout`
-    exit, usually within moments.
+    the final exit code and no follow-up notice is needed. The wait
+    polls without holding the registry lock (the same pattern as
+    wait_for): one registry serves every background worker on the pod,
+    and a lock held across the bounded wait would stall their spawns,
+    checks, and finalize passes. Only a response that really delivered
+    the outcome suppresses the notice: a model kill marks the record
+    collected then; a user kill leaves the flags alone so the
+    completion notice still tells the model the work was stopped. The
+    pathological timeout path (a process surviving SIGKILL, e.g.
+    stuck in uninterruptible sleep) also leaves the flags alone and
+    promises the notice. Record mutations take the lock again; the
+    pod call lock is strictly inner.
     """
     if container is None:
         container = get_container()
@@ -860,53 +864,61 @@ def kill_process(
         if proc is None:
             return "ERROR: " + unknown_id_error(process_id)
         if proc.state != "running":
-            state, stdout, stderr, ended = check_process_state(container, proc.dir)
-            if state != "running":
+            settled = True
+        else:
+            settled = False
+            proc.state = "killed"
+            proc.killed_by = by
+    if settled:
+        state, stdout, stderr, ended = check_process_state(container, proc.dir)
+        if state != "running":
+            with registry.lock:
                 adopt_end_time(proc, state, ended)
                 proc.outcome_collected = True
-            return (
-                format_process_report(proc, state, stdout, stderr)
-                + " It had already finished before this kill call."
-            )
-        proc.state = "killed"
-        proc.killed_by = by
-        dir_q = shlex.quote(proc.dir)
-        script = "\n".join(
-            [
-                f"dir={dir_q}",
-                'pgid=$(cat "$dir/pgid" 2>/dev/null || true)',
-                'code=$(cat "$dir/exit_code" 2>/dev/null || true)',
-                'if [ -z "$code" ] && [ -n "$pgid" ]; then',
-                '  kill -- -"$pgid" 2>/dev/null || true',
-                '  (sleep 2; kill -9 -- -"$pgid" 2>/dev/null || true) &',
-                "fi",
-            ]
-        )
-        try:
-            pod_exec(container, ["bash", "-c", script])
-        except Exception as exc:
-            get_logger().warning("Kill signal for '%s' failed: %s", process_id, exc)
-            return (
-                f"ERROR: the kill signal for process '{process_id}' failed:"
-                f" {exc}. It may already be gone with the pod; check with"
-                " process check."
-            )
-        get_logger().info("Process '%s' killed by %s.", process_id, by)
-        deadline = time.monotonic() + KILL_WAIT_S
-        state, stdout, stderr, ended = check_process_state(container, proc.dir)
-        while state == "running" and time.monotonic() < deadline:
-            cancel_event = get_cancel_event()
-            if cancel_event is not None and cancel_event.is_set():
-                raise ToolCancelled()
-            time.sleep(KILL_POLL_INTERVAL_S)
-            state, stdout, stderr, ended = check_process_state(container, proc.dir)
-        if state != "running":
-            adopt_end_time(proc, state, ended)
-            if by == "model":
-                proc.outcome_collected = True
-            return format_process_report(proc, state, stdout, stderr)
         return (
             format_process_report(proc, state, stdout, stderr)
-            + " The process is still terminating; its exit code lands in"
-            " the record when it ends, and a notice arrives here then."
+            + " It had already finished before this kill call."
         )
+    dir_q = shlex.quote(proc.dir)
+    script = "\n".join(
+        [
+            f"dir={dir_q}",
+            'pgid=$(cat "$dir/pgid" 2>/dev/null || true)',
+            'code=$(cat "$dir/exit_code" 2>/dev/null || true)',
+            'if [ -z "$code" ] && [ -n "$pgid" ]; then',
+            '  kill -- -"$pgid" 2>/dev/null || true',
+            '  (sleep 2; kill -9 -- -"$pgid" 2>/dev/null || true) &',
+            "fi",
+        ]
+    )
+    try:
+        pod_exec(container, ["bash", "-c", script])
+    except Exception as exc:
+        get_logger().warning("Kill signal for '%s' failed: %s", process_id, exc)
+        return (
+            f"ERROR: the kill signal for process '{process_id}' failed:"
+            f" {exc}. It may already be gone with the pod; check with"
+            " process check."
+        )
+    get_logger().info("Process '%s' killed by %s.", process_id, by)
+    deadline = time.monotonic() + KILL_WAIT_S
+    state, stdout, stderr, ended = check_process_state(container, proc.dir)
+    while state == "running" and time.monotonic() < deadline:
+        cancel_event = get_cancel_event()
+        if cancel_event is not None and cancel_event.is_set():
+            raise ToolCancelled()
+        time.sleep(KILL_POLL_INTERVAL_S)
+        state, stdout, stderr, ended = check_process_state(container, proc.dir)
+    with registry.lock:
+        if state != "running":
+            adopt_end_time(proc, state, ended)
+            proc.exit_code = int(state.split(":", 1)[1]) if ":" in state else None
+            if by == "model":
+                proc.outcome_collected = True
+    if state != "running":
+        return format_process_report(proc, state, stdout, stderr)
+    return (
+        format_process_report(proc, state, stdout, stderr)
+        + " The process is still terminating; its exit code lands in"
+        " the record when it ends, and a notice arrives here then."
+    )

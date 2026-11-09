@@ -1,6 +1,7 @@
 """Unit tests for the background process capability."""
 
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -334,7 +335,7 @@ def test_kill_blocks_until_the_exit_lands(monkeypatch):
     monkeypatch.setattr(processes, "KILL_POLL_INTERVAL_S", 0.01)
 
     report = kill_process("pk", registry=registry, container=container, by="model")
-    assert "exit code 143" in report
+    assert "stopped by you (exit code 143)" in report
     assert "still terminating" not in report
     assert proc.outcome_collected, "the response delivered the outcome"
     processes._finalize_process(registry, proc, "143")
@@ -345,13 +346,57 @@ def test_kill_blocks_until_the_exit_lands(monkeypatch):
     registry.processes["pu"] = proc2
     probes[0] = 0
     report = kill_process("pu", registry=registry, container=container, by="user")
-    assert "exit code 143" in report
+    assert "stopped by the user (exit code 143)" in report
     assert not proc2.outcome_collected, (
         "the model did not see this response; the notice must tell it"
     )
     processes._finalize_process(registry, proc2, "143")
     assert len(seen) == 1
     assert "stopped by the user" in seen[0]["model_notice"]
+    assert proc2.exit_code == 143, "the kill response's code lands in the record"
+
+
+def test_kill_blocked_wait_does_not_stall_the_registry(monkeypatch):
+    """The bounded kill wait must not hold the registry lock.
+
+    One registry serves every background worker on the pod; a lock
+    held across the wait would stall their spawns, checks, and
+    finalize passes for up to the whole wait. The wait therefore polls
+    unlocked, and a concurrent lookup completes while it runs.
+    """
+    registry = fresh_registry()
+    proc = ProcessRecord(id="ps", command="x", dir="/workspace/processes/ps")
+    proc.pgid = 9
+    registry.processes["ps"] = proc
+    container = FakeContainer()
+
+    def slow_probe(c, d):
+        time.sleep(0.05)
+        return ("running", "", "", None)
+
+    monkeypatch.setattr(processes, "check_process_state", slow_probe)
+    monkeypatch.setattr(processes, "KILL_WAIT_S", 0.4)
+    monkeypatch.setattr(processes, "KILL_POLL_INTERVAL_S", 0.05)
+
+    def blocker():
+        kill_process("ps", registry=registry, container=container, by="model")
+
+    thread = threading.Thread(target=blocker)
+    thread.start()
+    time.sleep(0.1)
+    lookup_done = threading.Event()
+    lookup_ok = []
+
+    def concurrent_lookup():
+        entry = registry.lookup("ps")
+        lookup_ok.append(entry is not None)
+        lookup_done.set()
+
+    watcher = threading.Thread(target=concurrent_lookup)
+    watcher.start()
+    lookup_done.wait(2.0)
+    thread.join(5.0)
+    assert lookup_ok and lookup_ok[0], "a lookup starved behind the kill's wait"
 
 
 def test_kill_on_finished_process_reports_snapshot(monkeypatch):
@@ -683,6 +728,7 @@ def main():
             test_spawn_markers_parse_pgid_and_started_stamp,
             test_spawn_markers_survive_a_date_without_nanoseconds,
             test_stamp_parsing_rejects_non_finite_values,
+            test_kill_blocked_wait_does_not_stall_the_registry,
             test_ended_runtime_prefers_the_pod_clock_stamps,
             test_watcher_notices_exit_and_keeps_looping,
             test_watcher_stops_when_the_pod_dies,
