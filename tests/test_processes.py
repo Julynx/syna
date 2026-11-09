@@ -21,6 +21,7 @@ from syna.capabilities.processes import (
     spawn_process,
     unknown_id_error,
 )
+from syna.capabilities.subagents import SubagentRecord
 
 
 class FakeContainer:
@@ -123,6 +124,31 @@ def test_spawn_failure_releases_the_id(monkeypatch):
     assert "could not start" in result["error"]
     assert "doomed" not in registry.taken_ids
     assert "doomed" not in registry.processes
+
+
+def test_spawn_stamps_the_parent_record(monkeypatch):
+    """Work spawned inside a subagent's turn records the spawner's name."""
+    from syna.state import get_background_record, set_background_record
+
+    registry = fresh_registry()
+    monkeypatch.setattr(processes, "_ensure_watcher", lambda r, c: None)
+    set_background_record(None)
+    top = spawn_process(
+        "x", name="top", registry=registry, container=FakeContainer({"pgid": "1"})
+    )
+    assert registry.processes[top["name"]].parent_id is None
+    set_background_record(SubagentRecord(id="par", goal="g", level=2))
+    try:
+        nested = spawn_process(
+            "x",
+            name="nested",
+            registry=registry,
+            container=FakeContainer({"pgid": "2"}),
+        )
+        assert registry.processes[nested["name"]].parent_id == "par"
+    finally:
+        set_background_record(None)
+    assert get_background_record() is None
 
 
 def test_reports_use_the_record_runtime_cap(monkeypatch):
@@ -253,6 +279,18 @@ def test_finalize_fires_one_completion_notice():
     assert payload["kind"] == "process" and payload["id"] == "p9"
     assert "runtime cap" in payload["model_notice"]
     assert "runtime cap" in payload["summary"]
+
+
+def test_completion_payload_carries_the_parent_id():
+    registry = fresh_registry()
+    seen = []
+    registry.completion_sink = lambda payload: seen.append(payload)
+    proc = ProcessRecord(id="p9", command="x", dir="/d", parent_id="par")
+    registry.processes["p9"] = proc
+    processes._finalize_process(registry, proc, "0")
+    assert len(seen) == 1
+    assert seen[0]["parent_id"] == "par"
+    assert seen[0]["id"] == "p9"
 
 
 def test_wait_for_collection_suppresses_the_notice():
@@ -421,12 +459,14 @@ def main():
             test_auto_ids_skip_taken_and_count_per_kind,
             test_spawn_registers_and_starts_watcher,
             test_spawn_failure_releases_the_id,
+            test_spawn_stamps_the_parent_record,
             test_check_reports_state_and_tails,
             test_tail_script_caps_bytes_and_frames_base64,
             test_kill_signals_the_group_and_keeps_artifacts,
             test_kill_on_finished_process_reports_snapshot,
             test_unknown_id_error_explains_recovery,
             test_finalize_fires_one_completion_notice,
+            test_completion_payload_carries_the_parent_id,
             test_completion_notice_text_carries_paths,
             test_watcher_notices_exit_and_keeps_looping,
             test_watcher_stops_when_the_pod_dies,

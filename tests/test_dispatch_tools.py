@@ -3,8 +3,9 @@
 The dispatch tools (`process`, `subagent`) take an `action` plus an
 `args` object. These tests cover the tool-body layer: action routing,
 spawn argument pass-through (name, max_runtime_s), validation errors,
-and the model-facing tool schema, which must declare `action` as the
-required entry point and describe max_runtime_s.
+the model-facing tool schema, which must declare `action` as the
+required entry point and describe max_runtime_s, and the dispatch
+worker's propagation of the spawning subagent's record.
 """
 
 import sys
@@ -15,7 +16,67 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from _runner import run_suite
 
 from syna.capabilities import tools
+from syna.capabilities.subagents import SubagentRecord
+from syna.protocol import parse
 from syna.protocol.tool_schemas import get_tool_definitions
+from syna.state import get_background_record, set_background_record
+
+
+def test_dispatch_propagates_the_parent_record(monkeypatch):
+    """A tool call dispatched inside a subagent's turn sees that record."""
+    record = SubagentRecord(id="par", goal="g", level=2)
+    seen = {}
+
+    def probe():
+        seen["record"] = get_background_record()
+        return "probed"
+
+    monkeypatch.setitem(tools.TOOL_REGISTRY, "background_probe", probe)
+    set_background_record(record)
+    try:
+        outcome = parse.parse_and_execute_tools(
+            [
+                {
+                    "id": "call_probe",
+                    "type": "function",
+                    "function": {"name": "background_probe", "arguments": "{}"},
+                }
+            ],
+            on_tool_event=None,
+            tool_timeout_s=5,
+        )
+    finally:
+        set_background_record(None)
+    assert seen["record"] is record, "the dispatch worker lost the parent"
+    assert get_background_record() is None
+    assert outcome.outputs and outcome.outputs[0]["output"] == "probed"
+
+
+def test_dispatch_clears_the_parent_record_after_the_call():
+    set_background_record(None)
+    seen = {}
+
+    def probe():
+        seen["record"] = get_background_record()
+        return "probed"
+
+    tools.TOOL_REGISTRY["background_probe"] = probe
+    try:
+        parse.parse_and_execute_tools(
+            [
+                {
+                    "id": "call_probe",
+                    "type": "function",
+                    "function": {"name": "background_probe", "arguments": "{}"},
+                }
+            ],
+            on_tool_event=None,
+            tool_timeout_s=5,
+        )
+    finally:
+        tools.TOOL_REGISTRY.pop("background_probe", None)
+    assert seen["record"] is None, "top-level dispatch has no parent"
+    assert get_background_record() is None
 
 
 def _captured(monkeypatch, target_name, return_value):
@@ -128,6 +189,8 @@ def main():
             test_subagent_rejects_invalid_runtime_caps,
             test_unknown_action_errors_name_the_action,
             test_tool_schemas_declare_action_and_document_the_cap,
+            test_dispatch_propagates_the_parent_record,
+            test_dispatch_clears_the_parent_record_after_the_call,
         ]
     )
 

@@ -1512,6 +1512,15 @@ body.dragging #drop-overlay {
   border-color: var(--danger-line);
   background: var(--danger-tint);
 }
+.bg-msg.notice {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px dashed var(--border);
+}
 
 @media (prefers-reduced-motion: reduce) {
   .bg-modal-backdrop,
@@ -5393,6 +5402,9 @@ function appendBgEntry(entry) {
     }
   } else if (entry.kind === "error") {
     el.className = "bg-msg error";
+    el.textContent = entry.text || "";
+  } else if (entry.kind === "notice") {
+    el.className = "bg-msg notice";
     el.textContent = entry.text || "";
   } else {
     return;

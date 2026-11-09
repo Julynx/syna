@@ -333,12 +333,14 @@ class AgentSession:
         persist_outputs: bool = False,
         session_id: str | None = None,
         excluded_tools: tuple[str, ...] = (),
+        injection_filter=None,
     ):
         self.on_event = on_event or (lambda event: None)
         self.request_delay = request_delay
         self._base_request_delay = request_delay
         self.emit_tool_errors = emit_tool_errors
         self.persist_outputs = persist_outputs
+        self.injection_filter = injection_filter
         self._turn_shared_files: list[str] = []
         self.max_history_messages = load_config().get(
             "max_history_messages", DEFAULT_MAX_HISTORY_MESSAGES
@@ -471,10 +473,21 @@ class AgentSession:
         message always reaches the model before anything else is sent.
         Each message goes through the same large-message archiving as a
         turn-starting one, and the user_message event lets the client
-        turn its queue pill into a chat bubble. Returns how many landed.
+        turn its queue pill into a chat bubble. An `injection_filter`
+        (subagent sessions get one) drops items it rejects at this last
+        moment: an injected notice may have lost the race to the
+        session's own wait_for while it sat queued. Returns how many
+        landed.
         """
         injected = 0
         for item in self.take_injections():
+            if self.injection_filter is not None and not self.injection_filter(item):
+                get_logger().info(
+                    "Dropping the injected notice for '%s': the outcome"
+                    " was already collected.",
+                    item.get("bg_id"),
+                )
+                continue
             content = str(item.get("content", "")).strip()
             if not content:
                 continue

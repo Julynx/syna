@@ -39,6 +39,7 @@ from ..state import (
     ToolCancelled,
     get_background_allegro,
     get_background_level,
+    get_background_record,
     get_container,
     get_registered_container,
     next_call_index,
@@ -46,6 +47,7 @@ from ..state import (
     register_container,
     set_background_allegro,
     set_background_level,
+    set_background_record,
     set_call_output_path,
     set_cancel_event,
     set_last_exit_code,
@@ -348,6 +350,7 @@ def execute_tool_with_timeout(
     log_provider = current_conversation_log_provider()
     background_level = get_background_level()
     background_allegro = get_background_allegro()
+    background_record = get_background_record()
     finished = threading.Event()
     cancel_event = threading.Event()
     outcome: dict = {}
@@ -361,6 +364,7 @@ def execute_tool_with_timeout(
             set_conversation_log_provider(log_provider)
         set_background_level(background_level)
         set_background_allegro(background_allegro)
+        set_background_record(background_record)
         set_call_output_path(output_path)
         set_cancel_event(cancel_event)
         try:
@@ -373,6 +377,7 @@ def execute_tool_with_timeout(
             set_cancel_event(None)
             set_background_level(None)
             set_background_allegro(None)
+            set_background_record(None)
             pop_conversation_log_provider()
             unregister_responder()
             if container is not None:

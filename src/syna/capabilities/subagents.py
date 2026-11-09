@@ -38,10 +38,12 @@ from ..config import (
 from ..state import (
     get_background_allegro,
     get_background_level,
+    get_background_record,
     get_container,
     register_container,
     set_background_allegro,
     set_background_level,
+    set_background_record,
     unregister_container,
 )
 from .processes import (
@@ -86,6 +88,7 @@ class SubagentRecord:
     level: int
     started: float = field(default_factory=time.time)
     finished_at: float | None = None
+    parent_id: str | None = None
     runtime_cap_s: int | None = None
     state: str = "running"
     end_reason: str | None = None
@@ -189,11 +192,13 @@ def spawn_subagent(
     subagent_id, error = reserve_id(registry, "subagent", name)
     if error:
         return {"error": error}
+    parent = get_background_record()
     record = SubagentRecord(
         id=subagent_id,
         goal=goal,
         level=level + 1,
         runtime_cap_s=runtime_cap_s,
+        parent_id=parent.id if parent is not None else None,
         allegro=get_background_allegro(),
         dump_host_path=get_session_dump_path(f"subagent-{subagent_id}"),
     )
@@ -229,7 +234,41 @@ def _default_session_factory(record: SubagentRecord, registry: PodRegistry):
         persist_outputs=True,
         session_id=f"subagent-{record.id}",
         excluded_tools=SUBAGENT_EXCLUDED_TOOLS,
+        injection_filter=_injection_filter(registry),
     )
+
+
+def _injection_filter(registry: PodRegistry):
+    """The apply-time drop rule for messages injected into a subagent.
+
+    A completion notice injected at a request boundary may have lost
+    the race to the parent's own wait_for in the meantime; apply time
+    is the last chance to drop it, so the outcome never reaches the
+    model twice. Non-notice messages always pass.
+    """
+
+    def keep(item: dict) -> bool:
+        background_id = item.get("bg_id")
+        if not background_id:
+            return True
+        entry = registry.lookup(background_id)
+        return not (entry is not None and entry[1].outcome_collected)
+
+    return keep
+
+
+def emit_injected_notice(registry: PodRegistry, record: SubagentRecord, text: str):
+    """Show an injected completion notice in the subagent's viewer.
+
+    A small history entry, so the user can see what woke the subagent
+    mid-turn; best-effort, since it is a UI convenience only.
+    """
+    try:
+        _emit_subagent_event(
+            registry, record, {"kind": "notice", "text": _cap(text, 500)}
+        )
+    except Exception:
+        get_logger().exception("Subagent '%s' notice event failed", record.id)
 
 
 def _on_cap_fired(record: SubagentRecord, session):
@@ -249,6 +288,7 @@ def _run_subagent(
     try:
         register_container(container)
         set_background_level(record.level)
+        set_background_record(record)
         set_background_allegro(record.allegro)
         session = session_factory(record, registry)
         record.session = session
@@ -296,6 +336,7 @@ def _run_subagent(
         record.end_reason = "error"
     finally:
         set_background_level(None)
+        set_background_record(None)
         set_background_allegro(None)
         unregister_container()
         if record.state != "running" and record.finished_at is None:
@@ -439,7 +480,7 @@ def _finalize_subagent(registry: PodRegistry, record: SubagentRecord, container)
         fire_completion(
             registry,
             "subagent",
-            record.id,
+            record,
             subagent_status_summary(record),
             subagent_completion_notice(record),
         )

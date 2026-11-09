@@ -760,7 +760,11 @@ the loop, `ask_utils.py` sends the model requests, and
   `ask_question`: `apply_injections()` appends every pending message to
   `self.messages` (through `_prepare_user_message`, so large injected
   messages archive like turn-starting ones) and emits a `user_message`
-  event carrying the message's client id. The batch is never broken and
+  event carrying the message's client id. An optional `injection_filter`
+  (subagent sessions get one) drops items it rejects at this last
+  moment — an injected completion notice may have lost the race to the
+  session's own wait_for while it sat queued. The batch is never broken
+  and
   the turn never interrupted: the model simply cannot make another
   request without the message being in the same one. Injections left
   pending when a turn ends (final response, error, cancellation) are
@@ -1075,18 +1079,26 @@ module never imports session machinery, so there is no cycle).
   the registry is dropped), reads the pod for
   `exit_code` markers and fires the single
   completion notice per process through `fire_completion`: a payload
-  with the id, a one-line UI summary, and the model-facing notice. The
-  server pushes the summary as a `background_done` event and enqueues
-  the notice into the parent worker's inbox, which wakes an idle
-  worker or queues behind an active turn — unless the model already
-  collected the outcome: `wait_for`, `check`, and `kill` all set the
+  with the id, the record's parent id, a one-line UI summary, and the
+  model-facing notice. The server pushes the summary as a
+  `background_done` event and routes the notice by parentage: a
+  top-level spawn's notice is enqueued into the worker's inbox, which
+  wakes an idle worker or queues behind an active turn; a record
+  spawned by a subagent is injected into that subagent's live turn
+  instead (see the server section) — a notice never crosses the
+  parent/child boundary upward. In both routes the notice is dropped
+  when the model already collected the outcome: `wait_for`, `check`,
+  and `kill` all set the
   record's `outcome_collected` flag when their report carries the
   final outcome, finalize skips the notice for it, the server skips
-  enqueueing it, and a notice already queued by then is dropped at
-  dequeue time (`_notice_is_stale`), so work that ends on its own
-  reaches the model exactly once. A check of a *running* process sets
+  delivery, a top-level notice already queued by then is dropped at
+  dequeue time (`_notice_is_stale`), and an injected one is dropped at
+  apply time by the subagent session's `injection_filter`, so work
+  that ends on its own reaches the model exactly once. A check of a
+  *running* process sets
   nothing: a check racing the real end may legitimately produce two
-  messages (one report, one notice). Queued notices also drain as one
+  messages (one report, one notice). Queued top-level notices also
+  drain as one
   batched wake message instead of one turn each (the server's
   `_merge_notice_batch`), and reports quote the runtime measured at
   the record's end time (`finished_at`), not at report time. All pod
@@ -1110,7 +1122,10 @@ close a cycle: tools -> here -> session -> parse -> tools).
   spawning context's nesting level comes from a thread-local set by
   the runner and propagated by `parse.py` onto tool worker threads;
   a spawn is allowed while child level <= `max_subagent_depth`), then
-  the `max_concurrent_subagents` cap, then id reservation. The first
+  the `max_concurrent_subagents` cap, then id reservation. The same
+  thread-local pairing records the spawning subagent's own record, so
+  every record the turn spawns is stamped with `parent_id` — the
+  completion notice's routing key. The first
   user message is a nesting header ("nesting level N of M; you cannot
   ask the user questions") followed by the goal. Tools a background
   worker cannot use are removed from its schemas
@@ -1156,7 +1171,9 @@ close a cycle: tools -> here -> session -> parse -> tools).
   history (a cancelled turn emits no final message), then the same
   single completion notice fires as for processes. A kill by the model
   suppresses the notice; a kill by the user delivers "was stopped by
-  the user".
+  the user". Routing is by parentage: the notice reaches only the
+  spawner (top-level inbox, or an injection into a live parent
+  subagent's turn; dropped when the parent is settled or gone).
 
 ## 8. The browser stack
 
@@ -1430,10 +1447,15 @@ uvicorn.
 Background work surfaces: after the pod starts, the session record
 registers the registry's `event_sink` (subagent streaming as
 non-persistent `subagent_message` events) and `completion_sink` (a
-persistent `background_done` event plus the model-facing notice
+persistent `background_done` event plus the model-facing notice,
+routed by parentage: a record spawned by the top-level agent is
 enqueued into the inbox as a harness notice, waking the idle worker or
-queueing behind an active turn — suppressed entirely when `wait_for`
-already reported the outcome). `GET
+queueing behind an active turn; a record spawned by a subagent is
+injected into that subagent's live turn via `queue_injection` — the
+viewer shows a small muted "notice" entry for it — and is dropped,
+never re-routed upward, when the parent is settled or gone; both
+routes are suppressed entirely when a report already collected the
+outcome). `GET
 /api/background/{client_id}/process/{id}/output?stdout_offset=&stderr_offset=`
 returns incremental base64 chunks plus sizes, state, and `killed_by`
 for the process viewer (tail runs before the size probe, so no chunk is

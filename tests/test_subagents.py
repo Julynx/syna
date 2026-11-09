@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from _runner import run_suite
 
 from syna.capabilities import processes, subagents
-from syna.capabilities.processes import PodRegistry
+from syna.capabilities.processes import PodRegistry, ProcessRecord
 from syna.capabilities.subagents import (
     SUBAGENT_EXCLUDED_TOOLS,
     SubagentRecord,
@@ -20,6 +20,7 @@ from syna.capabilities.subagents import (
     _last_assistant_content,
     _on_subagent_event,
     check_subagent,
+    emit_injected_notice,
     kill_subagent,
     spawn_subagent,
     subagent_completion_notice,
@@ -407,6 +408,69 @@ def test_last_assistant_content_fallback():
     assert _last_assistant_content(session) == "earlier"
 
 
+def test_runner_exposes_its_record_to_spawned_work(monkeypatch):
+    """A subagent's turn runs with itself as the background record."""
+    from syna.state import get_background_record, set_background_record
+
+    registry = fresh_registry()
+    container = FakeContainer()
+    monkeypatch.setattr(subagents, "get_container", lambda: container)
+    monkeypatch.setattr(subagents, "register_container", lambda c: None)
+    monkeypatch.setattr(subagents, "unregister_container", lambda: None)
+    monkeypatch.setattr(subagents, "load_subagent_max_runtime_s", lambda: 60)
+    monkeypatch.setattr(subagents, "load_max_subagent_depth", lambda: 3)
+    set_background_record(None)
+    seen = []
+
+    def factory(record, reg):
+        seen.append(get_background_record())
+        return FakeSession(record)
+
+    result = spawn_subagent(
+        "do the thing", registry=registry, container=container, session_factory=factory
+    )
+    record = registry.subagents[result["name"]]
+    for _ in range(400):
+        if record.state != "running":
+            break
+        time.sleep(0.005)
+    assert seen == [record]
+    assert get_background_record() is None
+
+
+def test_session_factory_supplies_the_injection_filter(monkeypatch):
+    """The real factory wires an apply-time stale filter into the session."""
+    from syna.state import set_background_record
+
+    registry = fresh_registry()
+    record = SubagentRecord(id="sax", goal="g", level=2)
+    record.dump_host_path = None
+    set_background_record(None)
+    try:
+        session = subagents._default_session_factory(record, registry)
+    finally:
+        set_background_record(None)
+    try:
+        assert session.injection_filter is not None
+        child = ProcessRecord(id="child", command="x", dir="/d")
+        registry.processes["child"] = child
+        fresh_notice = {"kind": "message", "bg_id": "child", "content": "n"}
+        assert session.injection_filter(fresh_notice)
+        child.outcome_collected = True
+        assert not session.injection_filter(fresh_notice)
+        assert session.injection_filter({"kind": "message", "content": "hi"})
+    finally:
+        session.close()
+
+
+def test_emit_injected_notice_adds_a_viewer_event():
+    registry = fresh_registry()
+    record = SubagentRecord(id="sn", goal="g", level=2)
+    subagents.emit_injected_notice(registry, record, "Process 'p1' finished.")
+    assert record.events[-1]["kind"] == "notice"
+    assert "finished" in record.events[-1]["text"]
+
+
 def test_check_reports_paths_and_state(monkeypatch):
     registry = fresh_registry()
     record = SubagentRecord(id="sc", goal="the goal", level=2)
@@ -502,6 +566,9 @@ def main():
             test_last_assistant_content_fallback,
             test_check_reports_paths_and_state,
             test_check_of_finished_subagent_collects_the_outcome,
+            test_runner_exposes_its_record_to_spawned_work,
+            test_session_factory_supplies_the_injection_filter,
+            test_emit_injected_notice_adds_a_viewer_event,
             test_allegro_is_inherited,
         ]
     )

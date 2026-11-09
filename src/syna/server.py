@@ -286,14 +286,19 @@ class SessionRecord:
     def _on_background_completion(self, notice: dict):
         """Announce finished background work and wake the worker.
 
-        The done event is persistent (a compact row the client keeps);
-        the model-facing notice travels through the same inbox user
-        messages take, so it wakes an idle worker or queues behind an
-        active turn as a harness notice. When wait_for already returned
-        the final report, the notice is suppressed instead: work that
-        ends on its own must reach the model exactly once. The queued
-        item keeps the background identity so the worker can drop it at
-        dequeue time if wait_for collected the outcome in between.
+        The done event is persistent (a compact row the client keeps)
+        and always fires: the panel is a chat-level view of every
+        spawn. The model-facing notice goes only to the spawner: a
+        nested subagent receives it as an injection into its live
+        turn, and a top-level spawn's notice travels through the same
+        inbox user messages take, waking an idle worker or queueing
+        behind an active turn as a harness notice. A notice whose
+        parent is settled or gone is dropped, never re-routed to the
+        top level. When a report already returned the final outcome,
+        the notice is suppressed instead: work that ends on its own
+        must reach the model exactly once. The queued item keeps the
+        background identity so the worker can drop it at dequeue time
+        if the outcome is collected in between.
         """
         self.push(
             {
@@ -308,7 +313,11 @@ class SessionRecord:
             return
         kind = notice.get("kind")
         background_id = notice.get("id")
+        parent_id = notice.get("parent_id")
         if kind and background_id and self._wait_for_collected(kind, background_id):
+            return
+        if kind and background_id and parent_id:
+            self._deliver_to_parent(parent_id, kind, background_id, model_notice)
             return
         self.enqueue_message(
             {
@@ -319,6 +328,61 @@ class SessionRecord:
                 "content": wrap_channel("HARNESS_NOTICE", harness_notice(model_notice)),
             }
         )
+
+    def _deliver_to_parent(
+        self, parent_id: str, kind: str, background_id: str, model_notice: str
+    ) -> bool:
+        """Inject a completion notice into the spawning subagent's turn.
+
+        Returns whether it was delivered. Only a live, unsettled
+        subagent parent takes the notice: the registry lookup covers
+        unknown parents, `subagent_is_settled` covers killed and
+        cap-stopped ones, and a missing session means the turn is
+        already over. A dropped notice is logged, never re-routed to
+        the top level — the panel still lists the completion, and the
+        artifacts stay in the pod. Parentless work (spawned by the
+        top-level agent) never enters here; the caller enqueues its
+        notice directly.
+        """
+        registry = (
+            processes.peek_registry(self.container)
+            if self.container is not None
+            else None
+        )
+        entry = registry.lookup(parent_id) if registry is not None else None
+        if entry is None:
+            logger.info(
+                "Dropping the completion notice for '%s': its parent"
+                " '%s' is not registered.",
+                background_id,
+                parent_id,
+            )
+            return False
+        parent_kind, parent = entry
+        session = parent.session
+        if (
+            parent_kind != "subagent"
+            or subagents.subagent_is_settled(parent)
+            or session is None
+        ):
+            logger.info(
+                "Dropping the completion notice for '%s': its parent"
+                " '%s' is no longer running.",
+                background_id,
+                parent_id,
+            )
+            return False
+        session.queue_injection(
+            {
+                "kind": "message",
+                "id": uuid.uuid4().hex,
+                "bg_kind": kind,
+                "bg_id": background_id,
+                "content": wrap_channel("HARNESS_NOTICE", harness_notice(model_notice)),
+            }
+        )
+        subagents.emit_injected_notice(registry, parent, model_notice)
+        return True
 
     def _wait_for_collected(self, kind: str, background_id: str) -> bool:
         """Whether the model already collected this record's outcome.

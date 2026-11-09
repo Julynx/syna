@@ -32,7 +32,7 @@ from ..config import (
     load_process_max_runtime_s,
     load_wait_for_timeout,
 )
-from ..state import get_container
+from ..state import get_background_record, get_container
 
 # Both foreground (execute_command) and background (spawn) pod commands
 # run non-interactively: no pagers, no progress bars, unbuffered Python.
@@ -88,6 +88,7 @@ class ProcessRecord:
     dir: str
     started: float = field(default_factory=time.time)
     finished_at: float | None = None
+    parent_id: str | None = None
     pgid: int | None = None
     runtime_cap_s: int | None = None
     state: str = "running"
@@ -338,11 +339,13 @@ def spawn_process(
     process_id, error = reserve_id(registry, "process", name)
     if error:
         return {"error": error}
+    parent = get_background_record()
     proc = ProcessRecord(
         id=process_id,
         command=command,
         dir=f"{PROCESS_DIR_ROOT}/{process_id}",
         runtime_cap_s=runtime_cap_s,
+        parent_id=parent.id if parent is not None else None,
     )
     exec_script = _spawn_launcher(proc, command, runtime_cap_s)
     try:
@@ -514,7 +517,7 @@ def _finalize_process(registry: PodRegistry, proc: ProcessRecord, exit_marker: s
     fire_completion(
         registry,
         "process",
-        proc.id,
+        proc,
         process_status_summary(proc),
         process_completion_notice(proc),
     )
@@ -523,15 +526,16 @@ def _finalize_process(registry: PodRegistry, proc: ProcessRecord, exit_marker: s
 def fire_completion(
     registry: PodRegistry,
     kind: str,
-    background_id: str,
+    record,
     summary: str,
     notice: str,
 ) -> None:
     """Deliver one completion notice through the registry's sink.
 
-    The payload carries the short UI summary and the model-facing
-    notice separately: the server pushes the summary as a background
-    event and enqueues the notice as the wake message.
+    The payload carries the short UI summary, the model-facing notice,
+    and the record's parent id separately: the server pushes the
+    summary as a background event, then routes the notice to the
+    spawner (a nested subagent's inbox) or to the top-level worker.
     """
     sink = registry.completion_sink
     if sink is None:
@@ -540,7 +544,8 @@ def fire_completion(
         sink(
             {
                 "kind": kind,
-                "id": background_id,
+                "id": record.id,
+                "parent_id": record.parent_id,
                 "summary": summary,
                 "model_notice": notice,
             }
@@ -570,22 +575,6 @@ def process_completion_notice(proc: ProcessRecord) -> str:
         " If you already collected this outcome with wait_for or check,"
         " you can ignore this notice."
     )
-
-
-def _fire_completion(registry: PodRegistry, kind: str, notice: str) -> None:
-    """Deliver one completion notice through the registry's sink."""
-    sink = registry.completion_sink
-    if sink is None:
-        return
-    try:
-        sink(
-            {
-                "kind": kind,
-                "notice": notice,
-            }
-        )
-    except Exception:
-        get_logger().exception("Background completion sink failed")
 
 
 def _ended_runtime_s(record) -> float:

@@ -119,6 +119,22 @@ def get_background_allegro() -> bool:
     return bool(getattr(_call_context, "background_allegro", None))
 
 
+def set_background_record(record) -> None:
+    """Record the background-work record of the current context.
+
+    The subagent runner sets its own record before the turn starts, so
+    a `process` or `subagent` call executing inside that turn can stamp
+    the spawner's name as the spawned work's parent. Main-agent turns
+    leave it unset (meaning no parent).
+    """
+    _call_context.background_record = record
+
+
+def get_background_record():
+    """Return the calling context's own background record, or None."""
+    return getattr(_call_context, "background_record", None)
+
+
 def register_container(container: Container) -> None:
     """Bind a container to the calling thread so tools can resolve it."""
     _local.container = container

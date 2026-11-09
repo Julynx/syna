@@ -318,6 +318,99 @@ def test_notice_batching_drops_collected_outcomes():
     print("PASS a collected outcome is dropped from the batch")
 
 
+class _ParentSession:
+    """Stands in for a live subagent session taking injections."""
+
+    def __init__(self):
+        self.injections = []
+
+    def queue_injection(self, item):
+        self.injections.append(item)
+
+
+def _routing_record():
+    record = _make_record()
+    record.container = object()
+    record.push = lambda event, **kwargs: None
+    return record
+
+
+def test_completion_notice_is_injected_into_a_live_parent(monkeypatch):
+    from syna.capabilities import processes
+    from syna.capabilities.subagents import SubagentRecord
+
+    monkeypatch.setattr(processes, "_registries", {})
+    record = _routing_record()
+    registry = registry_for(record.container)
+    parent = SubagentRecord(id="par", goal="g", level=2)
+    parent.session = _ParentSession()
+    registry.subagents["par"] = parent
+    record._on_background_completion(
+        {
+            "kind": "process",
+            "id": "child",
+            "parent_id": "par",
+            "summary": "s",
+            "model_notice": "Process 'child' finished.",
+        }
+    )
+    assert len(parent.session.injections) == 1
+    assert parent.session.injections[0]["bg_id"] == "child"
+    assert not record.inbox, "the parent's notice must not wake the top level"
+    assert parent.events[-1]["kind"] == "notice"
+    print("PASS a nested completion notice wakes only its parent")
+
+
+def test_completion_notice_is_dropped_when_the_parent_is_gone(monkeypatch):
+    from syna.capabilities import processes
+    from syna.capabilities.subagents import SubagentRecord
+
+    monkeypatch.setattr(processes, "_registries", {})
+    record = _routing_record()
+    registry = registry_for(record.container)
+    parent = SubagentRecord(id="par", goal="g", level=2)
+    parent.state = "finished"
+    parent.end_reason = "response"
+    parent.session = _ParentSession()
+    registry.subagents["par"] = parent
+    record._on_background_completion(
+        {
+            "kind": "process",
+            "id": "child",
+            "parent_id": "par",
+            "summary": "s",
+            "model_notice": "Process 'child' finished.",
+        }
+    )
+    assert parent.session.injections == []
+    assert not record.inbox, "a parented notice never falls back to the top level"
+    record._on_background_completion(
+        {
+            "kind": "process",
+            "id": "child2",
+            "parent_id": "unknown-parent",
+            "summary": "s",
+            "model_notice": "Process 'child2' finished.",
+        }
+    )
+    assert not record.inbox, "an unknown parent drops the notice too"
+    print("PASS a settled or unknown parent drops the notice")
+
+
+def test_injection_filter_drops_collected_outcomes_at_apply_time():
+    session = _make_session()
+    collected = {"flag": False}
+    session.injection_filter = lambda item: not collected["flag"]
+    session.queue_injection({"id": "n1", "content": "notice text"})
+    session.apply_injections()
+    assert "notice text" in str(session.messages[-1])
+    session.queue_injection({"id": "n2", "bg_id": "p1", "content": "stale notice"})
+    collected["flag"] = True
+    assert session.apply_injections() == 0
+    assert "stale notice" not in str(session.messages[-1])
+    print("PASS the injection filter drops collected outcomes at apply time")
+
+
 def main():
     run_suite(
         [
@@ -334,6 +427,9 @@ def main():
             test_notice_batching_merges_head_notices_into_one_message,
             test_notice_batching_never_touches_a_user_message,
             test_notice_batching_drops_collected_outcomes,
+            test_completion_notice_is_injected_into_a_live_parent,
+            test_completion_notice_is_dropped_when_the_parent_is_gone,
+            test_injection_filter_drops_collected_outcomes_at_apply_time,
         ]
     )
 

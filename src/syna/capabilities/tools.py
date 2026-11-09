@@ -710,7 +710,7 @@ def _runtime_cap_argument(args: dict) -> tuple[int | None, str | None]:
 
 def process(action: str, args: dict | None = None):
     """
-    Run a command as a detached background process. The spawn call returns immediately with a process name, while the command keeps running in the pod. Spawning a process allows you to keep working while its command runs, or wait for it by name using the `wait_for` tool. You will be notified with a message when a process finishes. Use this tool over execute_command for long-running commands.
+    Run a command as a detached background process. The spawn call returns immediately with a process name, while the command keeps running in the pod. Spawning a process allows you to keep working while its command runs, or wait for it by name using the `wait_for` tool. You will be notified with a message when a process you spawn finishes. Use this tool over execute_command for long-running commands.
     - `action` (string, required): must be either `spawn`, `check`, or `kill`.
     - `args` (object, required): the arguments for that action; see the list below.
 
@@ -782,7 +782,7 @@ def _check_process(process_id: str) -> str:
 
 def subagent(action: str, args: dict | None = None):
     """
-    Delegate a task to a subagent. The spawn call returns immediately with a subagent name, while the task keeps running in the background. Spawning a subagent allows you to keep working while it performs its task, or wait for it by name using the `wait_for` tool. You will be notified with a message when a subagent finishes. Subagents share the same pod, only use them for parallel-safe tasks, and plan ahead to avoid race conditions. Subagents cannot ask questions to the user, you must handle that yourself.
+    Delegate a task to a subagent. The spawn call returns immediately with a subagent name, while the task keeps running in the background. Spawning a subagent allows you to keep working while it performs its task, or wait for it by name using the `wait_for` tool. You will be notified with a message when a subagent you spawn finishes. Subagents share the same pod, only use them for parallel-safe tasks, and plan ahead to avoid race conditions. Subagents cannot ask questions to the user, you must handle that yourself.
 
     - `action` (string, required): must be either `spawn`, `check`, or `kill`.
     - `args` (object, required): the arguments for that action; see the list below.
@@ -835,7 +835,7 @@ def subagent(action: str, args: dict | None = None):
 
 def wait_for(name: str, max_wait_s: int | None = None):
     """
-    Sleep until the named process or subagent finishes. If you can, you should keep working while a process or a subagent runs; you will be notified with a message when they finish. Only call this tool if you have nothing to do until the named process or subagent finishes.
+    Sleep until the named process or subagent finishes. If you can, you should keep working while a process or a subagent runs; you will be notified with a message when work you spawned finishes. Only call this tool if you have nothing to do until the named process or subagent finishes.
     - `name` (string, required): the process or subagent name.
     - `max_wait_s` (integer, optional): seconds to wait at most; default 120.
     """

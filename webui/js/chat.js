@@ -1944,6 +1944,9 @@ function appendBgEntry(entry) {
   } else if (entry.kind === "error") {
     el.className = "bg-msg error";
     el.textContent = entry.text || "";
+  } else if (entry.kind === "notice") {
+    el.className = "bg-msg notice";
+    el.textContent = entry.text || "";
   } else {
     return;
   }
