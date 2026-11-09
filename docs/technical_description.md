@@ -754,7 +754,13 @@ the loop, `ask_utils.py` sends the model requests, and
   the Worlds benchmark harvest) get the structured share_file metadata the
   stringified `output` display field cannot carry.
   A `skipped` parser event renders like a finished tool row.
-- User interruption raises `TurnCancelled` inside the `started` event hook.
+- User interruption raises `TurnCancelled` inside the `started` event hook. The
+  cancelled turn ends with a harness notice telling the model to wrap up and
+  report what it has; the notice is appended to history as the last message,
+  so the model's reaction to it is its next and final output for that turn.
+  The same notice lands in a subagent's transcript when its session is
+  cancelled by a runtime cap or a kill: no user is involved there, but the
+  turn is over either way, so the model never reads it.
 - **Queued-message injection ("Send now")**: `queue_injection(item)` holds
   a queued web message thread-safely; at the top of the turn loop: after
   the previous tool batch's results are in history and before the next

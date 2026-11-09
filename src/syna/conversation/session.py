@@ -1183,7 +1183,9 @@ class AgentSession:
             "role": "user",
             "content": wrap_channel(
                 "HARNESS_NOTICE",
-                harness_notice("The user interrupted the task."),
+                harness_notice(
+                    "The user interrupted the task. Wrap up and report what you have."
+                ),
             ),
         }
         self.messages.append(msg)
