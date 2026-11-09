@@ -329,7 +329,7 @@ def test_artifacts_copied_at_finalize(monkeypatch):
 
 
 def test_dump_tail_keeps_whole_messages_within_budget(monkeypatch):
-    monkeypatch.setattr(subagents, "load_check_tail_chars", lambda: 200)
+    monkeypatch.setattr(subagents, "load_subagent_tail_chars", lambda: 200)
     dump = Path(__file__).parent / "_tmp_dump_test.json"
     big = "x" * 150
     dump.write_text(
@@ -350,6 +350,36 @@ def test_dump_tail_keeps_whole_messages_within_budget(monkeypatch):
         # The big message would exceed the budget alongside the tail.
         lines = tail.splitlines()
         assert all(json.loads(line) for line in lines if line.startswith("{"))
+    finally:
+        dump.unlink()
+
+
+def test_dump_tail_uses_its_own_budget_not_the_output_tail_budget(monkeypatch):
+    """The transcript preview is cheaper than a process output tail.
+
+    The live log caught repeated subagent checks re-dumping large
+    transcript tails; the transcript is whole JSON-escaped messages
+    (denser than plain output), so it gets its own smaller budget
+    instead of sharing `check_tail_chars`.
+    """
+    monkeypatch.setattr(subagents, "load_check_tail_chars", lambda: 100_000)
+    monkeypatch.setattr(subagents, "load_subagent_tail_chars", lambda: 120)
+    dump = Path(__file__).parent / "_tmp_dump_test.json"
+    dump.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "x" * 500},
+                    {"role": "assistant", "content": "end"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    try:
+        tail = _dump_messages_tail(dump)
+        assert "x" * 500 not in tail, "the 500-char message exceeds the budget"
+        assert '"end"' in tail, "the newest message is always kept whole"
     finally:
         dump.unlink()
 
@@ -562,6 +592,7 @@ def main():
             test_kill_before_start,
             test_artifacts_copied_at_finalize,
             test_dump_tail_keeps_whole_messages_within_budget,
+            test_dump_tail_uses_its_own_budget_not_the_output_tail_budget,
             test_compact_event_shapes,
             test_stream_history_is_capped_and_sequenced,
             test_completion_notice_names_pod_paths,

@@ -883,8 +883,9 @@ class AgentSession:
                 self._append_harness_notice(
                     "You have made this identical call"
                     f" {REPEATED_CALL_LIMIT} times: {short_signature}."
-                    " Repeating it will not change the result. Read the error,"
-                    " change something, or try a different approach.",
+                    " Repeating it will not change the result. Change the"
+                    " call if you need something different, or continue"
+                    " with other work.",
                     "Repeated identical call detected.",
                 )
 

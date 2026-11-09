@@ -30,10 +30,10 @@ from pathlib import Path
 from ..config import (
     get_logger,
     get_session_dump_path,
-    load_check_tail_chars,
     load_max_concurrent_subagents,
     load_max_subagent_depth,
     load_subagent_max_runtime_s,
+    load_subagent_tail_chars,
 )
 from ..state import (
     get_background_allegro,
@@ -520,7 +520,10 @@ def _dump_messages_tail(dump_host_path: Path) -> str | None:
     """The message log tail from the host dump, oldest to newest.
 
     Whole messages are kept (never cut mid-message) until the
-    configured tail budget is spent, so each JSON line parses.
+    transcript budget is spent, so each JSON line parses. The budget is
+    its own small one (see `load_subagent_tail_chars`): this is a
+    preview of what the subagent is doing now, not a copy of the log —
+    the check text points at the full transcript path for the rest.
     """
     try:
         payload = json.loads(dump_host_path.read_text(encoding="utf-8"))
@@ -529,7 +532,7 @@ def _dump_messages_tail(dump_host_path: Path) -> str | None:
     messages = payload.get("messages")
     if not isinstance(messages, list) or not messages:
         return None
-    budget = load_check_tail_chars()
+    budget = load_subagent_tail_chars()
     pieces: list[str] = []
     used = 0
     for message in reversed(messages):

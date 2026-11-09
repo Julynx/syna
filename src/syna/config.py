@@ -360,6 +360,7 @@ DEFAULT_MAX_SUBAGENT_DEPTH = 3
 DEFAULT_MAX_CONCURRENT_SUBAGENTS = 4
 DEFAULT_WAIT_FOR_TIMEOUT = 120
 DEFAULT_CHECK_TAIL_CHARS = 4000
+DEFAULT_SUBAGENT_TAIL_CHARS = 1200
 
 
 def load_user_message_archive_min_chars() -> int:
@@ -422,6 +423,18 @@ def load_check_tail_chars() -> int:
     return int(load_config().get("check_tail_chars", DEFAULT_CHECK_TAIL_CHARS))
 
 
+def load_subagent_tail_chars() -> int:
+    """Return how many transcript characters a subagent check previews.
+
+    A transcript tail is whole JSON-escaped messages, far denser than a
+    process's plain output tail, so it gets its own smaller budget; the
+    check text always points at the full transcript path regardless.
+    """
+    return int(
+        load_config().get("subagent_check_tail_chars", DEFAULT_SUBAGENT_TAIL_CHARS)
+    )
+
+
 __all__ = [
     "asset_path",
     "get_data_home",
@@ -435,6 +448,7 @@ __all__ = [
     "load_output_limit_chars",
     "load_process_max_runtime_s",
     "load_subagent_max_runtime_s",
+    "load_subagent_tail_chars",
     "load_tool_call_timeout_s",
     "load_wait_for_timeout",
     "load_web_search_timeout_s",
