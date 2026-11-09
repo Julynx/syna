@@ -268,6 +268,33 @@ def test_notice_batching_merges_head_notices_into_one_message():
     print("PASS queued notices merge into one wake message")
 
 
+def test_notice_batching_never_touches_a_user_message():
+    """A user message passes through unwrapped; notices behind it stay put."""
+    user_msg = {
+        "kind": "message",
+        "id": "u1",
+        "content": "Please summarize the report.",
+        "was_queued": True,
+    }
+    record = _make_record()
+    record.container = object()
+    record.inbox.append(
+        {
+            "kind": "message",
+            "id": "n1",
+            "bg_kind": "process",
+            "bg_id": "n1",
+            "content": "notice body",
+        }
+    )
+    untouched = record._merge_notice_batch(dict(user_msg))
+    assert untouched["content"] == user_msg["content"], "content rewritten"
+    assert [item["id"] for item in record.inbox] == ["n1"], "notice swallowed"
+    alone = record._merge_notice_batch(dict(user_msg))
+    assert alone["content"] == user_msg["content"]
+    print("PASS a user message is never rewritten by notice batching")
+
+
 def test_notice_batching_drops_collected_outcomes():
     from syna.protocol.channel import unwrap_channel
 
@@ -305,6 +332,7 @@ def main():
             test_requeue_injections_returns_undelivered_messages,
             test_background_notice_queueing_and_wait_for_drop,
             test_notice_batching_merges_head_notices_into_one_message,
+            test_notice_batching_never_touches_a_user_message,
             test_notice_batching_drops_collected_outcomes,
         ]
     )

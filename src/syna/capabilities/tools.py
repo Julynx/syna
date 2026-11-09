@@ -890,11 +890,20 @@ def _finished_process_wait(proc, container) -> str:
 
     Marks the record collected first: the completion watcher must not
     fire the wake notice for an outcome wait_for just reported itself.
+    A probe that still reads running (a kill was recorded but the exit
+    marker has not landed) collects nothing and promises the notice, so
+    the real exit code still reaches the model.
     """
     try:
         state, stdout, stderr = check_process_state(container, proc.dir)
     except Exception as exc:
         return f"Process '{proc.id}' ended, but its output is unreadable: {exc}"
+    if state == "running":
+        return (
+            f"Process '{proc.id}': its end is already recorded, but the"
+            " exit marker has not landed yet. A notice with the exit"
+            " code arrives here when it does."
+        )
     observe_end_time(proc, state)
     proc.outcome_collected = True
     return (

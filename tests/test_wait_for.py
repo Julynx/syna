@@ -119,6 +119,25 @@ def test_wait_for_collection_suppresses_the_subagent_notice(monkeypatch):
     assert seen == [], "the subagent ending on its own must notify once"
 
 
+def test_wait_for_killed_process_with_pending_exit_keeps_the_notice(monkeypatch):
+    """A kill recorded but not yet landed must not swallow the exit notice."""
+    registry = fresh_registry()
+    seen = []
+    registry.completion_sink = lambda payload: seen.append(payload)
+    proc = ProcessRecord(id="stopped", command="x", dir="/d")
+    proc.state = "killed"
+    proc.killed_by = "user"
+    registry.processes["stopped"] = proc
+    make_tools_isolated(monkeypatch, registry)
+    monkeypatch.setattr(tools, "check_process_state", lambda c, d: ("running", "", ""))
+
+    result = tools.wait_for(name="stopped")
+    assert "exit marker has not landed" in result, result
+    assert not proc.outcome_collected
+    processes._finalize_process(registry, proc, "143")
+    assert len(seen) == 1, "the real exit code must still reach the model"
+
+
 def test_polls_until_the_process_finishes(monkeypatch):
     registry = fresh_registry()
     proc = ProcessRecord(id="slow", command="x", dir="/d")
@@ -232,6 +251,7 @@ def main():
             test_timeout_returns_still_running_not_an_error,
             test_deadline_budget_is_the_tools_own,
             test_subagent_kill_request_ends_the_wait,
+            test_wait_for_killed_process_with_pending_exit_keeps_the_notice,
             test_max_wait_s_validation,
         ]
     )

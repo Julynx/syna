@@ -346,7 +346,7 @@ class SessionRecord:
             return False
         return self._wait_for_collected(item.get("bg_kind") or "", background_id)
 
-    def _merge_notice_batch(self, first: dict) -> dict | None:
+    def _merge_notice_batch(self, first: dict) -> dict:
         """Join every pending background notice into one wake message.
 
         Completion notices queue while a turn runs, and draining them
@@ -356,7 +356,13 @@ class SessionRecord:
         the ones whose outcome the model already collected. The bodies
         merge under a single channel wrapper, the same shape batched
         tool results use.
+
+        Anything that is not itself a background notice — a queued user
+        message above all — passes through untouched: its content is
+        not channel-framed and must never be rewritten here.
         """
+        if not first.get("bg_id"):
+            return first
         items = [first]
         with self.inbox_ready:
             while self.inbox and self.inbox[0].get("bg_id"):
