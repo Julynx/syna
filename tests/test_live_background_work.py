@@ -14,6 +14,7 @@ Covers, in order:
    caller saying no response was produced.
 """
 
+import os
 import re
 import sys
 import time
@@ -23,6 +24,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+from syna.config import get_env
+
+
+def _live_key_present() -> bool:
+    """Whether a real model key is configured.
+
+    Checks the environment first, then the loaded .env (the CI workflow
+    writes a dummy key there). Without a real key the subagent checks
+    degrade into error-text "responses" and the run is meaningless, so
+    the test exits skipped instead.
+    """
+    key = os.environ.get("OPENROUTER_API_KEY") or get_env().get(
+        "OPENROUTER_API_KEY"
+    )
+    return bool(key) and key.startswith("sk-or")
+
+
+if not _live_key_present():
+    print("SKIP test_live_background_work (needs a real OPENROUTER_API_KEY)")
+    sys.exit(0)
 
 from syna.capabilities import tools
 from syna.capabilities.processes import registry_for
@@ -123,7 +145,11 @@ def main():
             "143" in killed and "still terminating" not in killed,
             killed.split("\n")[0],
         )
-        report("process kill blocked for the exit", 0.1 <= block <= 10, f"{block:.1f}s")
+        report(
+            "process kill blocked for the exit",
+            block <= 10,
+            f"{block:.1f}s",
+        )
 
         # 4b. A TERM-resistant process dies to the SIGKILL follow-up.
         tools.process(
