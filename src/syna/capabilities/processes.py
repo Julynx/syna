@@ -460,8 +460,8 @@ def _watch_processes(registry: PodRegistry, container) -> None:
                         [
                             "bash",
                             "-c",
-                            f"cat {exit_q} 2>/dev/null || true;"
-                            f' printf " "; cat {stamp_q} 2>/dev/null || true',
+                            f'printf "EXIT %s\\n" "$(cat {exit_q} 2>/dev/null)";'
+                            f' printf "STAMP %s" "$(cat {stamp_q} 2>/dev/null)"',
                         ],
                     ).strip()
                 except Exception as exc:
@@ -482,9 +482,14 @@ def _watch_processes(registry: PodRegistry, container) -> None:
                     )
                     break
                 failures = 0
-                if out:
-                    marker, _, stamp = out.partition(" ")
-                    _finalize_process(registry, proc, marker, stamp)
+                exit_marker, stamp = "", ""
+                for line in out.splitlines():
+                    if line.startswith("EXIT "):
+                        exit_marker = line[len("EXIT ") :].strip()
+                    elif line.startswith("STAMP "):
+                        stamp = line[len("STAMP ") :].strip()
+                if exit_marker:
+                    _finalize_process(registry, proc, exit_marker, stamp)
             time.sleep(WATCHER_POLL_INTERVAL_S)
     finally:
         with registry.watcher_lock:

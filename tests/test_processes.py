@@ -373,7 +373,7 @@ def test_completion_notice_text_carries_paths():
 
 def test_watcher_notices_exit_and_keeps_looping(monkeypatch):
     registry = fresh_registry()
-    container = FakeContainer({"/exit_code": "3"})
+    container = FakeContainer({"/exit_code": "EXIT 3\nSTAMP "})
     proc = ProcessRecord(id="pw", command="x", dir="/d")
     registry.processes["pw"] = proc
     monkeypatch.setattr(processes, "WATCHER_POLL_INTERVAL_S", 0.01)
@@ -426,7 +426,7 @@ def test_watcher_survives_a_transient_poll_failure(monkeypatch):
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("CannotSendRequest on a busy connection")
-            return "0"
+            return "EXIT 0\nSTAMP "
 
     pod = FlakyPod()
     finished = []
@@ -477,9 +477,42 @@ def test_watcher_picks_up_a_process_spawned_later(monkeypatch):
             seen.add("second-finalized")
 
     monkeypatch.setattr(processes, "_finalize_process", fake_finalize)
-    processes._watch_processes(registry, FakeContainer({"/d2/exit_code": "7"}))
+    processes._watch_processes(
+        registry, FakeContainer({"/d2/exit_code": "EXIT 7\nSTAMP "})
+    )
     assert first.exit_code == 0
     assert "second-finalized" in seen
+
+
+def test_watcher_never_misreads_the_stamp_as_the_exit_code(monkeypatch):
+    """A poll shape without an exit marker finalizes nothing.
+
+    The space-partition parse this replaces would have read a bare
+    stamp as the exit code when exit_code was missing; the marker
+    parse finalizes only on a real EXIT line.
+    """
+    registry = fresh_registry()
+    proc = ProcessRecord(id="pw", command="x", dir="/d")
+    registry.processes["pw"] = proc
+    monkeypatch.setattr(processes, "WATCHER_POLL_INTERVAL_S", 0.01)
+    finalized = []
+    monkeypatch.setattr(processes, "_finalize_process", lambda *a: finalized.append(a))
+    polls = [0]
+
+    def fake_sleep(seconds):
+        polls[0] += 1
+        if polls[0] >= 3:
+            registry.active = False
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+
+    class StampOnlyPod:
+        def exec(self, argv):
+            return "STAMP 1794185405"
+
+    processes._watch_processes(registry, StampOnlyPod())
+    assert finalized == [], "a stamp without an exit marker is not an outcome"
+    assert proc.state == "running"
 
 
 def test_registry_for_is_stable_per_container():
@@ -532,6 +565,7 @@ def main():
             test_watcher_stops_when_the_pod_dies,
             test_watcher_survives_a_transient_poll_failure,
             test_watcher_picks_up_a_process_spawned_later,
+            test_watcher_never_misreads_the_stamp_as_the_exit_code,
             test_registry_for_is_stable_per_container,
             test_wait_for_deadline_composition,
         ]

@@ -1105,7 +1105,13 @@ module never imports session machinery, so there is no cycle).
   the record's end time (`finished_at`), not at report time — the end
   time is the launcher's own pod-side stamp, adopted by finalize and
   every report path, so a watcher poll delayed by a long-running
-  `execute_command` on the same pod still reports the true runtime. All pod
+  `execute_command` on the same pod still reports the true runtime.
+  All pod calls serialize over bollard's single HTTP connection, so a
+  notice can still lag behind a long-running `execute_command`; a late
+  notice is a correct one. A failed probe is retried: only consecutive
+  failures declare the pod gone, so one transient error under load
+  cannot silence notices for the rest of the session (observed live
+  before the retry existed).
 
 ### `src/syna/capabilities/subagents.py`
 

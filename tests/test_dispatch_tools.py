@@ -168,7 +168,10 @@ def test_tool_schemas_declare_action_and_document_the_cap():
         function = schemas[name]
         parameters = function["parameters"]
         assert "action" in parameters["properties"], name
-        assert parameters["required"] == ["action"], (name, parameters["required"])
+        assert parameters["required"] == ["action", "args"], (
+            name,
+            parameters["required"],
+        )
         assert "max_runtime_s" in function["description"], name
         action_description = parameters["properties"]["action"]["description"]
         assert "spawn" in action_description and "kill" in action_description, (

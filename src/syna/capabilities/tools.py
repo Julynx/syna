@@ -643,7 +643,7 @@ def share_file(file_path: str):
     }
 
 
-def ask_user(question_text: str, choices: list):
+def ask_user(question_text: str, choices: list[str]):
     """
     Ask the user a question and wait for their answer. The conversation pauses until they respond. Call this tool when you need information from the user to complete a task, and you cannot reasonably assume or deduce the answer yourself (a key fact is missing, or options compete and none is clearly better). Note: tool calls in the same response as this one might not execute until later.
     - `question_text` (string, required): the question itself, clear and self-contained.
@@ -708,7 +708,7 @@ def _runtime_cap_argument(args: dict) -> tuple[int | None, str | None]:
     return int(value), None
 
 
-def process(action: str, args: dict | None = None):
+def process(action: str, args: dict):
     """
     Run a command as a detached background process. The spawn call returns immediately with a process name, while the command keeps running in the pod. Spawning a process allows you to keep working while its command runs, or wait for it by name using the `wait_for` tool. You will be notified with a message when a process you spawn finishes. Use this tool over execute_command for long-running commands.
     - `action` (string, required): must be either `spawn`, `check`, or `kill`.
@@ -780,7 +780,7 @@ def _check_process(process_id: str) -> str:
     return format_process_report(proc, state, stdout, stderr)
 
 
-def subagent(action: str, args: dict | None = None):
+def subagent(action: str, args: dict):
     """
     Delegate a task to a subagent. The spawn call returns immediately with a subagent name, while the task keeps running in the background. Spawning a subagent allows you to keep working while it performs its task, or wait for it by name using the `wait_for` tool. You will be notified with a message when a subagent you spawn finishes. Subagents share the same pod, only use them for parallel-safe tasks, and plan ahead to avoid race conditions. Subagents cannot ask questions to the user, you must handle that yourself.
 
