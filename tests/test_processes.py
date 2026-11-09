@@ -289,17 +289,69 @@ def test_kill_signals_the_group_and_keeps_artifacts(monkeypatch):
         "check_process_state",
         lambda c, d: ("running", "", "", None),
     )
+    monkeypatch.setattr(processes, "KILL_WAIT_S", 0.05)
+    monkeypatch.setattr(processes, "KILL_POLL_INTERVAL_S", 0.01)
     report = kill_process("p1", registry=registry, container=container, by="model")
-    assert "Stop signals sent" in report
+    assert "still terminating" in report
+    assert "notice arrives here then" in report
     kill_script = container.calls[0][-1]
     assert 'kill -- -"$pgid"' in kill_script
     assert "kill -9" in kill_script
     assert proc.state == "killed" and proc.killed_by == "model"
-    # A model kill suppresses the completion notice (it already knows).
+    # The timeout path promised the notice, so it must still fire.
+    seen = []
+    registry.completion_sink = lambda payload: seen.append(payload)
     processes._finalize_process(registry, proc, "0")
-    assert registry.completion_sink is None or True
     assert proc.state == "exited" and proc.exit_code == 0
-    assert proc.notified
+    assert len(seen) == 1, "the timeout fallback must not swallow the notice"
+
+
+def test_kill_blocks_until_the_exit_lands(monkeypatch):
+    """A kill waits for the end and reports the final exit code.
+
+    The response then delivered the outcome: a model kill marks the
+    record collected (no follow-up notice), a user kill leaves the
+    flags so the notice still tells the model who stopped the work.
+    """
+    registry = fresh_registry()
+    seen = []
+    registry.completion_sink = lambda payload: seen.append(payload)
+    proc = ProcessRecord(id="pk", command="x", dir="/workspace/processes/pk")
+    proc.pgid = 7
+    registry.processes["pk"] = proc
+    container = FakeContainer()
+    probes = [0]
+
+    def state_after_kill(c, d):
+        probes[0] += 1
+        return (
+            ("running", "", "", None)
+            if probes[0] == 1
+            else ("exited:143", "", "", None)
+        )
+
+    monkeypatch.setattr(processes, "check_process_state", state_after_kill)
+    monkeypatch.setattr(processes, "KILL_POLL_INTERVAL_S", 0.01)
+
+    report = kill_process("pk", registry=registry, container=container, by="model")
+    assert "exit code 143" in report
+    assert "still terminating" not in report
+    assert proc.outcome_collected, "the response delivered the outcome"
+    processes._finalize_process(registry, proc, "143")
+    assert seen == [], "no notice may follow an outcome the kill delivered"
+
+    proc2 = ProcessRecord(id="pu", command="x", dir="/workspace/processes/pu")
+    proc2.pgid = 8
+    registry.processes["pu"] = proc2
+    probes[0] = 0
+    report = kill_process("pu", registry=registry, container=container, by="user")
+    assert "exit code 143" in report
+    assert not proc2.outcome_collected, (
+        "the model did not see this response; the notice must tell it"
+    )
+    processes._finalize_process(registry, proc2, "143")
+    assert len(seen) == 1
+    assert "stopped by the user" in seen[0]["model_notice"]
 
 
 def test_kill_on_finished_process_reports_snapshot(monkeypatch):

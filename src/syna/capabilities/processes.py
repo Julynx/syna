@@ -33,7 +33,12 @@ from ..config import (
     load_process_max_runtime_s,
     load_wait_for_timeout,
 )
-from ..state import get_background_record, get_container
+from ..state import (
+    ToolCancelled,
+    get_background_record,
+    get_cancel_event,
+    get_container,
+)
 
 # Both foreground (execute_command) and background (spawn) pod commands
 # run non-interactively: no pagers, no progress bars, unbuffered Python.
@@ -51,6 +56,8 @@ PROCESS_DIR_ROOT = "/workspace/processes"
 SUBAGENT_DIR_ROOT = "/workspace/subagents"
 
 TIMEOUT_KILL_GRACE_S = 10
+KILL_WAIT_S = 6.0
+KILL_POLL_INTERVAL_S = 0.25
 CAP_EXIT_CODE = 124
 
 # The wait_for harness deadline exceeds the tool's own wait budget by
@@ -96,7 +103,6 @@ class ProcessRecord:
     state: str = "running"
     exit_code: int | None = None
     killed_by: str | None = None
-    notified: bool = False
     outcome_collected: bool = False
     last_wait_ended_at: float | None = None
 
@@ -567,8 +573,7 @@ def _finalize_process(
         proc.state = "exited"
         stamp = _parse_epoch(finished_stamp) if finished_stamp else None
         adopt_end_time(proc, "exited", stamp)
-        already_known = proc.notified or proc.outcome_collected
-        proc.notified = True
+        already_known = proc.outcome_collected
     if already_known:
         return
     if proc.killed_by == "user":
@@ -826,19 +831,25 @@ def kill_process(
     container=None,
     by: str = "model",
 ) -> str:
-    """Kill a process tree and report the outcome.
+    """Kill a process tree and report its final outcome.
 
     Killing signals the command's process group (TERM, then SIGKILL
-    after a grace, both pod-side), never destroys artifacts. The whole
-    operation, state mutation through probe and report, holds the
-    registry lock, so it cannot interleave with the completion
-    watcher's finalize pass (the lock never waits on anything that
-    would take it again; the pod call lock is strictly inner).
-
-    The exit marker lands when the launcher notices `timeout` exit,
-    usually within moments; a kill call reports the state as of right
-    now and the completion machinery keeps the record honest
-    afterwards.
+    after a grace, both pod-side), never destroys artifacts. The kill
+    then blocks — bounded, because the pod-side SIGKILL follow-up
+    guarantees the end — until the exit lands, so the response carries
+    the final exit code and no follow-up notice is needed. Only a
+    response that really delivered the outcome suppresses the notice:
+    a model kill marks the record collected then; a user kill leaves
+    the flags alone so the completion notice still tells the model the
+    work was stopped. The pathological timeout path (a process
+    surviving SIGKILL, e.g. stuck in uninterruptible sleep) also
+    leaves the flags alone and promises the notice. The whole
+    operation, state mutation through the bounded wait and report,
+    holds the registry lock, so it cannot interleave with the
+    completion watcher's finalize pass (the lock never waits on
+    anything that would take it again; the pod call lock is strictly
+    inner). The exit marker lands when the launcher notices `timeout`
+    exit, usually within moments.
     """
     if container is None:
         container = get_container()
@@ -859,8 +870,6 @@ def kill_process(
             )
         proc.state = "killed"
         proc.killed_by = by
-        if by == "model":
-            proc.notified = True
         dir_q = shlex.quote(proc.dir)
         script = "\n".join(
             [
@@ -883,10 +892,21 @@ def kill_process(
                 " process check."
             )
         get_logger().info("Process '%s' killed by %s.", process_id, by)
+        deadline = time.monotonic() + KILL_WAIT_S
         state, stdout, stderr, ended = check_process_state(container, proc.dir)
-        adopt_end_time(proc, state, ended)
+        while state == "running" and time.monotonic() < deadline:
+            cancel_event = get_cancel_event()
+            if cancel_event is not None and cancel_event.is_set():
+                raise ToolCancelled()
+            time.sleep(KILL_POLL_INTERVAL_S)
+            state, stdout, stderr, ended = check_process_state(container, proc.dir)
+        if state != "running":
+            adopt_end_time(proc, state, ended)
+            if by == "model":
+                proc.outcome_collected = True
+            return format_process_report(proc, state, stdout, stderr)
         return (
             format_process_report(proc, state, stdout, stderr)
-            + " Stop signals sent to the whole process group; the exit code"
-            " lands in the record when the process actually ends."
+            + " The process is still terminating; its exit code lands in"
+            " the record when it ends, and a notice arrives here then."
         )

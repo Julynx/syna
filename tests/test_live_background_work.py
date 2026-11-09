@@ -112,11 +112,38 @@ def main():
             second.split("\n")[-1],
         )
 
-        # 4. Model-killed process.
+        # 4. Model-killed process: the kill blocks and reports the final code.
         tools.process("spawn", {"command": "sleep 60", "name": "killme"})
         time.sleep(2)
+        kill_start = time.monotonic()
         killed = tools.process("kill", {"name": "killme"})
-        report("process kill reports 143", "143" in killed, killed.split("\n")[0])
+        block = time.monotonic() - kill_start
+        report(
+            "process kill reports the final code itself",
+            "143" in killed and "still terminating" not in killed,
+            killed.split("\n")[0],
+        )
+        report("process kill blocked for the exit", 0.1 <= block <= 10, f"{block:.1f}s")
+
+        # 4b. A TERM-resistant process dies to the SIGKILL follow-up.
+        tools.process(
+            "spawn",
+            {"command": "trap '' TERM; sleep 60", "name": "stubborn"},
+        )
+        time.sleep(2)
+        stubborn_start = time.monotonic()
+        stubborn = tools.process("kill", {"name": "stubborn"})
+        stubborn_block = time.monotonic() - stubborn_start
+        report(
+            "TERM-resistant process dies to SIGKILL with the final code",
+            "137" in stubborn and "still terminating" not in stubborn,
+            stubborn.split("\n")[0],
+        )
+        report(
+            "the stubborn kill blocked through the SIGKILL grace",
+            stubborn_block >= 2,
+            f"{stubborn_block:.1f}s",
+        )
 
         # 5. Real subagent, natural completion.
         result = tools.subagent(
@@ -172,13 +199,21 @@ def main():
                 waited.split("\n")[0],
             )
             payload = wait_for_sink(seen, "live-kill")
+            notice = payload.get("model_notice", "") if payload else ""
+            # Which artifact wording appears depends on whether the
+            # subagent emitted assistant content before stopping (the
+            # last-assistant fallback gives it a response.md); both are
+            # honest. The offline test pins each wording deterministically.
             ok = (
                 payload is not None
                 and payload.get("summary") == "stopped by the model"
-                and "produced no final response" in payload.get("model_notice", "")
+                and (
+                    "produced no final response" in notice
+                    or ("Its response:" in notice and "messages.json" in notice)
+                )
             )
             report(
-                "kill-landing notice reaches the caller with no-response wording",
+                "kill-landing notice reaches the caller with honest artifacts",
                 ok,
                 repr(payload.get("summary")) if payload else "no payload",
             )

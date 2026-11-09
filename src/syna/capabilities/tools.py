@@ -715,7 +715,7 @@ def process(action: str, args: dict):
 
     * `spawn`: `command` (string, required): the bash command to run; `name` (string, optional): a short string of your choice (letters, digits, dots, hyphens). Generated programatically if not specified; `max_runtime_s` (integer, optional): seconds the process may run before its runtime cap kills it; the configured default applies when omitted.
     * `check`: `name` (string, required): the process name the spawn returned. Returns state, running time, and the last characters of stdout and stderr.
-    * `kill`: `name` (string, required): the process name the spawn returned. Kills the process, preserving its output files.
+    * `kill`: `name` (string, required): the process name the spawn returned. Kills the process and blocks until it has ended (bounded: a SIGKILL follows the stop signal), so the response carries the final exit code; its output files are preserved.
     """
     args = args or {}
     if action == "spawn":

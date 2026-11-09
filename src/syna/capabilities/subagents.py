@@ -102,7 +102,6 @@ class SubagentRecord:
     events: list = field(default_factory=list)
     events_lock: threading.Lock = field(default_factory=threading.Lock)
     event_seq: int = 0
-    notified: bool = False
     outcome_collected: bool = False
     allegro: bool = False
     last_wait_ended_at: float | None = None
@@ -479,8 +478,7 @@ def _finalize_subagent(registry: PodRegistry, record: SubagentRecord, container)
         registry, record, {"kind": "done", "summary": subagent_status_summary(record)}
     )
     with registry.lock:
-        already_known = record.notified or record.outcome_collected
-        record.notified = True
+        already_known = record.outcome_collected
     get_logger().info("Subagent '%s' %s.", record.id, subagent_status_summary(record))
     if not already_known:
         fire_completion(

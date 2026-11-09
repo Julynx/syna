@@ -91,7 +91,7 @@ def spawn_with_fake_session(monkeypatch, registry, container=None):
     assert "error" not in result, result
     record = registry.subagents[result["name"]]
     for _ in range(400):
-        if record.notified and record.state != "running":
+        if record.state != "running":
             break
         time.sleep(0.005)
     return record, created, container
@@ -239,7 +239,7 @@ def test_kill_marks_record_and_cancels_session(monkeypatch):
     record, created, container = spawn_with_fake_session(monkeypatch, registry)
     record.state = "running"
     record.kill_requested.clear()
-    record.notified = False
+    record.outcome_collected = False
     report = kill_subagent(
         record.id, registry=registry, container=container, by="model"
     )
@@ -247,7 +247,7 @@ def test_kill_marks_record_and_cancels_session(monkeypatch):
     assert record.kill_requested.is_set()
     assert created[0].cancelled >= 1
     assert record.stopped_by == "model"
-    assert not record.notified, (
+    assert not record.outcome_collected, (
         "the kill response promises a notice when the stop lands;"
         " the landing is information the caller does not have"
     )
@@ -257,10 +257,10 @@ def test_kill_by_user_keeps_the_notice(monkeypatch):
     registry = fresh_registry()
     record, created, container = spawn_with_fake_session(monkeypatch, registry)
     record.state = "running"
-    record.notified = False
+    record.outcome_collected = False
     kill_subagent(record.id, registry=registry, container=container, by="user")
     assert record.stopped_by == "user"
-    assert not record.notified
+    assert not record.outcome_collected
 
 
 def test_kill_on_finished_subagent_reports_snapshot():
@@ -301,7 +301,7 @@ def test_kill_before_start(monkeypatch):
     kill_subagent(record.id, registry=registry, container=container, by="user")
     gate.set()
     for _ in range(400):
-        if record.notified and record.state != "running":
+        if record.state != "running":
             break
         time.sleep(0.005)
     assert record.state == "killed"
@@ -635,7 +635,7 @@ def test_allegro_is_inherited(monkeypatch):
         set_background_allegro(None)
     record = registry.subagents[result["name"]]
     for _ in range(400):
-        if record.notified:
+        if record.state != "running":
             break
         time.sleep(0.005)
     assert allegros == [True]

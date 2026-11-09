@@ -1088,9 +1088,19 @@ module never imports session machinery, so there is no cycle).
   (bytes-capped pod-side, base64-framed so the output cannot fool the
   marker parse, truncated to `check_tail_chars` host-side).
   `kill_process` signals the recorded process group (`TERM`, then a
-  pod-side SIGKILL follow-up), never touching artifacts; a kill by the
-  model marks its completion notice as already-known (it knows), a
-  kill by the user leaves it to fire ("stopped by the user").
+  pod-side SIGKILL follow-up), never touching artifacts; the kill then
+  blocks — bounded, because the SIGKILL follow-up guarantees the end —
+  until the exit lands, so the response always carries the final exit
+  code and no "lands later" promise exists. Only a response that
+  really delivered the outcome suppresses the completion notice: a
+  model kill marks the record collected (the response was the
+  delivery), a user kill leaves the flags so the notice still tells
+  the model the work was stopped, and the pathological timeout path (a
+  process surviving SIGKILL) promises the notice instead. This is the
+  process-side twin of the subagent kill flow, kept consistent: the
+  subagent's stop lands at its next pause (potentially minutes away),
+  so its kill stays async and its notice is the delivery; the
+  process's stop is immediate and its response is the delivery.
 - **Completion watcher.** One thread per registry, started lazily on
   the first spawn and living for the registry's lifetime (a cheap
   3s poll loop; it only execs while processes exist, and exits when
@@ -1149,6 +1159,25 @@ module never imports session machinery, so there is no cycle).
   (each record remembers `last_wait_ended_at` from the wait that
   timed out) — instead of the misleading "finished during this wait"
   the old text used for both cases.
+- **Exactly-once delivery map.** An outcome reaches the model through
+  one of two channels: a report (wait_for, check, kill's own
+  response) inside a tool batch, or a completion notice between
+  batches. Deduplication happens at the delivery hops, which are
+  always strictly after any racing report: the firing-time check in
+  `_on_background_completion` (a collected outcome is never routed at
+  all), the dequeue-time `_notice_is_stale` for top-level notices
+  (they queue behind an active turn and are re-checked when the turn
+  ends), and the apply-time `injection_filter` for notices injected
+  into a live parent subagent. Notices only ever surface between tool
+  batches, while reports complete inside one, so no interleaving
+  delivers an outcome twice; a fired-then-dropped notice is a queued
+  payload and a log line, by design. The single source of truth is the
+  record's `outcome_collected` flag, set only by report paths that
+  actually returned a terminal outcome. Verified by a delivery audit
+  (2026-11-09) that traced every hop and interleaving; the audit also
+  fixed the process-kill asymmetry (a model kill used to suppress the
+  notice unconditionally while its response did not always contain
+  the final exit code).
 
 ### `src/syna/capabilities/subagents.py`
 
