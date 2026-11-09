@@ -36,9 +36,7 @@ def _live_key_present() -> bool:
     degrade into error-text "responses" and the run is meaningless, so
     the test exits skipped instead.
     """
-    key = os.environ.get("OPENROUTER_API_KEY") or get_env().get(
-        "OPENROUTER_API_KEY"
-    )
+    key = os.environ.get("OPENROUTER_API_KEY") or get_env().get("OPENROUTER_API_KEY")
     return bool(key) and key.startswith("sk-or")
 
 

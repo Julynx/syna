@@ -1,0 +1,61 @@
+#!/bin/bash
+# Pre-commit: the same gate the Tests workflow runs (ruff format --check .),
+# applied to the files this commit actually changes. CI only ever sees
+# committed files, so staged files are the commit-time equivalent; the
+# whole-repo check runs there. Pinned to the workflow's ruff version so
+# local and CI never disagree.
+
+RUFF_VERSION="0.17.4"
+
+# Resolve a runner: prefer the pinned uvx, then uv tool run, then local
+# ruff. Windows git-bash needs the .exe suffix spelled out on the call,
+# so each probe echoes the exact name that resolved.
+find_runner() {
+    if command -v uvx >/dev/null 2>&1; then echo uvx
+    elif command -v uvx.exe >/dev/null 2>&1; then echo uvx.exe
+    elif command -v uv >/dev/null 2>&1; then echo uv
+    elif command -v uv.exe >/dev/null 2>&1; then echo uv.exe
+    elif command -v ruff >/dev/null 2>&1; then echo ruff
+    elif command -v ruff.exe >/dev/null 2>&1; then echo ruff.exe
+    else echo none
+    fi
+}
+
+runner=$(find_runner)
+case "$runner" in
+    uvx|uvx.exe)
+        ruff() { "$runner" "ruff@${RUFF_VERSION}" "$@"; }
+        ;;
+    uv|uv.exe)
+        ruff() { "$runner" tool run "ruff@${RUFF_VERSION}" "$@"; }
+        ;;
+    ruff|ruff.exe)
+        echo "warning: uv not found; using local ruff instead of the pinned" \
+            "${RUFF_VERSION} - versions may disagree." >&2
+        ;;
+    *)
+        echo "error: neither uvx, uv, nor ruff is installed; cannot check" >&2
+        echo "formatting. Install uv (https://docs.astral.sh/uv/) or run:" >&2
+        echo "pip install ruff==${RUFF_VERSION}" >&2
+        exit 1
+        ;;
+esac
+
+mapfile -d '' -t files < <(
+    git diff --cached --name-only -z --diff-filter=ACMR -- '*.py'
+)
+if [ "${#files[@]}" -eq 0 ]; then
+    exit 0
+fi
+
+# --force-exclude keeps the pyproject excludes (e.g. *.json) applying to
+# explicitly named files.
+if ruff format --check --force-exclude "${files[@]}"; then
+    exit 0
+fi
+
+echo "" >&2
+echo "commit blocked: ruff format --check failed on staged files." >&2
+echo "Fix with: uvx ruff@${RUFF_VERSION} format <the files above>" >&2
+echo "(or stage the reformatted versions and commit again)." >&2
+exit 1
