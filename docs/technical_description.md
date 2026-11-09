@@ -1731,13 +1731,21 @@ drops are ignored.
   artifact paths.
 - Images in Syna's replies (`![](/workspace/....png)`) render inline:
   `applyImagePolicy` rewrites pod-absolute sources to
-  `GET /api/image/{client_id}?path=...` (lazy-loaded, with an
+  `GET /api/image/{client_id}?path=...&v={Date.now()}` (lazy-loaded, with an
   "unavailable" fallback chip), while remote `http(s)` sources are
   converted to plain links and never fetched: a page could otherwise
-  make Syna embed an image whose URL exfiltrates data. Pod images are
+  make Syna embed an image whose URL exfiltrates data. The per-render
+  `v` query exists because Chromium's memory cache reuses a same-URL
+  image within the same tab without honoring the endpoint's
+  `Cache-Control: no-store`, which once showed a stale image when a
+  later message embedded a regenerated file under the same pod path;
+  a unique query per render makes every embed fetch, and the endpoint
+  copies from the pod per request, so each fetch is current. Pod images
+  are
   also wrapped in an `.inline-image-frame` carrying a download button
   (revealed on frame hover, check-mark feedback like the copy buttons);
-  clicking it navigates the same endpoint with `&download=1`, which the
+  clicking it navigates the same (already-busted) URL with
+  `&download=1`, which the
   server answers with `Content-Disposition: attachment`. Message
   download/copy behavior is untouched.
 - When Syna calls `ask_user`, the composer slides down and a question

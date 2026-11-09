@@ -3776,12 +3776,20 @@ function applyImagePolicy(bubble) {
       } catch (err) {
         podPath = src;
       }
+      /* The buster is not HTTP caching: the endpoint sends no-store
+         already. Chromium's memory cache reuses a same-URL image in the
+         same tab without honoring it, which served a stale image when a
+         message embedded a regenerated file under the same name. A
+         unique query per render makes every embed a distinct URL; the
+         endpoint copies from the pod per request, so each one is fresh. */
       const url = withToken(
         API_BASE +
           "/api/image/" +
           clientId +
           "?path=" +
-          encodeURIComponent(podPath),
+          encodeURIComponent(podPath) +
+          "&v=" +
+          Date.now(),
       );
       img.loading = "lazy";
       img.decoding = "async";
