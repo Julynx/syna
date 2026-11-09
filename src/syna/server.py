@@ -267,7 +267,7 @@ class SessionRecord:
             record.stopped_by = "teardown"
             record.kill_requested.set()
             if record.session is not None:
-                record.session.cancel()
+                record.session.cancel("session teardown")
         processes.drop_registry(self.container)
 
     def _on_subagent_event(self, subagent_id: str, event: dict):

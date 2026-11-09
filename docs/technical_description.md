@@ -174,7 +174,7 @@ from the canonical constants in `config.py`.
 | `max_subagent_depth`                | Subagent nesting levels allowed, counting main (default 3: main -> subagent -> sub-subagent; a sub-subagent cannot spawn further).                                                                                                                                            |
 | `max_concurrent_subagents`          | How many subagents may run at once (default 4). A spawn beyond the cap is refused; spend protection.                                                                                                                                                                          |
 | `wait_for_timeout`                  | Default deadline of one `wait_for` call (default 120). The wait follows its own budget (plus slack), not `tool_call_timeout_s`; on expiry it returns "still running", never an error.                                                                                         |
-| `check_tail_chars`                  | How many characters of output `process check`/`subagent check` and `wait_for` tail (default 4000).                                                                                                                                                                            |
+| `check_tail_chars`                  | How many characters of output `process check` and `wait_for` tail (default 4000).                                                                                                                                                                                             |
 | `subagent_check_tail_chars`         | How many transcript characters a subagent check previews (default 1200). Whole JSON-escaped messages are denser than plain output, so the transcript gets its own smaller budget; the check text always points at the full transcript path.                                   |
 | `max_steps_per_turn`                | Model requests allowed per turn (default 100). Before the cap, the model receives a wrap-up warning; past it, the turn ends with one final request reserved for a `respond` status report.                                                                                    |
 | `step_warning_remaining`            | Remaining-steps count that triggers the wrap-up warning (default 20).                                                                                                                                                                                                         |
@@ -755,12 +755,15 @@ the loop, `ask_utils.py` sends the model requests, and
   stringified `output` display field cannot carry.
   A `skipped` parser event renders like a finished tool row.
 - User interruption raises `TurnCancelled` inside the `started` event hook. The
-  cancelled turn ends with a harness notice telling the model to wrap up and
-  report what it has; the notice is appended to history as the last message,
-  so the model's reaction to it is its next and final output for that turn.
-  The same notice lands in a subagent's transcript when its session is
-  cancelled by a runtime cap or a kill: no user is involved there, but the
-  turn is over either way, so the model never reads it.
+  cancelled turn ends immediately: no further model request happens within it.
+  The notice it records names what cancelled the turn (CANCEL_NOTICES, chosen
+  by the `reason` argument of `session.cancel`): a user interrupt says "wrap
+  up and report what you have", a runtime cap, a model or user kill, and a
+  teardown each get their own honest line — the same "user interrupted" text
+  once landed in killed subagents' transcripts, where there is no user, and
+  it misled a log investigation. The notice sits in history as the turn's
+  last message: the model reads it later, as context of the next turn, not
+  as an immediate instruction.
 - **Queued-message injection ("Send now")**: `queue_injection(item)` holds
   a queued web message thread-safely; at the top of the turn loop: after
   the previous tool batch's results are in history and before the next
@@ -1206,9 +1209,15 @@ close a cycle: tools -> here -> session -> parse -> tools).
 - **Completions.** The runner finalizes on every end (natural, cap,
   kill, error): response fallback is the last assistant message in
   history (a cancelled turn emits no final message), then the same
-  single completion notice fires as for processes. A kill by the model
-  suppresses the notice; a kill by the user delivers "was stopped by
-  the user". Routing is by parentage: the notice reaches only the
+  single completion notice fires as for processes. Every end fires the
+  notice, including a kill by the model: the kill response promises a
+  notice when the stop lands, and the landing is information the
+  caller does not have — the old suppression broke that promise and
+  the caller had to poll check/wait_for repeatedly to learn what the
+  notice should have said (observed live). When the subagent produced
+  no response, the notice says so instead of naming a response.md that
+  does not exist. A kill by the user delivers "was stopped by the
+  user". Routing is by parentage: the notice reaches only the
   spawner (top-level inbox, or an injection into a live parent
   subagent's turn; dropped when the parent is settled or gone).
 

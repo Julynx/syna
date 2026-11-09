@@ -931,21 +931,26 @@ def _wait_outcome_timing(proc, waited: bool) -> str:
 
     A first probe that already reads ended means the process finished
     before this call: either while the model was working since its
-    previous wait timed out, or long before. The launcher's end stamp
-    against the previous wait's end distinguishes the two.
+    previous wait timed out, or long before. The end stamp against the
+    previous wait's end distinguishes the two. Both live on different
+    clocks (the stamp is the pod's, the wait's end is the host's), so
+    the gap is corrected into the host frame with the record's own
+    stamp offset when the launcher's start stamp is available; the
+    residual error is the skew drift since the spawn, not the full skew.
     """
     if waited:
         return "It finished during this wait."
-    if (
-        proc.last_wait_ended_at is not None
-        and proc.finished_at is not None
-        and proc.finished_at > proc.last_wait_ended_at
-    ):
-        gap = proc.finished_at - proc.last_wait_ended_at
-        if gap < 1:
-            return "It finished moments after your previous wait ended."
-        return f"It finished {gap:.0f}s after your previous wait ended."
-    return "It was already finished when this wait started."
+    if proc.last_wait_ended_at is None or proc.finished_at is None:
+        return "It was already finished when this wait started."
+    end = proc.finished_at
+    if proc.started_at is not None:
+        end += proc.started - proc.started_at
+    if end <= proc.last_wait_ended_at:
+        return "It was already finished when this wait started."
+    gap = end - proc.last_wait_ended_at
+    if gap < 1:
+        return "It finished moments after your previous wait ended."
+    return f"It finished {gap:.0f}s after your previous wait ended."
 
 
 def _discard_browser_session(reason: str) -> None:

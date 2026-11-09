@@ -166,7 +166,19 @@ def build_sentinel_violation_warning() -> str:
 
 
 class TurnCancelled(Exception):
-    """Raised when the user interrupts the current agent turn."""
+    """Raised when the current agent turn is cancelled."""
+
+
+CANCEL_NOTICES = {
+    "user interrupt": (
+        "The user interrupted the task. Wrap up and report what you have."
+    ),
+    "runtime cap": "Stopped by the runtime cap.",
+    "model kill": "Stopped at the spawning agent's request.",
+    "user kill": "Stopped by the user.",
+    "session teardown": "The session was torn down.",
+    None: "The turn was cancelled.",
+}
 
 
 def build_prompt(allegro: bool = False):
@@ -377,6 +389,7 @@ class AgentSession:
         self._archive_nonce = secrets.token_hex(8)
         self.dump_path = get_session_dump_path(session_id)
         self._cancel_event = threading.Event()
+        self._cancel_reason = "user interrupt"
         self._injection_lock = threading.Lock()
         self._pending_injections: list[dict] = []
         self._tool_call_seq = 0
@@ -434,8 +447,15 @@ class AgentSession:
             "enabled" if enabled else "disabled",
         )
 
-    def cancel(self):
-        """Request the interruption of the current turn at its next pause."""
+    def cancel(self, reason: str = "user interrupt"):
+        """Request the interruption of the current turn at its next pause.
+
+        The reason selects the harness notice the cancelled turn records
+        (see CANCEL_NOTICES): a user interrupt, a runtime cap, a kill by
+        the model or the user, or a session teardown each read
+        differently in the transcript.
+        """
+        self._cancel_reason = reason
         self._cancel_event.set()
 
     def clear_cancel(self):
@@ -1177,16 +1197,18 @@ class AgentSession:
         self._emit({"type": "model_message", "content": report})
 
     def _finish_cancelled_turn(self):
-        """Record the interruption in the conversation and notify listeners."""
+        """Record the cancellation in the conversation and notify listeners.
+
+        The notice names what cancelled the turn: the text is the only
+        record of why this turn ended without a response, and it is read
+        forensically in subagent transcripts (a "user interrupted" line
+        in a killed subagent's dump misled an investigation once).
+        """
         logger = get_logger()
+        text = CANCEL_NOTICES.get(self._cancel_reason, CANCEL_NOTICES[None])
         msg = {
             "role": "user",
-            "content": wrap_channel(
-                "HARNESS_NOTICE",
-                harness_notice(
-                    "The user interrupted the task. Wrap up and report what you have."
-                ),
-            ),
+            "content": wrap_channel("HARNESS_NOTICE", harness_notice(text)),
         }
         self.messages.append(msg)
         logger.info(str(msg))

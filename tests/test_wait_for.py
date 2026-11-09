@@ -126,6 +126,33 @@ def test_wait_timing_keeps_the_wake_sentence_for_a_genuine_wait(monkeypatch):
     assert "It finished during this wait." in result, result
 
 
+def test_wait_gap_is_corrected_into_the_host_frame(monkeypatch):
+    """The gap sentence compares two clocks; correct with the stamp offset.
+
+    finished_at is the pod's clock, last_wait_ended_at is the host's;
+    without the correction a ~1s skew shifts the quoted gap. The
+    record's own stamp pair (host start vs pod start) measures the
+    offset, so the corrected gap is exact up to skew drift.
+    """
+    registry = fresh_registry()
+    proc = ProcessRecord(id="gap2", command="x", dir="/d")
+    proc.state = "exited"
+    proc.exit_code = 0
+    proc.started = 1000.0
+    proc.started_at = 1002.0
+    proc.finished_at = 1100.0
+    proc.last_wait_ended_at = 1091.0
+    registry.processes["gap2"] = proc
+    make_tools_isolated(monkeypatch, registry)
+    monkeypatch.setattr(
+        tools,
+        "check_process_state",
+        lambda c, d: ("exited:0", "", "", 1100.0),
+    )
+    result = tools.wait_for(name="gap2")
+    assert "finished 7s after your previous wait ended" in result, result
+
+
 def test_wait_for_collection_suppresses_the_process_notice(monkeypatch):
     registry = fresh_registry()
     seen = []
@@ -333,6 +360,7 @@ def main():
             test_unknown_id_is_an_error_with_recovery_path,
             test_returns_immediately_on_finished_process,
             test_wait_timing_reports_the_gap_after_a_previous_wait,
+            test_wait_gap_is_corrected_into_the_host_frame,
             test_wait_timing_keeps_the_wake_sentence_for_a_genuine_wait,
             test_returns_immediately_on_settled_subagent,
             test_polls_until_the_process_finishes,

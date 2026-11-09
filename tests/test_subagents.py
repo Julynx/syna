@@ -17,6 +17,7 @@ from syna.capabilities.subagents import (
     SubagentRecord,
     _compact_event,
     _dump_messages_tail,
+    _finalize_subagent,
     _last_assistant_content,
     _on_subagent_event,
     check_subagent,
@@ -57,8 +58,9 @@ class FakeSession:
             raise RuntimeError("cancel unwind")
         self.messages.append({"role": "assistant", "content": "final report"})
 
-    def cancel(self):
+    def cancel(self, reason: str = "user interrupt"):
         self.cancelled += 1
+        self.cancel_reasons = getattr(self, "cancel_reasons", []) + [reason]
 
     def close(self):
         self.closed = True
@@ -237,6 +239,7 @@ def test_kill_marks_record_and_cancels_session(monkeypatch):
     record, created, container = spawn_with_fake_session(monkeypatch, registry)
     record.state = "running"
     record.kill_requested.clear()
+    record.notified = False
     report = kill_subagent(
         record.id, registry=registry, container=container, by="model"
     )
@@ -244,7 +247,10 @@ def test_kill_marks_record_and_cancels_session(monkeypatch):
     assert record.kill_requested.is_set()
     assert created[0].cancelled >= 1
     assert record.stopped_by == "model"
-    assert record.notified, "a model kill suppresses the completion notice"
+    assert not record.notified, (
+        "the kill response promises a notice when the stop lands;"
+        " the landing is information the caller does not have"
+    )
 
 
 def test_kill_by_user_keeps_the_notice(monkeypatch):
@@ -384,6 +390,28 @@ def test_dump_tail_uses_its_own_budget_not_the_output_tail_budget(monkeypatch):
         dump.unlink()
 
 
+def test_dump_tail_truncates_an_oversized_newest_message(monkeypatch):
+    """One huge newest message must not defeat the preview cap.
+
+    Whole-message keeping otherwise lets a single tool-result-sized
+    message blow the budget, leaving the preview as large as before
+    the cap existed.
+    """
+    monkeypatch.setattr(subagents, "load_subagent_tail_chars", lambda: 100)
+    dump = Path(__file__).parent / "_tmp_dump_test.json"
+    dump.write_text(
+        json.dumps({"messages": [{"role": "user", "content": "x" * 500}]}),
+        encoding="utf-8",
+    )
+    try:
+        tail = _dump_messages_tail(dump)
+        assert len(tail) == 100
+        assert tail.endswith(" ...[truncated]")
+        assert "x" * 50 in tail
+    finally:
+        dump.unlink()
+
+
 def test_compact_event_shapes():
     model = _compact_event({"type": "model_message", "content": "hi"})
     assert model == {"kind": "model", "content": "hi"}
@@ -420,11 +448,48 @@ def test_completion_notice_names_pod_paths():
     record = SubagentRecord(id="s", goal="g", level=2)
     record.state = "finished"
     record.end_reason = "response"
+    record.response = "the answer"
     notice = subagent_completion_notice(record)
     assert "/workspace/subagents/s/response.md" in notice
     assert "/workspace/subagents/s/messages.json" in notice
     assert "wait_for" in notice
     assert subagent_status_summary(record) == "finished with a response"
+
+
+def test_kill_notice_says_no_response_was_produced():
+    """A killed subagent has no response.md; the notice must not imply one."""
+    record = SubagentRecord(id="s", goal="g", level=2)
+    record.state = "killed"
+    record.end_reason = "stopped by the model"
+    record.stopped_by = "model"
+    notice = subagent_completion_notice(record)
+    assert "stopped by the model" in notice
+    assert "produced no final response" in notice
+    assert "response.md" not in notice
+    assert "/workspace/subagents/s/messages.json" in notice
+
+
+def test_model_kill_completion_reaches_the_caller():
+    """The kill response promises a notice when the stop lands.
+
+    The live log showed the old suppression breaking that promise: the
+    caller then polled check and wait_for repeatedly to learn what the
+    notice should have said. The landing (and the absence of a
+    response) is new information; only an outcome already collected
+    through wait_for/check suppresses it.
+    """
+    registry = fresh_registry()
+    seen = []
+    registry.completion_sink = lambda payload: seen.append(payload)
+    record = SubagentRecord(id="s9", goal="g", level=2)
+    record.state = "killed"
+    record.end_reason = "stopped by the model"
+    record.stopped_by = "model"
+    record.dump_host_path = None
+    _finalize_subagent(registry, record, FakeContainer())
+    assert len(seen) == 1
+    assert "stopped by the model" in seen[0]["model_notice"]
+    assert "produced no final response" in seen[0]["model_notice"]
 
 
 def test_last_assistant_content_fallback():
@@ -593,9 +658,12 @@ def main():
             test_artifacts_copied_at_finalize,
             test_dump_tail_keeps_whole_messages_within_budget,
             test_dump_tail_uses_its_own_budget_not_the_output_tail_budget,
+            test_dump_tail_truncates_an_oversized_newest_message,
             test_compact_event_shapes,
             test_stream_history_is_capped_and_sequenced,
             test_completion_notice_names_pod_paths,
+            test_kill_notice_says_no_response_was_produced,
+            test_model_kill_completion_reaches_the_caller,
             test_last_assistant_content_fallback,
             test_check_reports_paths_and_state,
             test_check_of_finished_subagent_collects_the_outcome,

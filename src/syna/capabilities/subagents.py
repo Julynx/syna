@@ -266,7 +266,7 @@ def _on_cap_fired(record: SubagentRecord, session):
     """The runtime cap callback: mark it and stop the turn gracefully."""
     record.cap_fired.set()
     get_logger().info("Subagent '%s' hit its runtime cap; stopping it.", record.id)
-    session.cancel()
+    session.cancel("runtime cap")
 
 
 def _run_subagent(
@@ -439,11 +439,21 @@ def subagent_completion_notice(record: SubagentRecord) -> str:
     else:
         outcome = "finished with a response"
     pod_dir = f"{SUBAGENT_DIR_ROOT}/{record.id}"
+    if record.response:
+        artifacts = (
+            f" Its response: {pod_dir}/{RESPONSE_COPY_NAME} and its message"
+            f" log: {pod_dir}/{DUMP_COPY_NAME} (in the pod; read them with"
+            " read_file)."
+        )
+    else:
+        artifacts = (
+            f" It produced no final response; its message log:"
+            f" {pod_dir}/{DUMP_COPY_NAME} (in the pod; read it with"
+            " read_file)."
+        )
     return (
         f"Background subagent '{record.id}' {outcome} after {runtime:.0f}s."
-        f" Its response: {pod_dir}/{RESPONSE_COPY_NAME} and its message"
-        f" log: {pod_dir}/{DUMP_COPY_NAME} (in the pod; read them with"
-        " read_file). If you already collected this outcome with"
+        f"{artifacts} If you already collected this outcome with"
         " wait_for or check, you can ignore this notice."
     )
 
@@ -455,8 +465,11 @@ def _finalize_subagent(registry: PodRegistry, record: SubagentRecord, container)
     or error. Artifact copies are best-effort (a dead pod cannot receive
     them); the host-side dump always remains. Notice firing is the same
     single-producer path the process capability uses, skipped when the
-    model already learned the outcome (it killed the subagent itself, or
-    wait_for already returned the final report).
+    model already learned the outcome (wait_for or check already
+    returned the final report). A model-issued kill still fires: the
+    kill response promises a notice when the stop lands, and the
+    landing is information the caller does not have (it also says so
+    when no response was produced).
     """
     try:
         copy_subagent_artifacts(record, container)
@@ -520,10 +533,13 @@ def _dump_messages_tail(dump_host_path: Path) -> str | None:
     """The message log tail from the host dump, oldest to newest.
 
     Whole messages are kept (never cut mid-message) until the
-    transcript budget is spent, so each JSON line parses. The budget is
-    its own small one (see `load_subagent_tail_chars`): this is a
-    preview of what the subagent is doing now, not a copy of the log —
-    the check text points at the full transcript path for the rest.
+    transcript budget is spent. The budget is its own small one (see
+    `load_subagent_tail_chars`): this is a preview of what the subagent
+    is doing now, not a copy of the log — the check text points at the
+    full transcript path for the rest. The newest message is the one
+    exception to whole-message keeping: rendered alone it can exceed
+    the whole budget, so it is cut with a visible marker instead of
+    silently defeating the cap.
     """
     try:
         payload = json.loads(dump_host_path.read_text(encoding="utf-8"))
@@ -537,7 +553,11 @@ def _dump_messages_tail(dump_host_path: Path) -> str | None:
     used = 0
     for message in reversed(messages):
         piece = json.dumps(message, ensure_ascii=False)
-        if pieces and used + len(piece) > budget:
+        if not pieces:
+            marker = " ...[truncated]"
+            if len(piece) > budget:
+                piece = piece[: max(budget - len(marker), 0)] + marker
+        elif used + len(piece) > budget:
             break
         pieces.insert(0, piece)
         used += len(piece)
@@ -650,10 +670,8 @@ def kill_subagent(
         if not settled:
             record.stopped_by = by
             record.kill_requested.set()
-            if by == "model":
-                record.notified = True
             if record.session is not None:
-                record.session.cancel()
+                record.session.cancel("model kill" if by == "model" else "user kill")
             try:
                 copy_subagent_artifacts(record, container)
             except Exception:

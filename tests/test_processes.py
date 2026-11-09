@@ -266,6 +266,18 @@ def test_ended_runtime_prefers_the_pod_clock_stamps():
     assert abs(processes._ended_runtime_s(nothing) - 3.0) < 0.1
 
 
+def test_stamp_parsing_rejects_non_finite_values():
+    """The stamp files are pod-writable; nan must not become a runtime."""
+    assert processes._parse_epoch("nan") is None
+    assert processes._parse_epoch("inf") is None
+    assert processes._parse_epoch("-inf") is None
+    container = FakeContainer(
+        {"STATE ": "STATE exited:0\nFINISHED_AT nan\nSTDOUT\n\nSTDERR\n\n"}
+    )
+    state, stdout, stderr, ended = processes.check_process_state(container, "/d")
+    assert ended is None
+
+
 def test_kill_signals_the_group_and_keeps_artifacts(monkeypatch):
     registry = fresh_registry()
     proc = ProcessRecord(id="p1", command="x", dir="/workspace/processes/p1")
@@ -618,6 +630,7 @@ def main():
             test_check_process_state_parses_the_end_stamp,
             test_spawn_markers_parse_pgid_and_started_stamp,
             test_spawn_markers_survive_a_date_without_nanoseconds,
+            test_stamp_parsing_rejects_non_finite_values,
             test_ended_runtime_prefers_the_pod_clock_stamps,
             test_watcher_notices_exit_and_keeps_looping,
             test_watcher_stops_when_the_pod_dies,

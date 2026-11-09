@@ -20,6 +20,7 @@ A server restart loses it; the processes keep running under their
 
 import base64
 import itertools
+import math
 import re
 import shlex
 import threading
@@ -438,14 +439,17 @@ def _parse_epoch(text: str) -> float | None:
 
     Stamps are written with `date +%s.%N`; a `date` without %N support
     appends a literal N, which fails the float parse and falls back to
-    the host-clock measurement instead of poisoning the runtime.
+    the host-clock measurement instead of poisoning the runtime. The
+    stamp files are writable inside the pod, so non-finite values
+    (nan, inf) are rejected too rather than rendered as "after nans".
     """
     if not text:
         return None
     try:
-        return float(text)
+        value = float(text)
     except ValueError:
         return None
+    return value if math.isfinite(value) else None
 
 
 def _ensure_watcher(registry: PodRegistry, container) -> None:
@@ -561,10 +565,7 @@ def _finalize_process(
         except ValueError:
             proc.exit_code = None
         proc.state = "exited"
-        try:
-            stamp = float(finished_stamp) if finished_stamp else None
-        except ValueError:
-            stamp = None
+        stamp = _parse_epoch(finished_stamp) if finished_stamp else None
         adopt_end_time(proc, "exited", stamp)
         already_known = proc.notified or proc.outcome_collected
         proc.notified = True
@@ -772,10 +773,7 @@ def check_process_state(container, pod_dir: str) -> tuple[str, str, str, float |
     finished_at = None
     for line in lines[1:]:
         if line.startswith("FINISHED_AT "):
-            try:
-                finished_at = float(line[len("FINISHED_AT ") :].strip())
-            except ValueError:
-                finished_at = None
+            finished_at = _parse_epoch(line[len("FINISHED_AT ") :].strip())
         elif line == "STDOUT":
             break
     stdout, stderr = _decode_tails(view)
