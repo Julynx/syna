@@ -476,8 +476,10 @@ class AgentSession:
         turn its queue pill into a chat bubble. An `injection_filter`
         (subagent sessions get one) drops items it rejects at this last
         moment: an injected notice may have lost the race to the
-        session's own wait_for while it sat queued. Returns how many
-        landed.
+        session's own wait_for while it sat queued. An applied notice
+        (an item carrying a background id) also emits an
+        `injected_notice` event, so the spawner's viewer shows the wake
+        exactly when it happened. Returns how many landed.
         """
         injected = 0
         for item in self.take_injections():
@@ -504,6 +506,14 @@ class AgentSession:
                     "id": item.get("id"),
                 }
             )
+            if item.get("bg_id"):
+                self._emit(
+                    {
+                        "type": "injected_notice",
+                        "bg_id": item.get("bg_id"),
+                        "content": item.get("notice_text") or content,
+                    }
+                )
             injected += 1
         return injected
 

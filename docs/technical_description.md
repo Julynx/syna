@@ -1077,7 +1077,8 @@ module never imports session machinery, so there is no cycle).
   the first spawn and living for the registry's lifetime (a cheap
   3s poll loop; it only execs while processes exist, and exits when
   the registry is dropped), reads the pod for
-  `exit_code` markers and fires the single
+  `exit_code` markers (the launcher's `finished_at` epoch stamp rides
+  along in the same exec) and fires the single
   completion notice per process through `fire_completion`: a payload
   with the id, the record's parent id, a one-line UI summary, and the
   model-facing notice. The server pushes the summary as a
@@ -1101,14 +1102,10 @@ module never imports session machinery, so there is no cycle).
   drain as one
   batched wake message instead of one turn each (the server's
   `_merge_notice_batch`), and reports quote the runtime measured at
-  the record's end time (`finished_at`), not at report time. All pod
-  calls serialize over
-  bollard's single HTTP connection, so a notice can lag behind a
-  long-running `execute_command` on the same pod; a late notice is
-  still a correct one. A failed probe is retried: only consecutive
-  failures declare the pod gone, so one transient error under load
-  cannot silence notices for the rest of the session (observed live
-  before the retry existed).
+  the record's end time (`finished_at`), not at report time — the end
+  time is the launcher's own pod-side stamp, adopted by finalize and
+  every report path, so a watcher poll delayed by a long-running
+  `execute_command` on the same pod still reports the true runtime. All pod
 
 ### `src/syna/capabilities/subagents.py`
 
@@ -1452,7 +1449,9 @@ routed by parentage: a record spawned by the top-level agent is
 enqueued into the inbox as a harness notice, waking the idle worker or
 queueing behind an active turn; a record spawned by a subagent is
 injected into that subagent's live turn via `queue_injection` — the
-viewer shows a small muted "notice" entry for it — and is dropped,
+viewer shows a small muted "notice" entry when the session applies it
+(an applied injection emits an `injected_notice` event; a dropped one
+shows nothing) — and is dropped,
 never re-routed upward, when the parent is settled or gone; both
 routes are suppressed entirely when a report already collected the
 outcome). `GET

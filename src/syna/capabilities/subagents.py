@@ -244,7 +244,10 @@ def _injection_filter(registry: PodRegistry):
     A completion notice injected at a request boundary may have lost
     the race to the parent's own wait_for in the meantime; apply time
     is the last chance to drop it, so the outcome never reaches the
-    model twice. Non-notice messages always pass.
+    model twice. Non-notice messages always pass. The viewer's notice
+    entry is emitted by the session at the same apply moment (see
+    `AgentSession.apply_injections`), so it only ever shows applied
+    wakes.
     """
 
     def keep(item: dict) -> bool:
@@ -255,20 +258,6 @@ def _injection_filter(registry: PodRegistry):
         return not (entry is not None and entry[1].outcome_collected)
 
     return keep
-
-
-def emit_injected_notice(registry: PodRegistry, record: SubagentRecord, text: str):
-    """Show an injected completion notice in the subagent's viewer.
-
-    A small history entry, so the user can see what woke the subagent
-    mid-turn; best-effort, since it is a UI convenience only.
-    """
-    try:
-        _emit_subagent_event(
-            registry, record, {"kind": "notice", "text": _cap(text, 500)}
-        )
-    except Exception:
-        get_logger().exception("Subagent '%s' notice event failed", record.id)
 
 
 def _on_cap_fired(record: SubagentRecord, session):
@@ -383,6 +372,8 @@ def _compact_event(event: dict) -> dict | None:
     event_type = event.get("type")
     if event_type == "model_message":
         return {"kind": "model", "content": _cap(event.get("content"))}
+    if event_type == "injected_notice":
+        return {"kind": "notice", "text": _cap(event.get("content"), 500)}
     if event_type == "error":
         return {"kind": "error", "text": _cap(event.get("text"), 2000)}
     if event_type == "tool_call":

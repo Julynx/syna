@@ -356,8 +356,9 @@ def test_completion_notice_is_injected_into_a_live_parent(monkeypatch):
     )
     assert len(parent.session.injections) == 1
     assert parent.session.injections[0]["bg_id"] == "child"
+    assert parent.session.injections[0]["notice_text"] == "Process 'child' finished."
     assert not record.inbox, "the parent's notice must not wake the top level"
-    assert parent.events[-1]["kind"] == "notice"
+    assert parent.events == [], "the viewer entry comes only at apply time"
     print("PASS a nested completion notice wakes only its parent")
 
 
@@ -411,6 +412,38 @@ def test_injection_filter_drops_collected_outcomes_at_apply_time():
     print("PASS the injection filter drops collected outcomes at apply time")
 
 
+def test_applied_notice_emits_the_viewer_event_once():
+    """An applied background notice emits injected_notice; drops emit none."""
+    from syna.protocol.channel import harness_notice, wrap_channel
+
+    session = _make_session()
+    events = []
+    session.on_event = lambda event: events.append(event)
+    body = wrap_channel("HARNESS_NOTICE", harness_notice("Process 'p1' finished."))
+    session.queue_injection(
+        {
+            "id": "n1",
+            "bg_kind": "process",
+            "bg_id": "p1",
+            "notice_text": "Process 'p1' finished.",
+            "content": body,
+        }
+    )
+    assert session.apply_injections() == 1
+    notices = [e for e in events if e.get("type") == "injected_notice"]
+    user_msgs = [e for e in events if e.get("type") == "user_message"]
+    assert len(notices) == 1 and notices[0]["bg_id"] == "p1"
+    assert notices[0]["content"] == "Process 'p1' finished."
+    assert len(user_msgs) == 1
+    session.queue_injection({"id": "n2", "bg_id": "p2", "content": body})
+    session.injection_filter = lambda item: False
+    assert session.apply_injections() == 0
+    assert len([e for e in events if e.get("type") == "injected_notice"]) == 1, (
+        "a dropped notice emits no viewer event"
+    )
+    print("PASS an applied notice emits the viewer event; a dropped one does not")
+
+
 def main():
     run_suite(
         [
@@ -430,6 +463,7 @@ def main():
             test_completion_notice_is_injected_into_a_live_parent,
             test_completion_notice_is_dropped_when_the_parent_is_gone,
             test_injection_filter_drops_collected_outcomes_at_apply_time,
+            test_applied_notice_emits_the_viewer_event_once,
         ]
     )
 

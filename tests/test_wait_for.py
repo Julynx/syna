@@ -57,7 +57,7 @@ def test_returns_immediately_on_finished_process(monkeypatch):
     monkeypatch.setattr(
         tools,
         "check_process_state",
-        lambda c, d: ("exited:0", "out text", "err text"),
+        lambda c, d: ("exited:0", "out text", "err text", None),
     )
     result = tools.wait_for(name="done")
     assert "finished with exit code 0" in result
@@ -90,7 +90,7 @@ def test_wait_for_collection_suppresses_the_process_notice(monkeypatch):
     monkeypatch.setattr(
         tools,
         "check_process_state",
-        lambda c, d: ("exited:0", "out", "err"),
+        lambda c, d: ("exited:0", "out", "err", None),
     )
 
     result = tools.wait_for(name="done")
@@ -129,7 +129,9 @@ def test_wait_for_killed_process_with_pending_exit_keeps_the_notice(monkeypatch)
     proc.killed_by = "user"
     registry.processes["stopped"] = proc
     make_tools_isolated(monkeypatch, registry)
-    monkeypatch.setattr(tools, "check_process_state", lambda c, d: ("running", "", ""))
+    monkeypatch.setattr(
+        tools, "check_process_state", lambda c, d: ("running", "", "", None)
+    )
 
     result = tools.wait_for(name="stopped")
     assert "exit marker has not landed" in result, result
@@ -162,7 +164,7 @@ def test_polls_until_the_process_finishes(monkeypatch):
     monkeypatch.setattr(
         tools,
         "check_process_state",
-        lambda c, d: ("exited:0", "", ""),
+        lambda c, d: ("exited:0", "", "", None),
     )
 
     result = tools.wait_for(name="slow", max_wait_s=60)

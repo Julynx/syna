@@ -378,10 +378,10 @@ class SessionRecord:
                 "id": uuid.uuid4().hex,
                 "bg_kind": kind,
                 "bg_id": background_id,
+                "notice_text": model_notice,
                 "content": wrap_channel("HARNESS_NOTICE", harness_notice(model_notice)),
             }
         )
-        subagents.emit_injected_notice(registry, parent, model_notice)
         return True
 
     def _wait_for_collected(self, kind: str, background_id: str) -> bool:

@@ -111,6 +111,7 @@ def test_spawn_registers_and_starts_watcher(monkeypatch):
     assert 'printf %s "$bg" > ' in exec_script
     assert "/workspace/processes/build/stdout" in exec_script
     assert "> /workspace/processes/build/exit_code" in exec_script
+    assert "date +%s > " in exec_script and "finished_at" in exec_script
 
 
 def test_spawn_failure_releases_the_id(monkeypatch):
@@ -174,7 +175,7 @@ def test_check_reports_state_and_tails(monkeypatch):
     monkeypatch.setattr(
         processes,
         "check_process_state",
-        lambda c, d: ("exited:0", "hello out", "warn line"),
+        lambda c, d: ("exited:0", "hello out", "warn line", None),
     )
     report = format_process_report(proc, "exited:0", "hello out", "warn line")
     assert "finished with exit code 0" in report
@@ -185,10 +186,29 @@ def test_check_reports_state_and_tails(monkeypatch):
 def test_tail_script_caps_bytes_and_frames_base64():
     script = processes._tail_script("/workspace/processes/p")
     assert f"tail -c {4000 * 4}" in script
+    assert "finished_at" in script
     stdout, stderr = processes._decode_tails(
-        "STATE running\nSTDOUT\n" + "aGVsbG8=\nSTDERR\n"
+        "STATE running\nFINISHED_AT \nSTDOUT\n" + "aGVsbG8=\nSTDERR\n"
     )
     assert stdout == "hello" and stderr == ""
+
+
+def test_check_process_state_parses_the_end_stamp():
+    container = FakeContainer(
+        {
+            "STATE ": "STATE exited:0\nFINISHED_AT 1794185405\nSTDOUT\n\nSTDERR\n\n",
+        }
+    )
+    view = container.outputs["STATE "]
+    lines = view.splitlines()
+    assert lines[1] == "FINISHED_AT 1794185405"
+    state, stdout, stderr, ended = processes.check_process_state(container, "/d")
+    assert state == "exited:0" and ended == 1794185405.0
+    missing_stamp = FakeContainer(
+        {"STATE ": "STATE exited:0\nFINISHED_AT \nSTDOUT\n\nSTDERR\n\n"}
+    )
+    state, stdout, stderr, ended = processes.check_process_state(missing_stamp, "/d")
+    assert ended is None
 
 
 def test_kill_signals_the_group_and_keeps_artifacts(monkeypatch):
@@ -200,7 +220,7 @@ def test_kill_signals_the_group_and_keeps_artifacts(monkeypatch):
     monkeypatch.setattr(
         processes,
         "check_process_state",
-        lambda c, d: ("running", "", ""),
+        lambda c, d: ("running", "", "", None),
     )
     report = kill_process("p1", registry=registry, container=container, by="model")
     assert "Stop signals sent" in report
@@ -222,7 +242,7 @@ def test_kill_on_finished_process_reports_snapshot(monkeypatch):
     proc.exit_code = 0
     registry.processes["p1"] = proc
     monkeypatch.setattr(
-        processes, "check_process_state", lambda c, d: ("exited:0", "", "")
+        processes, "check_process_state", lambda c, d: ("exited:0", "", "", None)
     )
     report = kill_process(
         "p1", registry=registry, container=FakeContainer(), by="model"
@@ -257,6 +277,41 @@ def test_observe_end_time_adopts_the_first_finished_sighting():
     marked = proc.finished_at
     processes.observe_end_time(proc, "exited:1")
     assert proc.finished_at == marked, "the first sighting wins"
+
+
+def test_adopt_end_time_prefers_the_pod_stamp():
+    """The launcher's stamp is the truth; a late fallback cannot win."""
+    true_end = time.time() - 30
+    proc = ProcessRecord(id="p1", command="x", dir="/d")
+    proc.started = true_end - 5
+    processes.adopt_end_time(proc, "exited:0", true_end)
+    assert proc.finished_at == true_end
+    later_fallback = true_end + 20
+    processes.adopt_end_time(proc, "exited:0", None)
+    assert proc.finished_at == true_end, "a stamp already set is kept"
+    processes.observe_end_time(proc, "exited:0")
+    assert proc.finished_at == true_end
+    late_poller = ProcessRecord(id="p2", command="x", dir="/d")
+    late_poller.started = true_end - 5
+    processes.observe_end_time(late_poller, "exited:0")
+    late_poller.finished_at = later_fallback
+    processes.adopt_end_time(late_poller, "exited:0", true_end)
+    assert late_poller.finished_at == true_end, (
+        "the pod stamp replaces a later fallback observation"
+    )
+
+
+def test_finalize_uses_the_launcher_stamp():
+    registry = fresh_registry()
+    proc = ProcessRecord(id="p1", command="x", dir="/d")
+    proc.started = 1794185400.0
+    registry.processes["p1"] = proc
+    processes._finalize_process(registry, proc, "0", "1794185405")
+    assert proc.finished_at == 1794185405.0, "the true end time, not poll time"
+    no_stamp = ProcessRecord(id="p2", command="x", dir="/d")
+    registry.processes["p2"] = no_stamp
+    processes._finalize_process(registry, no_stamp, "0", "")
+    assert no_stamp.finished_at is not None, "the fallback still marks the end"
 
 
 def test_unknown_id_error_explains_recovery():
@@ -325,7 +380,7 @@ def test_watcher_notices_exit_and_keeps_looping(monkeypatch):
     finished = []
     real_finalize = processes._finalize_process
 
-    def one_shot_finalize(reg, record, marker):
+    def one_shot_finalize(reg, record, marker, stamp=""):
         real_finalize(reg, record, marker)
         finished.append(True)
         registry.active = False
@@ -377,7 +432,7 @@ def test_watcher_survives_a_transient_poll_failure(monkeypatch):
     finished = []
     real_finalize = processes._finalize_process
 
-    def one_shot_finalize(reg, record, marker):
+    def one_shot_finalize(reg, record, marker, stamp=""):
         real_finalize(reg, record, marker)
         finished.append(True)
         registry.active = False
@@ -415,7 +470,7 @@ def test_watcher_picks_up_a_process_spawned_later(monkeypatch):
 
     monkeypatch.setattr(time, "sleep", fake_sleep)
 
-    def fake_finalize(reg, record, marker):
+    def fake_finalize(reg, record, marker, stamp=""):
         record.state = "exited"
         record.exit_code = int(marker)
         if record.id == "p2":
@@ -468,6 +523,11 @@ def main():
             test_finalize_fires_one_completion_notice,
             test_completion_payload_carries_the_parent_id,
             test_completion_notice_text_carries_paths,
+            test_finished_reports_use_the_recorded_end_time,
+            test_observe_end_time_adopts_the_first_finished_sighting,
+            test_adopt_end_time_prefers_the_pod_stamp,
+            test_finalize_uses_the_launcher_stamp,
+            test_check_process_state_parses_the_end_stamp,
             test_watcher_notices_exit_and_keeps_looping,
             test_watcher_stops_when_the_pod_dies,
             test_watcher_survives_a_transient_poll_failure,

@@ -290,7 +290,10 @@ def _spawn_launcher(proc: ProcessRecord, command: str, max_runtime_s: int) -> st
 
     The runtime cap exits with code 124; a manual kill of the group
     leaves the launcher to report 128+signal through the same
-    exit_code file.
+    exit_code file. The launcher stamps the true end time (epoch
+    seconds) next to the exit code, so reports quote the real runtime
+    even when the completion watcher polls late (a long-running
+    execute_command on the same pod delays its next poll).
     """
     dir_q = shlex.quote(proc.dir)
     inner = (
@@ -309,6 +312,7 @@ def _spawn_launcher(proc: ProcessRecord, command: str, max_runtime_s: int) -> st
             f'printf %s "$bg" > {dir_q}/pgid',
             'wait "$bg"',
             f'printf %s "$?" > {dir_q}/exit_code',
+            f"date +%s > {dir_q}/finished_at",
         ]
     )
     return f"setsid bash -c {shlex.quote(launcher)} </dev/null >/dev/null 2>&1 &"
@@ -449,10 +453,16 @@ def _watch_processes(registry: PodRegistry, container) -> None:
                 continue
             for proc in running:
                 exit_q = shlex.quote(f"{proc.dir}/exit_code")
+                stamp_q = shlex.quote(f"{proc.dir}/finished_at")
                 try:
                     out = pod_exec(
                         container,
-                        ["bash", "-c", f"cat {exit_q} 2>/dev/null || true"],
+                        [
+                            "bash",
+                            "-c",
+                            f"cat {exit_q} 2>/dev/null || true;"
+                            f' printf " "; cat {stamp_q} 2>/dev/null || true',
+                        ],
                     ).strip()
                 except Exception as exc:
                     failures += 1
@@ -473,14 +483,20 @@ def _watch_processes(registry: PodRegistry, container) -> None:
                     break
                 failures = 0
                 if out:
-                    _finalize_process(registry, proc, out)
+                    marker, _, stamp = out.partition(" ")
+                    _finalize_process(registry, proc, marker, stamp)
             time.sleep(WATCHER_POLL_INTERVAL_S)
     finally:
         with registry.watcher_lock:
             registry.watcher_started = registry.active
 
 
-def _finalize_process(registry: PodRegistry, proc: ProcessRecord, exit_marker: str):
+def _finalize_process(
+    registry: PodRegistry,
+    proc: ProcessRecord,
+    exit_marker: str,
+    finished_stamp: str = "",
+):
     """Record a process's exit and fire its one completion notice.
 
     The model is woken through the completion sink with the artifact
@@ -488,7 +504,9 @@ def _finalize_process(registry: PodRegistry, proc: ProcessRecord, exit_marker: s
     itself, a kill call set the flag first, or wait_for already returned
     the final report). A kill call marks the record killed before the pod
     confirms the exit, so this also runs for killed processes: the real
-    exit code still lands in the record.
+    exit code still lands in the record. The launcher's end-time stamp,
+    when present, sets `finished_at` to the true end rather than the
+    watcher's (possibly late) poll time.
     """
     with registry.lock:
         if proc.state not in ("running", "killed"):
@@ -498,8 +516,11 @@ def _finalize_process(registry: PodRegistry, proc: ProcessRecord, exit_marker: s
         except ValueError:
             proc.exit_code = None
         proc.state = "exited"
-        if proc.finished_at is None:
-            proc.finished_at = time.time()
+        try:
+            stamp = float(finished_stamp) if finished_stamp else None
+        except ValueError:
+            stamp = None
+        adopt_end_time(proc, "exited", stamp)
         already_known = proc.notified or proc.outcome_collected
         proc.notified = True
     if already_known:
@@ -599,6 +620,24 @@ def observe_end_time(record, state: str) -> None:
         record.finished_at = time.time()
 
 
+def adopt_end_time(record, state: str, finished_at: float | None) -> None:
+    """Record the end time from the most trustworthy source available.
+
+    The launcher's own `finished_at` stamp is the true end (written in
+    the pod the moment `timeout` returned); the watcher's and report
+    paths' wall-clock observations are the fallback. The first value
+    set wins, except that a pod stamp adopted later still replaces a
+    fallback that is provably later than the truth.
+    """
+    if state == "running":
+        return
+    if finished_at is not None:
+        if record.finished_at is None or record.finished_at > finished_at:
+            record.finished_at = finished_at
+        return
+    observe_end_time(record, state)
+
+
 def process_status_summary(proc: ProcessRecord) -> str:
     """One-line UI summary of a process's outcome."""
     if proc.state == "running":
@@ -616,7 +655,9 @@ def _tail_script(pod_dir: str) -> str:
     Tails travel base64-encoded so the host-side split on marker lines
     cannot be fooled by the process's own output. Byte counts bound the
     transfer (4 bytes per character covers any UTF-8); the character
-    truncation to the configured tail size happens host-side.
+    truncation to the configured tail size happens host-side. The
+    launcher's `finished_at` stamp (epoch seconds) rides along so a
+    late report can quote the true end time.
     """
     dir_q = shlex.quote(pod_dir)
     byte_cap = load_check_tail_chars() * 4
@@ -626,6 +667,9 @@ def _tail_script(pod_dir: str) -> str:
             'code=$(cat "$dir/exit_code" 2>/dev/null || true)',
             'if [ -n "$code" ]; then printf \'STATE exited:%s\\n\' "$code";'
             " else printf 'STATE running\\n'; fi",
+            "printf 'FINISHED_AT '",
+            'cat "$dir/finished_at" 2>/dev/null || true',
+            "printf '\\n'",
             "printf 'STDOUT\\n'",
             f'tail -c {byte_cap} "$dir/stdout" 2>/dev/null | base64 -w0 || true',
             "printf '\\nSTDERR\\n'",
@@ -641,7 +685,7 @@ def _decode_tails(view: str) -> tuple[str, str]:
     parts: dict[str, str] = {}
     current = None
     for line in lines:
-        if line == "STDOUT" or line == "STDERR":
+        if line in ("STDOUT", "STDERR"):
             current = line
             parts[current] = ""
         elif current is not None and line:
@@ -661,19 +705,30 @@ def _decode_tails(view: str) -> tuple[str, str]:
     )
 
 
-def check_process_state(container, pod_dir: str) -> tuple[str, str, str]:
-    """Probe a process directory: (state_marker, stdout_tail, stderr_tail).
+def check_process_state(container, pod_dir: str) -> tuple[str, str, str, float | None]:
+    """Probe a process directory.
 
-    state_marker is 'running' or 'exited:<code>'. A missing directory
-    surfaces as an exception from the exec; callers report it.
+    Returns (state_marker, stdout_tail, stderr_tail, finished_at_epoch)
+    — finished_at is None while running or when the stamp predates the
+    stamp's introduction. A missing directory surfaces as an exception
+    from the exec; callers report it.
     """
     view = pod_exec(container, ["bash", "-c", _tail_script(pod_dir)])
     lines = view.splitlines()
     state = "running"
     if lines and lines[0].startswith("STATE "):
         state = lines[0][len("STATE ") :].strip()
+    finished_at = None
+    for line in lines[1:]:
+        if line.startswith("FINISHED_AT "):
+            try:
+                finished_at = float(line[len("FINISHED_AT ") :].strip())
+            except ValueError:
+                finished_at = None
+        elif line == "STDOUT":
+            break
     stdout, stderr = _decode_tails(view)
-    return state, stdout, stderr
+    return state, stdout, stderr, finished_at
 
 
 def format_process_report(
@@ -745,9 +800,9 @@ def kill_process(
         if proc is None:
             return "ERROR: " + unknown_id_error(process_id)
         if proc.state != "running":
-            state, stdout, stderr = check_process_state(container, proc.dir)
+            state, stdout, stderr, ended = check_process_state(container, proc.dir)
             if state != "running":
-                observe_end_time(proc, state)
+                adopt_end_time(proc, state, ended)
                 proc.outcome_collected = True
             return (
                 format_process_report(proc, state, stdout, stderr)
@@ -779,7 +834,8 @@ def kill_process(
                 " process check."
             )
         get_logger().info("Process '%s' killed by %s.", process_id, by)
-        state, stdout, stderr = check_process_state(container, proc.dir)
+        state, stdout, stderr, ended = check_process_state(container, proc.dir)
+        adopt_end_time(proc, state, ended)
         return (
             format_process_report(proc, state, stdout, stderr)
             + " Stop signals sent to the whole process group; the exit code"

@@ -68,10 +68,10 @@ from .processes import (
     NONINTERACTIVE_ENV_EXPORTS,
     WAIT_FOR_MAX_S,
     WAIT_FOR_POLL_INTERVAL_S,
+    adopt_end_time,
     check_process_state,
     format_process_report,
     kill_process,
-    observe_end_time,
     registry_for,
     spawn_process,
     unknown_id_error,
@@ -770,12 +770,12 @@ def _check_process(process_id: str) -> str:
         set_last_exit_code(1)
         return "ERROR: " + unknown_id_error(process_id)
     try:
-        state, stdout, stderr = check_process_state(container, proc.dir)
+        state, stdout, stderr, ended = check_process_state(container, proc.dir)
     except Exception as exc:
         set_last_exit_code(1)
         return f"ERROR: could not read the process output: {exc}"
     if state != "running":
-        observe_end_time(proc, state)
+        adopt_end_time(proc, state, ended)
         proc.outcome_collected = True
     return format_process_report(proc, state, stdout, stderr)
 
@@ -895,7 +895,7 @@ def _finished_process_wait(proc, container) -> str:
     the real exit code still reaches the model.
     """
     try:
-        state, stdout, stderr = check_process_state(container, proc.dir)
+        state, stdout, stderr, ended = check_process_state(container, proc.dir)
     except Exception as exc:
         return f"Process '{proc.id}' ended, but its output is unreadable: {exc}"
     if state == "running":
@@ -904,7 +904,7 @@ def _finished_process_wait(proc, container) -> str:
             " exit marker has not landed yet. A notice with the exit"
             " code arrives here when it does."
         )
-    observe_end_time(proc, state)
+    adopt_end_time(proc, state, ended)
     proc.outcome_collected = True
     return (
         format_process_report(proc, state, stdout, stderr)

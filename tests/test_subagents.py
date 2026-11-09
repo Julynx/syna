@@ -20,7 +20,6 @@ from syna.capabilities.subagents import (
     _last_assistant_content,
     _on_subagent_event,
     check_subagent,
-    emit_injected_notice,
     kill_subagent,
     spawn_subagent,
     subagent_completion_notice,
@@ -464,11 +463,14 @@ def test_session_factory_supplies_the_injection_filter(monkeypatch):
 
 
 def test_emit_injected_notice_adds_a_viewer_event():
-    registry = fresh_registry()
-    record = SubagentRecord(id="sn", goal="g", level=2)
-    subagents.emit_injected_notice(registry, record, "Process 'p1' finished.")
-    assert record.events[-1]["kind"] == "notice"
-    assert "finished" in record.events[-1]["text"]
+    """Applied injections render as viewer notices via injected_notice."""
+    from syna.capabilities.subagents import _compact_event
+
+    compact = _compact_event(
+        {"type": "injected_notice", "bg_id": "p1", "content": "Process 'p1' finished."}
+    )
+    assert compact == {"kind": "notice", "text": "Process 'p1' finished."}
+    assert _compact_event({"type": "user_message", "content": "hello"}) is None
 
 
 def test_check_reports_paths_and_state(monkeypatch):
