@@ -94,9 +94,6 @@ NEW_CHAT_STOP_TIMEOUT_S = 20
 IMAGE_CACHE_LIMIT = 32
 SERVER_ENTRY_POINT = "syna-server"
 EXECUTABLE_SUFFIXES = (".exe", ".bat", ".cmd")
-# How long a "Messages & changes" rewind waits for gracefully-stopping
-# subagents before rolling back anyway; their stop lands at the next
-# pause, which a long tool call can hold for a while.
 
 SERVED_IMAGE_EXTENSIONS = {
     ".png": "image/png",

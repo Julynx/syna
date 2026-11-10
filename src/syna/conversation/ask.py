@@ -20,7 +20,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-_ui_state = {"terminal": None, "last_status": None}
+_last_status: str | None = None
 
 _prompt_session = None
 
@@ -40,9 +40,10 @@ def _prompt_line() -> str:
 
 def _print_status(text: str):
     """Print a status line, deduplicating consecutive repeats."""
-    if _ui_state["last_status"] == text:
+    global _last_status
+    if _last_status == text:
         return
-    _ui_state["last_status"] = text
+    _last_status = text
     print(f"  + ({text})")
 
 
@@ -110,7 +111,6 @@ def _create_conversation() -> TerminalSession:
         notify=print,
         checkpoints_enabled=load_checkpoints_enabled(),
     )
-    _ui_state["terminal"] = terminal
     return terminal
 
 

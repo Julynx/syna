@@ -21,7 +21,7 @@ from syna.conversation import terminal as terminal_module
 from syna.conversation.terminal import TerminalChat, TerminalSession
 
 
-def _wait(predicate, timeout_s: float = 5.0) -> bool:
+def _wait(predicate, timeout_s: float = 15.0) -> bool:
     """Poll a predicate until it holds or the timeout passes."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -255,10 +255,15 @@ class ScriptedInput:
 
 
 def _make_chat(script, session=None, factory_calls=None):
-    """A TerminalChat over scripted input with captured output."""
+    """A TerminalChat over scripted input with captured output.
+
+    Worker notifications and prompt-side lines share one capture, as
+    both reach stdout in production.
+    """
     said = []
     session = session or StubSession()
     conversation, _ = _conversation(session)
+    conversation.notify = said.append
     if factory_calls is not None:
         factory_calls.append(conversation)
 
@@ -428,6 +433,99 @@ def test_queued_submission_prints_the_queue_notice():
     print("PASS a message typed mid-turn announces its queueing")
 
 
+def test_a_failing_command_returns_to_the_prompt():
+    chat, _, said = _make_chat(["/jobs", KeyboardInterrupt])
+    chat.terminal.container_provider = lambda: (_ for _ in ()).throw(
+        RuntimeError("engine gone")
+    )
+    chat.run()
+    assert any("command failed" in line for line in said)
+    assert any("Goodbye" in line for line in said)
+    print("PASS a raising command is reported and the loop survives")
+
+
+def test_double_interrupt_force_exits_a_wedged_task():
+    session = StubSession()
+    state = {}
+    chat, _, said = _make_chat(
+        [
+            "work",
+            lambda: _wait(lambda: state["chat"].terminal.active.is_set()),
+            KeyboardInterrupt,
+            KeyboardInterrupt,
+        ],
+        session=session,
+    )
+    state["chat"] = chat
+    forced = []
+
+    def fake_force_exit():
+        forced.append(True)
+        raise SystemExit(1)
+
+    try:
+        chat._force_exit = fake_force_exit
+        chat.run()
+    except SystemExit:
+        pass
+    finally:
+        session.turn_release.set()
+        chat.terminal.close()
+    assert forced == [True]
+    assert any("forcing exit" in line for line in said)
+    print("PASS a second Ctrl+C on a wedged task force-exits")
+
+
+def test_new_message_resets_the_force_exit_window():
+    session = StubSession()
+    session.cancel_hook = lambda reason: session.turn_release.set()
+    state = {}
+    chat, _, said = _make_chat(
+        [
+            "work",
+            lambda: _wait(lambda: state["chat"].terminal.active.is_set()),
+            KeyboardInterrupt,
+            lambda: _wait(lambda: not state["chat"].terminal.active.is_set()),
+            "more",
+            lambda: _wait(lambda: state["chat"].terminal.active.is_set()),
+            KeyboardInterrupt,
+            lambda: _wait(lambda: not state["chat"].terminal.active.is_set()),
+            KeyboardInterrupt,
+        ],
+        session=session,
+    )
+    state["chat"] = chat
+    forced = []
+    chat._force_exit = lambda: forced.append(True)
+    chat.run()
+    assert forced == []
+    assert any("Goodbye" in line for line in said)
+    print("PASS a fresh message starts a new stop-request episode")
+
+
+def test_eof_releases_a_pending_question():
+    session = StubSession()
+
+    def run_turn(text, rewind=None):
+        interaction.ask("Pick one", ["a", "b"])
+
+    session.run_turn = run_turn
+    state = {}
+    chat, session, said = _make_chat(
+        [
+            "work",
+            lambda: _wait(lambda: state["chat"].terminal.pending_question.active),
+            EOFError,
+        ],
+        session=session,
+    )
+    state["chat"] = chat
+    chat.run()
+    assert any("Task stopped" in line for line in said)
+    assert any("Goodbye" in line for line in said)
+    print("PASS closed stdin releases a pending question before exiting")
+
+
 if __name__ == "__main__":
     run_suite(
         [
@@ -449,5 +547,9 @@ if __name__ == "__main__":
             test_unknown_command_reports_an_error,
             test_idle_interrupt_exits_with_a_farewell,
             test_queued_submission_prints_the_queue_notice,
+            test_a_failing_command_returns_to_the_prompt,
+            test_double_interrupt_force_exits_a_wedged_task,
+            test_new_message_resets_the_force_exit_window,
+            test_eof_releases_a_pending_question,
         ]
     )

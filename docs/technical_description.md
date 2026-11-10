@@ -912,8 +912,11 @@ effect. `TerminalChat` is the prompt loop: lifecycle commands (`/stop`,
 `/kill <id>` — the kill runs off the prompt thread), rewind commands
 (`/undo`, `/rewind [n]` with a numbered mode prompt), delegation of pod
 transfer commands to `commands.py`, the Ctrl+C matrix (busy → stop,
-question → release, idle → exit), and EOF semantics (a running turn
-finishes before exit). Worker output flows through an injected printer,
+double-Ctrl+C within the force-exit window → hard exit of a wedged
+session, question → release, idle → exit), and EOF semantics (a running
+task finishes before exit). Every command handler runs under a guard, so
+a failing pod call reports an error instead of killing the loop. Worker
+output flows through an injected printer,
 keeping the state machine testable without a console.
 
 ### `src/syna/conversation/commands.py`

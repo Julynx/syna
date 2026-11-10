@@ -6,9 +6,15 @@ live while a turn runs. Messages typed mid-turn queue FIFO for the
 next turn, /stop cancels the running one the way the web stop button
 does, and ask_user questions are answered straight from the prompt
 through a PendingQuestion. All worker output flows through an injected
-printer, keeping the state machine testable without a console.
+printer, keeping the state machine testable without a console. The
+worker's `active` event spans turns and rewind execution alike, so
+waiting, stopping, and exiting decisions see one honest notion of
+"the worker is doing something"; a second Ctrl+C within
+`FORCE_EXIT_WINDOW_S` while work ignores cancellation force-exits a
+wedged session.
 """
 
+import os
 import threading
 import time
 import uuid
@@ -29,6 +35,7 @@ from .session import AgentSession
 
 PROMPT_TEXT = "(Ask Syna): "
 WORKER_JOIN_TIMEOUT_S = 10.0
+FORCE_EXIT_WINDOW_S = 2.0
 
 LIFECYCLE_COMMANDS = frozenset({"stop", "exit", "newchat"})
 
@@ -60,7 +67,7 @@ TERMINAL_COMMANDS = {
 
 def terminal_command_help() -> str:
     """The terminal-level commands, formatted like the pod-command help."""
-    lines = ["The following commands are supported:"]
+    lines = ["Terminal commands:"]
     for command, params in TERMINAL_COMMANDS.items():
         lines.append(f"\n  {params['description']}\n    /{command}{params['arg_help']}")
     return "\n".join(lines)
@@ -89,10 +96,10 @@ class TerminalSession:
         self.notify = notify
         self.container_provider = container_provider
         self.checkpoints_enabled = checkpoints_enabled
-        self.status_text = "Ready"
         self.inbox: deque = deque()
         self.inbox_ready = threading.Condition()
         self.busy = threading.Event()
+        self.active = threading.Event()
         self.pending_question = PendingQuestion()
         self.pending_rewind = None
         self.shutdown = False
@@ -107,17 +114,24 @@ class TerminalSession:
         A rewind request runs strictly between turns: it executes
         immediately when dequeued, and a rewind parked while a turn was
         busy runs right after the turn ends, before anything else
-        leaves the inbox.
+        leaves the inbox. `active` spans every kind of item processing
+        (turns and rewinds alike), so front-end decisions about
+        waiting, stopping, and exiting see one honest notion of "the
+        worker is doing something".
         """
         while True:
             item = self._next_item()
             if item is None:
                 break
-            if item.get("kind") == "rewind":
-                self._execute_rewind(item)
-                continue
-            self._run_item(item)
-            self._run_pending_rewind()
+            self.active.set()
+            try:
+                if item.get("kind") == "rewind":
+                    self._execute_rewind(item)
+                    continue
+                self._run_item(item)
+                self._run_pending_rewind()
+            finally:
+                self.active.clear()
 
     def _next_item(self) -> dict | None:
         """Block for the next inbox item; None once shutdown is set."""
@@ -171,7 +185,14 @@ class TerminalSession:
                 "Rewind snapshot skipped: the pod is unavailable", exc_info=True
             )
             return None
-        snap = rewind.snapshot(container)
+        try:
+            snap = rewind.snapshot(container)
+        except Exception:
+            get_logger().warning(
+                "Rewind snapshot failed; the message gets no rewind point",
+                exc_info=True,
+            )
+            return None
         if snap is None:
             return None
         return {"key": uuid.uuid4().hex, "snap": snap, "pod": id(container)}
@@ -293,13 +314,13 @@ class TerminalSession:
         return answer
 
     def submit(self, content: str) -> bool:
-        """Queue a user message; True when a turn was already running."""
+        """Queue a user message; True when work was already running."""
         item = {"kind": "message", "id": uuid.uuid4().hex, "content": content}
         with self.inbox_ready:
-            was_busy = self.busy.is_set()
+            was_active = self.active.is_set()
             self.inbox.append(item)
             self.inbox_ready.notify_all()
-        return was_busy
+        return was_active
 
     def stop(self) -> None:
         """Cancel the running turn and release a pending question.
@@ -313,10 +334,10 @@ class TerminalSession:
         self.pending_question.resolve(None)
 
     def wait_idle(self, timeout_s: float | None = None) -> bool:
-        """Block until no turn is running; False when the timeout passed."""
+        """Block until no turn or rewind is running; False on timeout."""
         with self.inbox_ready:
             deadline = None if timeout_s is None else time.monotonic() + timeout_s
-            while self.busy.is_set():
+            while self.active.is_set():
                 remaining = None if deadline is None else deadline - time.monotonic()
                 if remaining is not None and remaining <= 0:
                     return False
@@ -355,6 +376,7 @@ class TerminalChat:
         self.say = say
         self.read_line = read_line
         self.running = True
+        self._last_stop_at = None
         self._commands = {
             "stop": self._command_stop,
             "jobs": self._command_jobs,
@@ -367,7 +389,12 @@ class TerminalChat:
         }
 
     def run(self) -> None:
-        """Read prompt lines until the user exits or closes stdin."""
+        """Read prompt lines until the user exits or closes stdin.
+
+        Every command runs under a guard: a failing handler reports the
+        error and returns to the prompt instead of killing the loop
+        (several commands execute pod calls that can raise).
+        """
         while self.running:
             try:
                 line = self.read_line()
@@ -378,7 +405,11 @@ class TerminalChat:
             except EOFError:
                 self._handle_eof()
                 break
-            self._route_line(line.strip())
+            try:
+                self._route_line(line.strip())
+            except Exception:
+                get_logger().exception("Command failed")
+                self.say("  ! (That command failed; the error was logged.)")
         self._shutdown()
 
     def _route_line(self, text: str) -> None:
@@ -395,8 +426,9 @@ class TerminalChat:
         if self.terminal.pending_question.active:
             self.terminal.pending_question.resolve(text)
             return
-        was_busy = self.terminal.submit(text)
-        if was_busy:
+        self._last_stop_at = None
+        was_active = self.terminal.submit(text)
+        if was_active:
             self.say("  + (Queued - Syna is working; it will arrive next turn.)")
 
     def _dispatch(self, text: str) -> None:
@@ -415,15 +447,38 @@ class TerminalChat:
     def _handle_interrupt(self) -> bool:
         """Route Ctrl+C; False ends the loop.
 
-        While a task is running (a turn, or a question waiting for an
-        answer) this is the stop button; at an idle prompt it exits.
+        While work is running (a turn, a rewind, or a question waiting
+        for an answer) this is the stop button; a second press within
+        FORCE_EXIT_WINDOW_S while the work still has not ended force-
+        exits a wedged session. At an idle prompt Ctrl+C exits.
         """
-        if self.terminal.pending_question.active or self.terminal.busy.is_set():
+        if self.terminal.pending_question.active or self.terminal.active.is_set():
+            now = time.monotonic()
+            if (
+                self._last_stop_at is not None
+                and now - self._last_stop_at <= FORCE_EXIT_WINDOW_S
+            ):
+                self.say("\n  ! (The task would not stop; forcing exit.)")
+                self._force_exit()
+            self._last_stop_at = now
             self.terminal.stop()
             self.say("\n  + (Stopping...)")
             return True
         self.say("  + (Goodbye.)")
         return False
+
+    def _force_exit(self) -> None:
+        """Exit the process when repeated stop requests are ignored.
+
+        A best-effort teardown runs first; a hard exit follows because
+        something in the session is wedged past cooperative
+        cancellation.
+        """
+        try:
+            self._shutdown()
+        except Exception:
+            pass
+        os._exit(1)
 
     def _handle_eof(self) -> None:
         """Closed stdin: let a running turn finish, then exit.
@@ -433,7 +488,7 @@ class TerminalChat:
         """
         if self.terminal.pending_question.active:
             self.terminal.stop()
-        if self.terminal.busy.is_set():
+        if self.terminal.active.is_set():
             self.say(
                 "  + (Input closed; the running task will finish before Syna exits.)"
             )
@@ -552,6 +607,9 @@ class TerminalChat:
 
     def _command_undo(self, args: str) -> None:
         """Rewind to just before the newest rewind point."""
+        if args:
+            self.say("  ! (Usage: /undo)")
+            return
         points = self.terminal.rewind_points_oldest_first()
         self._start_rewind(points[-1][0] if points else None)
 

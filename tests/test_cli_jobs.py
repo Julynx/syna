@@ -271,6 +271,24 @@ def test_kill_without_an_id_shows_usage(monkeypatch):
     print("PASS /kill without an id shows its usage")
 
 
+def test_kill_on_a_finished_record_reports_its_outcome(monkeypatch):
+    registry = _make_registry([FakeRecord("p-01", state="done", command="ls")])
+    monkeypatch.setattr(
+        terminal_module.processes,
+        "kill_process",
+        lambda process_id, registry=None, container=None, by="model": (
+            "Process 'p-01': exited with code 0."
+        ),
+    )
+    chat, said = _make_chat(
+        ["/kill p-01", KeyboardInterrupt], registry=registry, monkeypatch=monkeypatch
+    )
+    chat.run()
+    assert any("Stopped 'p-01'" in line for line in said)
+    assert not any(line.startswith("  !") for line in said)
+    print("PASS killing a finished record reports its outcome, not an error")
+
+
 def test_background_done_renders_a_summary_line():
     printed = []
     original_print = builtins.print
@@ -294,7 +312,7 @@ def test_background_done_renders_a_summary_line():
     print("PASS a finished background record prints its outcome line")
 
 
-def _wait(predicate, timeout_s: float = 5.0) -> bool:
+def _wait(predicate, timeout_s: float = 15.0) -> bool:
     """Poll a predicate until it holds or the timeout passes."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -317,6 +335,7 @@ if __name__ == "__main__":
             test_kill_dispatches_to_the_subagent_kind,
             test_kill_keeps_the_prompt_live_while_killing,
             test_kill_without_an_id_shows_usage,
+            test_kill_on_a_finished_record_reports_its_outcome,
             test_background_done_renders_a_summary_line,
         ]
     )

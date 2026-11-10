@@ -311,3 +311,33 @@ ecord_rewind_notice,
 
 Voice, markdown rendering, settings GUI, transcript replay/persistence,
 Allegro, /now (mid-turn injection).
+
+---
+
+# CLI catch-up: red-team review fixes (2026-11-11)
+
+All eight findings from the adversarial review were applied:
+
+1. Command handlers run under a guard in `TerminalChat.run`: a failing
+   pod call (e.g. /jobs <id> on a vanished process directory) reports an
+   error and returns to the prompt instead of killing the CLI.
+2. The plan's force-exit hatch is implemented: a second Ctrl+C within
+   FORCE_EXIT_WINDOW_S (2 s) while work ignores cancellation runs a
+   best-effort teardown then hard-exits. A fresh submitted message
+   starts a new stop-request episode, so stopping turn A cannot
+   force-exit turn B's first Ctrl+C.
+3. `TerminalSession.active` spans turns and rewind execution alike;
+   wait_idle, EOF, and the Ctrl+C matrix now see rewind execution, so
+   exiting never closes the model client under a running rollback.
+4. `_rewind_info_for` is fully fail-open: a raising snapshot is logged
+   and the message runs without a rewind point.
+5. Dead code removed: the unused `_ui_state["terminal"]` write,
+   `TerminalSession.status_text`, rewind.py's unused `import time`, and
+   the orphaned settle-budget comment in server.py.
+6. The welcome banner no longer prints two identical command headers
+   (the terminal block is labeled "Terminal commands:").
+7. Test `_wait` defaults raised to 15 s (the suite flaked at 5 s under
+   load); the bounded per-suite runner (240 s) is the standard.
+8. New tests: failing-command survival, force-exit and its reset, EOF
+   with a pending question, /undo argument rejection, and killing an
+   already-finished background record.

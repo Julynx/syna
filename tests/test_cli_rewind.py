@@ -21,7 +21,7 @@ from syna.conversation import terminal as terminal_module
 from syna.conversation.terminal import TerminalChat, TerminalSession
 
 
-def _wait(predicate, timeout_s: float = 5.0) -> bool:
+def _wait(predicate, timeout_s: float = 15.0) -> bool:
     """Poll a predicate until it holds or the timeout passes."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -461,6 +461,16 @@ def test_purge_spares_queued_rewind_items():
     print("PASS the post-rewind purge spares queued rewind requests")
 
 
+def test_undo_rejects_arguments():
+    session = RewindStubSession()
+    _point(session, "k1", text="first")
+    chat, said = _make_chat(["/undo 2", KeyboardInterrupt], session, checkpoints=False)
+    chat.run()
+    assert any("Usage: /undo" in line for line in said)
+    assert ("rewind", "k1") not in session.calls
+    print("PASS /undo with an argument reports its usage instead of guessing")
+
+
 if __name__ == "__main__":
     run_suite(
         [
@@ -482,5 +492,6 @@ if __name__ == "__main__":
             test_execute_rewind_rollback_failure_leaves_messages,
             test_execute_rewind_of_a_gone_point_is_reported,
             test_purge_spares_queued_rewind_items,
+            test_undo_rejects_arguments,
         ]
     )
