@@ -89,12 +89,31 @@ def _terminal_responder(session: AgentSession):
                     return choices[int(answer) - 1]
                 return answer
         except (KeyboardInterrupt, EOFError):
-            session.cancel()
+            stop_turn(session)
             raise InteractionCancelled(
                 "The user stopped the task before answering."
             ) from None
 
     return responder
+
+
+def stop_turn(session: AgentSession):
+    """Request the running turn's interruption like the web stop button.
+
+    The session records the cancellation in the conversation as a
+    harness notice, and the turn unwinds at its next checkpoint. While
+    the turn loop still runs on the calling thread an interrupt usually
+    tears the frame down before the cooperative unwind happens, so the
+    notice is best-effort here; the threaded front-end delivers it
+    reliably.
+    """
+    session.cancel("user interrupt")
+    print("\n  + (Stopping...)")
+
+
+def _farewell():
+    """Print the goodbye line shown when the session ends."""
+    print("  + (Goodbye.)")
 
 
 def _handle_slash_command(query: str, session: AgentSession):
@@ -168,6 +187,9 @@ def ask_loop():
                 query = input("(Ask Syna): ")
             except EOFError:
                 break
+            except KeyboardInterrupt:
+                _farewell()
+                break
             if not query.strip():
                 continue
             if query.strip() == NEW_CHAT_COMMAND:
@@ -181,8 +203,7 @@ def ask_loop():
             try:
                 session.run_turn(query)
             except KeyboardInterrupt:
-                session.cancel()
-                print("\n  + (Task stopped. Press CTRL+C again to quit.)")
+                stop_turn(session)
             except InteractionCancelled:
                 print("\n  + (Task stopped.)")
     finally:
