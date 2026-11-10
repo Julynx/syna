@@ -355,6 +355,17 @@
   transform: scale(0.98);
 }
 
+/* The two revert actions are destructive: the stop button's danger
+   treatment, quieted to normal case. */
+.rewind-choice.danger {
+  color: var(--danger);
+  border-color: var(--danger-line);
+}
+.rewind-choice.danger:hover {
+  background: var(--danger-tint);
+  border-color: var(--danger-line);
+}
+
 .inline-image-frame {
   position: relative;
   display: inline-block;

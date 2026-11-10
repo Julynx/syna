@@ -365,10 +365,10 @@ function openRewindModal(id) {
   title.textContent = "Choose what to revert";
   modal.appendChild(title);
   const close = () => backdrop.remove();
-  const choice = (label, action) => {
+  const choice = (label, action, className = "rewind-choice") => {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "rewind-choice";
+    btn.className = className;
     btn.textContent = label;
     btn.addEventListener("click", () => {
       close();
@@ -376,8 +376,12 @@ function openRewindModal(id) {
     });
     return btn;
   };
-  modal.appendChild(choice("Messages only", () => sendRewind(id, "messages")));
-  modal.appendChild(choice("Messages & workspace", () => sendRewind(id, "all")));
+  modal.appendChild(
+    choice("Messages only", () => sendRewind(id, "messages"), "rewind-choice danger"),
+  );
+  modal.appendChild(
+    choice("Messages & workspace", () => sendRewind(id, "all"), "rewind-choice danger"),
+  );
   modal.appendChild(choice("Cancel", null));
   backdrop.appendChild(modal);
   backdrop.addEventListener("click", (event) => {
@@ -2833,7 +2837,7 @@ async function openSettingsModal() {
   // --- Checkpoints ---
   const catCheck = document.createElement("div");
   catCheck.className = "settings-group";
-  catCheck.appendChild(categoryHeader("Checkpoints"));
+  catCheck.appendChild(categoryHeader("Workspace"));
 
   const checkOpts = [
     { value: "off", label: "No (Default)" },
