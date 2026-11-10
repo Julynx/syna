@@ -16,13 +16,14 @@ from collections import deque
 from typing import Callable
 
 from ..config import get_logger
+from ..capabilities import processes, subagents
 from ..interaction import (
     InteractionCancelled,
     PendingQuestion,
     register_responder,
     unregister_responder,
 )
-from ..state import reset_shared_container
+from ..state import peek_shared_container, reset_shared_container
 from .commands import get_command_help, parse_and_execute_command
 from .session import AgentSession
 
@@ -33,6 +34,14 @@ LIFECYCLE_COMMANDS = frozenset({"stop", "exit", "newchat"})
 
 TERMINAL_COMMANDS = {
     "stop": {"description": "Stop the running task.", "arg_help": ""},
+    "jobs": {
+        "description": "List background processes and subagents.",
+        "arg_help": " [id] (inspect one record's output when given)",
+    },
+    "kill": {
+        "description": "Stop a background process or subagent.",
+        "arg_help": " 'id'",
+    },
     "newchat": {
         "description": "Drop the conversation and destroy the pod.",
         "arg_help": "",
@@ -61,9 +70,15 @@ class TerminalSession:
     to run before anything else leaves the inbox.
     """
 
-    def __init__(self, session: AgentSession, notify: Callable[[str], None]):
+    def __init__(
+        self,
+        session: AgentSession,
+        notify: Callable[[str], None],
+        container_provider: Callable[[], object | None] = peek_shared_container,
+    ):
         self.session = session
         self.notify = notify
+        self.container_provider = container_provider
         self.status_text = "Ready"
         self.inbox: deque = deque()
         self.inbox_ready = threading.Condition()
@@ -207,6 +222,8 @@ class TerminalChat:
         self.running = True
         self._commands = {
             "stop": self._command_stop,
+            "jobs": self._command_jobs,
+            "kill": self._command_kill,
             "newchat": self._command_newchat,
             "exit": self._command_exit,
             "help": self._command_help,
@@ -296,6 +313,105 @@ class TerminalChat:
             return
         self.terminal.stop()
         self.say("  + (Stopping...)")
+
+    def _container(self):
+        """The pod container, or None when it is not running."""
+        return self.terminal.container_provider()
+
+    def _command_jobs(self, args: str) -> None:
+        """List background work, or inspect one record's output."""
+        container = self._container()
+        if container is None:
+            self.say("  ! (The pod is not running.)")
+            return
+        registry = processes.registry_for(container)
+        target = args.strip()
+        if target:
+            self._show_background_record(registry, container, target)
+            return
+        with registry.lock:
+            process_rows = sorted(registry.processes.values(), key=lambda p: p.started)
+            subagent_rows = sorted(registry.subagents.values(), key=lambda s: s.started)
+        if not process_rows and not subagent_rows:
+            self.say("  + (No background work.)")
+            return
+        for proc in process_rows:
+            self.say(
+                f"    process  {proc.id}  {processes.process_status_summary(proc)}"
+                f"  -  {proc.command}"
+            )
+        for sub in subagent_rows:
+            self.say(
+                f"    subagent {sub.id}  {subagents.subagent_status_summary(sub)}"
+                f"  -  {sub.goal}"
+            )
+
+    def _show_background_record(self, registry, container, background_id: str) -> None:
+        """Print one record's report: state, runtime, and output tails."""
+        entry = registry.lookup(background_id)
+        if entry is None:
+            self.say(f"  ! ({processes.unknown_id_error(background_id)})")
+            return
+        kind, record = entry
+        if kind == "process":
+            state, stdout, stderr, _ended = processes.check_process_state(
+                container, record.dir
+            )
+            self.say(processes.format_process_report(record, state, stdout, stderr))
+        else:
+            self.say(
+                subagents.check_subagent(
+                    background_id, registry=registry, container=container
+                )
+            )
+
+    def _command_kill(self, args: str) -> None:
+        """Stop one background record; the kill may take a few seconds.
+
+        The kill talks to the pod (signals, artifact copies), so it runs
+        on a short-lived thread and the prompt stays live; the outcome
+        line arrives when it finishes.
+        """
+        background_id = args.strip()
+        if not background_id:
+            self.say("  ! (Usage: /kill <id>)")
+            return
+        container = self._container()
+        if container is None:
+            self.say("  ! (The pod is not running.)")
+            return
+        registry = processes.registry_for(container)
+        entry = registry.lookup(background_id)
+        if entry is None:
+            self.say(f"  ! ({processes.unknown_id_error(background_id)})")
+            return
+        kind, _record = entry
+
+        def run():
+            try:
+                if kind == "process":
+                    report = processes.kill_process(
+                        background_id,
+                        registry=registry,
+                        container=container,
+                        by="user",
+                    )
+                else:
+                    report = subagents.kill_subagent(
+                        background_id,
+                        registry=registry,
+                        container=container,
+                        by="user",
+                    )
+                if report.startswith("ERROR: "):
+                    self.say(f"  ! ({report[len('ERROR: ') :]})")
+                else:
+                    self.say(f"  + (Stopped '{background_id}'.)\n{report}")
+            except Exception as exc:
+                get_logger().exception("Kill failed for '%s'", background_id)
+                self.say(f"  ! (Could not stop '{background_id}': {exc})")
+
+        threading.Thread(target=run, name="syna-cli-kill", daemon=True).start()
 
     def _command_newchat(self, args: str) -> None:
         """Drop the conversation and destroy the pod; start fresh."""

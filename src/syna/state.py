@@ -288,6 +288,17 @@ def get_container() -> Container:
     return _global_container
 
 
+def peek_shared_container() -> Container | None:
+    """Return the shared container without starting one.
+
+    Inspection commands (/jobs, /kill, the rewind paths) must report a
+    missing pod instead of silently bringing one up, so they look
+    without creating. Thread-bound containers are not consulted: they
+    belong to tool execution, not to the front-ends.
+    """
+    return _global_container
+
+
 def destroy_container(container: Container) -> None:
     """Stop and force-remove a container."""
     pod_init.forget_init_results(container)

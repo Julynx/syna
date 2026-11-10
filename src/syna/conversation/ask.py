@@ -86,6 +86,11 @@ def _print_event(event):
         print(f"\n[Syna]: {event['content']}\n")
     elif kind == "compaction":
         print(f"\n----- Compaction -----\n{event['summary']}\n")
+    elif kind == "background_done":
+        summary = str(event.get("summary", "")).strip()
+        kind_name = str(event.get("kind", "work"))
+        background_id = str(event.get("id", ""))
+        print(f"  + │Background {kind_name} '{background_id}': {summary}")
     elif kind == "error":
         print(f"\n  ! ({event['text']})")
 
