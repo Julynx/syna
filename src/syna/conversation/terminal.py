@@ -1,0 +1,334 @@
+"""Terminal front-end: an inbox worker and a live prompt for the CLI.
+
+The web server drives AgentSession turns from a dedicated worker fed by
+an inbox; the terminal shares that architecture so the prompt stays
+live while a turn runs. Messages typed mid-turn queue FIFO for the
+next turn, /stop cancels the running one the way the web stop button
+does, and ask_user questions are answered straight from the prompt
+through a PendingQuestion. All worker output flows through an injected
+printer, keeping the state machine testable without a console.
+"""
+
+import threading
+import time
+import uuid
+from collections import deque
+from typing import Callable
+
+from ..config import get_logger
+from ..interaction import (
+    InteractionCancelled,
+    PendingQuestion,
+    register_responder,
+    unregister_responder,
+)
+from ..state import reset_shared_container
+from .commands import get_command_help, parse_and_execute_command
+from .session import AgentSession
+
+PROMPT_TEXT = "(Ask Syna): "
+WORKER_JOIN_TIMEOUT_S = 10.0
+
+LIFECYCLE_COMMANDS = frozenset({"stop", "exit", "newchat"})
+
+TERMINAL_COMMANDS = {
+    "stop": {"description": "Stop the running task.", "arg_help": ""},
+    "newchat": {
+        "description": "Drop the conversation and destroy the pod.",
+        "arg_help": "",
+    },
+    "exit": {"description": "End the chat with Syna.", "arg_help": ""},
+}
+
+
+def terminal_command_help() -> str:
+    """The terminal-level commands, formatted like the pod-command help."""
+    lines = ["The following commands are supported:"]
+    for command, params in TERMINAL_COMMANDS.items():
+        lines.append(f"\n  {params['description']}\n    /{command}{params['arg_help']}")
+    return "\n".join(lines)
+
+
+class TerminalSession:
+    """One CLI conversation: an inbox worker driving AgentSession turns.
+
+    The worker dequeues inbox items and runs one turn per user message,
+    owning the session's cancel state: it clears any pending stop right
+    before the turn starts, so a stop typed between turns survives
+    until then instead of being erased early. ask_user questions block
+    the worker on a PendingQuestion the prompt thread resolves, and a
+    rewind requested while a turn is busy is parked in `pending_rewind`
+    to run before anything else leaves the inbox.
+    """
+
+    def __init__(self, session: AgentSession, notify: Callable[[str], None]):
+        self.session = session
+        self.notify = notify
+        self.status_text = "Ready"
+        self.inbox: deque = deque()
+        self.inbox_ready = threading.Condition()
+        self.busy = threading.Event()
+        self.pending_question = PendingQuestion()
+        self.pending_rewind = None
+        self.shutdown = False
+        self._worker = threading.Thread(
+            target=self._run, name="syna-cli-worker", daemon=True
+        )
+        self._worker.start()
+
+    def _run(self) -> None:
+        """Execute queued turns until shutdown, one inbox item at a time."""
+        while True:
+            item = self._next_item()
+            if item is None:
+                break
+            self._run_item(item)
+
+    def _next_item(self) -> dict | None:
+        """Block for the next inbox item; None once shutdown is set."""
+        with self.inbox_ready:
+            while not self.inbox and not self.shutdown:
+                self.inbox_ready.wait()
+            if self.inbox:
+                return self.inbox.popleft()
+            return None
+
+    def _run_item(self, item: dict) -> None:
+        """Run one user-message turn with the web worker's lifecycle.
+
+        The responder registration, the pending-question release, and
+        the busy flag mirror the server's turn wrapper so a stop or a
+        cancelled question unwinds the turn the same way in both
+        front-ends.
+        """
+        self.busy.set()
+        register_responder(self._answer_question)
+        try:
+            self.session.clear_cancel()
+            self.session.run_turn(item["content"])
+        except InteractionCancelled:
+            self.notify("  + (Task stopped.)")
+        except Exception:
+            get_logger().exception("Turn failed")
+            self.notify("  ! (The task failed unexpectedly. Please retry.)")
+        finally:
+            unregister_responder()
+            self.pending_question.resolve(None)
+            self.busy.clear()
+            with self.inbox_ready:
+                self.inbox_ready.notify_all()
+
+    def _answer_question(self, question_text: str, choices: list[str]) -> str:
+        """Publish one ask_user question and block for the answer.
+
+        Runs on the worker thread inside the ask_user tool. The prompt
+        thread resolves the PendingQuestion with the user's line; None
+        (a stop) unwinds the tool as InteractionCancelled. A number
+        picks one of the shown choices, any other text is the answer.
+        """
+        answers = self.pending_question.open()
+        try:
+            self.notify(f"\n  ? {question_text}")
+            if choices:
+                for number, choice in enumerate(choices, start=1):
+                    self.notify(f"    {number}. {choice}")
+                self.notify("    Answer with a number, or type your own response.")
+            answer = answers.get()
+        finally:
+            self.pending_question.resolve(None)
+        if answer is None:
+            raise InteractionCancelled("The user stopped the task before answering.")
+        if choices and answer.isdigit() and 1 <= int(answer) <= len(choices):
+            return choices[int(answer) - 1]
+        return answer
+
+    def submit(self, content: str) -> bool:
+        """Queue a user message; True when a turn was already running."""
+        item = {"kind": "message", "id": uuid.uuid4().hex, "content": content}
+        with self.inbox_ready:
+            was_busy = self.busy.is_set()
+            self.inbox.append(item)
+            self.inbox_ready.notify_all()
+        return was_busy
+
+    def stop(self) -> None:
+        """Cancel the running turn and release a pending question.
+
+        This is the web stop button's semantics: the turn unwinds at
+        its next checkpoint recording a harness notice, and a question
+        waiting for an answer is released so the blocked tool fails
+        cleanly instead of blocking forever.
+        """
+        self.session.cancel("user interrupt")
+        self.pending_question.resolve(None)
+
+    def wait_idle(self, timeout_s: float | None = None) -> bool:
+        """Block until no turn is running; False when the timeout passed."""
+        with self.inbox_ready:
+            deadline = None if timeout_s is None else time.monotonic() + timeout_s
+            while self.busy.is_set():
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    return False
+                self.inbox_ready.wait(0.2 if remaining is None else min(0.2, remaining))
+        return True
+
+    def close(self, join_timeout_s: float = WORKER_JOIN_TIMEOUT_S) -> None:
+        """Stop any running turn and end the worker thread."""
+        self.shutdown = True
+        self.stop()
+        with self.inbox_ready:
+            self.inbox_ready.notify_all()
+        self._worker.join(join_timeout_s)
+
+
+class TerminalChat:
+    """The prompt loop: routes lines to answers, commands, and the inbox.
+
+    Slash commands dispatch to the terminal-level table first and
+    delegate everything else to the pod-command registry. While a
+    question is pending, every non-lifecycle line answers it, matching
+    the web's behavior of resolving the question with whatever the
+    user sends next. Ctrl+C stops the running task and only exits when
+    the prompt is idle; closed stdin lets a running turn finish first.
+    """
+
+    def __init__(
+        self,
+        terminal: TerminalSession,
+        conversation_factory: Callable[[], TerminalSession],
+        say: Callable[[str], None],
+        read_line: Callable[[], str],
+    ):
+        self.terminal = terminal
+        self.conversation_factory = conversation_factory
+        self.say = say
+        self.read_line = read_line
+        self.running = True
+        self._commands = {
+            "stop": self._command_stop,
+            "newchat": self._command_newchat,
+            "exit": self._command_exit,
+            "help": self._command_help,
+        }
+
+    def run(self) -> None:
+        """Read prompt lines until the user exits or closes stdin."""
+        while self.running:
+            try:
+                line = self.read_line()
+            except KeyboardInterrupt:
+                if not self._handle_interrupt():
+                    break
+                continue
+            except EOFError:
+                self._handle_eof()
+                break
+            self._route_line(line.strip())
+        self._shutdown()
+
+    def _route_line(self, text: str) -> None:
+        """Send one input line to the question, a command, or the inbox."""
+        if not text:
+            return
+        if text.startswith("/"):
+            name = text[1:].partition(" ")[0]
+            if name not in LIFECYCLE_COMMANDS and self.terminal.pending_question.active:
+                self.terminal.pending_question.resolve(text)
+                return
+            self._dispatch(text)
+            return
+        if self.terminal.pending_question.active:
+            self.terminal.pending_question.resolve(text)
+            return
+        was_busy = self.terminal.submit(text)
+        if was_busy:
+            self.say("  + (Queued - Syna is working; it will arrive next turn.)")
+
+    def _dispatch(self, text: str) -> None:
+        """Run a slash command: terminal table first, pod registry second."""
+        name = text[1:].partition(" ")[0]
+        handler = self._commands.get(name)
+        if handler is not None:
+            handler(text[len(name) + 1 :].strip())
+            return
+        try:
+            result = parse_and_execute_command(text, session=self.terminal.session)
+            self.say(f"  + ({result})")
+        except ValueError as exc:
+            self.say(f"  ! ({exc})")
+
+    def _handle_interrupt(self) -> bool:
+        """Route Ctrl+C; False ends the loop.
+
+        While a task is running (a turn, or a question waiting for an
+        answer) this is the stop button; at an idle prompt it exits.
+        """
+        if self.terminal.pending_question.active or self.terminal.busy.is_set():
+            self.terminal.stop()
+            self.say("\n  + (Stopping...)")
+            return True
+        self.say("  + (Goodbye.)")
+        return False
+
+    def _handle_eof(self) -> None:
+        """Closed stdin: let a running turn finish, then exit.
+
+        A pending question can never be answered without input, so it
+        is released and the turn unwinds as stopped.
+        """
+        if self.terminal.pending_question.active:
+            self.terminal.stop()
+        if self.terminal.busy.is_set():
+            self.say(
+                "  + (Input closed; the running task will finish before Syna exits.)"
+            )
+            self.terminal.wait_idle()
+        self.say("  + (Goodbye.)")
+
+    def _command_stop(self, args: str) -> None:
+        """Stop the running task, or say so when nothing is running."""
+        if (
+            not self.terminal.busy.is_set()
+            and not self.terminal.pending_question.active
+        ):
+            self.say("  + (Nothing is running.)")
+            return
+        self.terminal.stop()
+        self.say("  + (Stopping...)")
+
+    def _command_newchat(self, args: str) -> None:
+        """Drop the conversation and destroy the pod; start fresh."""
+        self.say("  + (Cleaning up the pod, please wait...)")
+        old = self.terminal
+        self._close_conversation(old)
+        try:
+            reset_shared_container()
+        except Exception:
+            self.say(
+                "  ! (Could not clean up the old pod; starting a new session anyway.)"
+            )
+        self.terminal = self.conversation_factory()
+        self.say("  + (Started a fresh chat.)")
+
+    def _command_exit(self, args: str) -> None:
+        """End the chat with Syna."""
+        self.say("  + (Goodbye.)")
+        self.running = False
+
+    def _command_help(self, args: str) -> None:
+        """Show the pod commands and the terminal commands."""
+        self.say(get_command_help())
+        self.say(terminal_command_help())
+
+    def _close_conversation(self, terminal: TerminalSession) -> None:
+        """Stop one conversation's worker and release its resources."""
+        terminal.close()
+        try:
+            terminal.session.close()
+        except Exception:
+            pass
+
+    def _shutdown(self) -> None:
+        """Tear the current conversation down after the loop ends."""
+        self._close_conversation(self.terminal)

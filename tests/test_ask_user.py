@@ -200,30 +200,27 @@ def test_pending_question_release_unblocks_waiter():
 
 
 def test_cli_responder_number_picks_a_choice():
-    from syna.conversation.ask import _terminal_responder
+    from syna.conversation.terminal import TerminalSession
 
-    class StubSession:
-        def __init__(self):
-            self.cancelled = False
+    terminal = TerminalSession.__new__(TerminalSession)
+    terminal.pending_question = interaction.PendingQuestion()
+    printed = []
+    terminal.notify = printed.append
+    outcome = {}
 
-        def cancel(self):
-            self.cancelled = True
+    def asker():
+        outcome["answer"] = terminal._answer_question(QUESTION, CHOICES)
 
-    session = StubSession()
-    responder = _terminal_responder(session)
-    inputs = iter(["2"])
+    thread = threading.Thread(target=asker, daemon=True)
+    thread.start()
+    deadline = time.time() + 5
+    while not terminal.pending_question.active and time.time() < deadline:
+        time.sleep(0.02)
+    terminal.pending_question.resolve("2")
+    thread.join(timeout=5)
 
-    import builtins
-
-    original_input = builtins.input
-    builtins.input = lambda prompt="": next(inputs)
-    try:
-        chosen = responder(QUESTION, CHOICES)
-    finally:
-        builtins.input = original_input
-
-    assert chosen == "postgres"
-    assert not session.cancelled
+    assert outcome.get("answer") == "postgres"
+    assert any(QUESTION in line for line in printed)
 
 
 def main():
