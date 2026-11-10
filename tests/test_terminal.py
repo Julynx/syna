@@ -54,7 +54,7 @@ class StubSession:
         if self.cancel_hook is not None:
             self.cancel_hook(reason)
 
-    def run_turn(self, text):
+    def run_turn(self, text, rewind=None):
         self.turn_release.clear()
         self.calls.append(("turn", text))
         self.turn_started.set()
@@ -136,7 +136,7 @@ def test_question_flows_from_worker_to_prompt_and_back():
     session = StubSession()
     printed = []
 
-    def run_turn(text):
+    def run_turn(text, rewind=None):
         answer = interaction.ask("Pick one", ["a", "b"])
         session.calls.append(("answer", answer))
 
@@ -158,7 +158,7 @@ def test_question_flows_from_worker_to_prompt_and_back():
 def test_stop_releases_a_pending_question_as_cancelled():
     session = StubSession()
 
-    def run_turn(text):
+    def run_turn(text, rewind=None):
         interaction.ask("Pick one", ["a", "b"])
 
     session.run_turn = run_turn
@@ -178,7 +178,7 @@ def test_stop_releases_a_pending_question_as_cancelled():
 def test_worker_survives_a_failing_turn():
     session = StubSession()
 
-    def run_turn(text):
+    def run_turn(text, rewind=None):
         session.calls.append(("turn", text))
         if text == "bad":
             raise RuntimeError("boom")
@@ -307,7 +307,7 @@ def test_stop_when_idle_says_nothing_is_running():
 def test_interrupt_during_a_question_releases_it():
     session = StubSession()
 
-    def run_turn(text):
+    def run_turn(text, rewind=None):
         try:
             interaction.ask("Pick one", ["a", "b"])
         except interaction.InteractionCancelled:
@@ -334,7 +334,7 @@ def test_interrupt_during_a_question_releases_it():
 def test_question_is_answered_by_the_next_prompt_line():
     session = StubSession()
 
-    def run_turn(text):
+    def run_turn(text, rewind=None):
         answer = interaction.ask("Pick one", ["a", "b"])
         session.calls.append(("answer", answer))
 

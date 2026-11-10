@@ -232,3 +232,82 @@ stop (fake registry).
    workspace may contain files from the undone work and the model is
    told to inspect before relying on it.
 
+
+---
+
+# CLI catch-up: stop, queue, background work, rewind
+
+The web UI had grown far past the CLI; the four highest-value gaps were
+ported. Decisions locked in via Q&A (2026-11-10).
+
+## Phase 1 - Stop semantics (done)
+
+- stop_turn(session) mirrors the web stop button's request.
+- Ctrl+C matrix: during a turn -> stop; at an idle prompt -> exit with a
+  farewell; during a pending question -> the same stop path. EOF ends the
+  session. (Superseded by phase 2's richer matrix but kept compatible.)
+
+## Phase 2 - Worker thread + inbox (done)
+
+- New conversation/terminal.py: TerminalSession (worker thread, inbox,
+  busy flag, PendingQuestion, pending_rewind slot) + TerminalChat (prompt
+  loop, dispatch, lifecycle).
+- prompt_toolkit adopted (user-approved new dependency): patch_stdout
+  keeps worker events from clobbering the input line; the rolling \\r
+  status line became a deduplicated printed status.
+- Messages typed mid-turn queue FIFO for the next turn (no send-now verb;
+  deliberate CLI divergence). /stop releases a pending question too.
+- The worker exclusively clears the session's cancel state right before
+  each turn (a stop racing a turn start can never be erased).
+- EOF: a running turn finishes before exit; a pending question is released.
+- /newchat tears the old conversation down (stop + join + reset pod) and
+  swaps in a fresh one.
+
+## Phase 3 - /jobs and /kill (done)
+
+- ackground_done events render as outcome lines.
+- /jobs lists the pod's registry (processes + subagents, state, command or
+  goal); /jobs <id> prints a process report (state, runtime, tails) or a
+  subagent report. No container -> 'the pod is not running', never a
+  silent pod start (new state.peek_shared_container).
+- /kill <id> dispatches to kill_process/kill_subagent with by='user' on a
+  short-lived thread so the prompt stays live; the outcome line arrives
+  when the kill finishes.
+
+## Phase 4 - Rewind (done)
+
+- The pre-rollback background sweep was extracted into
+  processes.stop_running_background_work(container, on_stopped,
+  settle_timeout_s); the web server's _stop_background_for_rewind is a
+  thin wrapper over it. One source of truth for the
+  mark-collected-before-kill ordering and the settle loop.
+- Rewind points are created in the worker when checkpoints_enabled is
+  set: 
+ewind.snapshot() after the pending stop is cleared, exactly the
+  web worker's ordering; any failure means no point, never a blocked turn.
+- /undo rewinds the newest point; /rewind lists points (with previews and
+  compacted markers) and /rewind <n> selects one. A numbered prompt picks
+  Messages only / Messages & workspace / Cancel.
+- Busy path: stop + park in pending_rewind; the worker executes it after
+  the turn ends, before anything else leaves the inbox. Idle path: enqueued
+  as a rewind inbox item.
+- Execution mirrors the server's _execute_rewind: recreated-pod guard,
+  sweep, files-first rollback, session.rewind, 
+ecord_rewind_notice,
+  inbox purge sparing queued rewind requests. Output names the original
+  text so it can be re-sent (the web's input-refill analog).
+
+## Test suites
+
+- tests/test_terminal.py (18): worker lifecycle, FIFO queue, question
+  flow, close semantics, chat routing matrix.
+- tests/test_cli_jobs.py (11): jobs listing/inspection, kill dispatch and
+  thread-offloading, background_done rendering.
+- tests/test_cli_rewind.py (18): point creation gating, commands, parking
+  order, execution paths, purge sparing.
+- tests/test_ask_user.py updated for the PendingQuestion-based responder.
+
+## Explicitly out of scope
+
+Voice, markdown rendering, settings GUI, transcript replay/persistence,
+Allegro, /now (mid-turn injection).

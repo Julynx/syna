@@ -922,3 +922,89 @@ def kill_process(
         + " The process is still terminating; its exit code lands in"
         " the record when it ends, and a notice arrives here then."
     )
+
+
+SUBAGENT_SETTLE_S = 10
+
+
+def stop_running_background_work(
+    container,
+    on_stopped=None,
+    settle_timeout_s=None,
+) -> int:
+    """Stop every process and subagent running on the pod's registry.
+
+    Called before a workspace rollback: background work outlives turns
+    by design, so a rollback would revert the files underneath running
+    work and destroy its output artifacts mid-write. Each record is
+    marked collected BEFORE the kill: the exactly-once machinery then
+    suppresses the model-facing notice entirely, which is the honest
+    state for a rewound timeline that never knew about the work (a
+    surviving check or wait_for can still report the record's real
+    end).
+
+    The sweep repeats until no work is running or the settle budget
+    expires, so a dying subagent's last-gasp spawn is caught too;
+    subagents stop gracefully (their next pause) and the wait is
+    bounded. The stop fails open: a record that cannot be killed is
+    logged and the rollback proceeds anyway. `on_stopped` receives
+    (kind, record, summary) for each successfully stopped record.
+    Returns how many records were stopped.
+    """
+    from . import subagents
+
+    if container is None:
+        return 0
+    budget = SUBAGENT_SETTLE_S if settle_timeout_s is None else settle_timeout_s
+    registry = registry_for(container)
+    stopped = 0
+    deadline = time.monotonic() + budget
+    still_stopping = 0
+    while True:
+        with registry.lock:
+            targets = [
+                ("process", proc)
+                for proc in registry.processes.values()
+                if proc.state == "running"
+            ] + [
+                ("subagent", sub)
+                for sub in registry.subagents.values()
+                if sub.state == "running" and not sub.kill_requested.is_set()
+            ]
+            still_stopping = sum(
+                1 for sub in registry.subagents.values() if sub.state == "running"
+            )
+        for kind, record in targets:
+            with registry.lock:
+                record.outcome_collected = True
+            try:
+                if kind == "process":
+                    kill_process(
+                        record.id, registry=registry, container=container, by="user"
+                    )
+                else:
+                    subagents.kill_subagent(
+                        record.id, registry=registry, container=container, by="user"
+                    )
+            except Exception:
+                get_logger().exception(
+                    "Background-work sweep could not stop %s '%s'", kind, record.id
+                )
+                continue
+            stopped += 1
+            summary = (
+                process_status_summary(record)
+                if kind == "process"
+                else subagents.subagent_status_summary(record)
+            )
+            if on_stopped is not None:
+                on_stopped(kind, record, summary)
+        if still_stopping == 0 or time.monotonic() >= deadline:
+            break
+        time.sleep(0.2)
+    if still_stopping:
+        get_logger().info(
+            "Background-work sweep proceeding with %d subagent(s) still stopping",
+            still_stopping,
+        )
+    return stopped

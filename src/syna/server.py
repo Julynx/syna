@@ -97,7 +97,6 @@ EXECUTABLE_SUFFIXES = (".exe", ".bat", ".cmd")
 # How long a "Messages & changes" rewind waits for gracefully-stopping
 # subagents before rolling back anyway; their stop lands at the next
 # pause, which a long tool call can hold for a while.
-REWIND_SUBAGENT_SETTLE_S = 10
 
 SERVED_IMAGE_EXTENSIONS = {
     ".png": "image/png",
@@ -672,86 +671,24 @@ class SessionRecord:
     def _stop_background_for_rewind(self) -> int:
         """Stop every process and subagent before a workspace rollback.
 
-        Background work outlives turns by design, so a rollback would
-        revert the files underneath running work and destroy its output
-        artifacts mid-write. Each record is marked collected BEFORE the
-        kill: the exactly-once machinery then suppresses the model-facing
-        notice entirely, which is the honest state for a rewound timeline
-        that never knew about the work (a surviving check or wait_for can
-        still report the record's real end). A synthetic background_done
-        event per kill keeps the work panel honest immediately.
-
-        The sweep repeats until no work is running or the settle budget
-        expires, so a dying subagent's last-gasp spawn is caught too;
-        subagents stop gracefully (their next pause) and the wait is
-        bounded. The stop fails open: a record that cannot be killed is
-        logged and the rollback proceeds anyway. Returns how many
-        records were stopped.
+        The shared sweep marks each record collected before the kill
+        (suppressing the model-facing completion notice exactly once),
+        repeats until no work is running or the settle budget expires,
+        and fails open. Each stop is announced as a synthetic
+        `background_done` event so the work panel stays honest
+        immediately.
         """
-        if self.container is None:
-            return 0
-        registry = processes.registry_for(self.container)
-        stopped = 0
-        deadline = time.monotonic() + REWIND_SUBAGENT_SETTLE_S
-        still_stopping = 0
-        while True:
-            with registry.lock:
-                targets = [
-                    ("process", proc)
-                    for proc in registry.processes.values()
-                    if proc.state == "running"
-                ] + [
-                    ("subagent", sub)
-                    for sub in registry.subagents.values()
-                    if sub.state == "running" and not sub.kill_requested.is_set()
-                ]
-                still_stopping = sum(
-                    1 for sub in registry.subagents.values() if sub.state == "running"
-                )
-            for kind, record in targets:
-                with registry.lock:
-                    record.outcome_collected = True
-                try:
-                    if kind == "process":
-                        processes.kill_process(
-                            record.id,
-                            registry=registry,
-                            container=self.container,
-                            by="user",
-                        )
-                    else:
-                        subagents.kill_subagent(
-                            record.id,
-                            registry=registry,
-                            container=self.container,
-                            by="user",
-                        )
-                except Exception:
-                    logger.exception("Rewind could not stop %s '%s'", kind, record.id)
-                    continue
-                stopped += 1
-                summary = (
-                    processes.process_status_summary(record)
-                    if kind == "process"
-                    else subagents.subagent_status_summary(record)
-                )
-                self.push(
-                    {
-                        "type": "background_done",
-                        "id": record.id,
-                        "kind": kind,
-                        "summary": summary,
-                    }
-                )
-            if still_stopping == 0 or time.monotonic() >= deadline:
-                break
-            time.sleep(0.2)
-        if still_stopping:
-            logger.info(
-                "Rewind proceeding with %d subagent(s) still stopping",
-                still_stopping,
-            )
-        return stopped
+        return processes.stop_running_background_work(
+            self.container,
+            on_stopped=lambda kind, record, summary: self.push(
+                {
+                    "type": "background_done",
+                    "id": record.id,
+                    "kind": kind,
+                    "summary": summary,
+                }
+            ),
+        )
 
     def _execute_rewind(self, request: dict):
         """Truncate the conversation back to a rewind point.

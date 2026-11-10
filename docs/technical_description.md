@@ -94,6 +94,9 @@ workflows keep working unchanged.
   stealth browser session.
 - `pillow`: image downscaling for the vision pipeline.
 - `fastapi`, `uvicorn`, `python-multipart`: web server and uploads.
+- `prompt_toolkit`: the CLI's live prompt — `patch_stdout` lets the worker
+  thread print events while the user types, without clobbering the input
+  line, on Windows and POSIX alike.
 
 ### `src/syna/paths.py`
 
@@ -884,16 +887,34 @@ unblocks with a `None` sentinel).
 
 ### `src/syna/conversation/ask.py`
 
-CLI loop. Renders session events (`_print_event`), dispatches slash commands
-via `commands.parse_and_execute_command`, and feeds plain queries to
-`AgentSession.run_turn`. The renderer shows tool calls as they start (in the
-progress line), marks failed and skipped rows, and prints a `/get-from` hint
-when a `share_file` result carries delivery metadata. Ctrl+C during a turn
-cancels the turn instead of exiting (a second Ctrl+C quits); `/newchat`
-closes the session and destroys the shared pod. The terminal responder for
-`ask_user` prints the question with numbered choices and accepts a number or
-free text; Ctrl+C or a closed stdin cancels the pending question and stops
-the task.
+CLI entry: setup checks, the welcome banner, and the prompt loop. Renders
+session events (`_print_event`), showing tool calls as they start (as a
+deduplicated status line), marks failed and skipped rows, and prints a
+`/get-from` hint when a `share_file` result carries delivery metadata; a
+finished background record prints its outcome line. Input runs through
+`prompt_toolkit` (with `patch_stdout`, so worker events never clobber the
+prompt line) into a `TerminalChat`; the prompt session is created lazily so
+importing the module stays side-effect-free.
+
+### `src/syna/conversation/terminal.py`
+
+The terminal front-end, mirroring the web server's worker architecture in
+miniature. `TerminalSession` owns one conversation: a worker thread dequeues
+inbox items and runs one `AgentSession` turn per user message, clearing any
+pending stop right before the turn starts (a stop typed between turns
+survives until then), registering the `ask_user` responder per turn, and
+resolving a pending question through an `interaction.PendingQuestion` the
+prompt thread answers. Messages typed mid-turn queue FIFO for the next turn;
+`rewind` inbox items run strictly between turns, and a rewind requested
+while busy is parked in `pending_rewind` and runs right after the stop takes
+effect. `TerminalChat` is the prompt loop: lifecycle commands (`/stop`,
+`/newchat`, `/exit`), background-work commands (`/jobs`, `/jobs <id>`,
+`/kill <id>` — the kill runs off the prompt thread), rewind commands
+(`/undo`, `/rewind [n]` with a numbered mode prompt), delegation of pod
+transfer commands to `commands.py`, the Ctrl+C matrix (busy → stop,
+question → release, idle → exit), and EOF semantics (a running turn
+finishes before exit). Worker output flows through an injected printer,
+keeping the state machine testable without a console.
 
 ### `src/syna/conversation/commands.py`
 
@@ -1155,6 +1176,17 @@ module never imports session machinery, so there is no cycle).
   subagent's stop lands at its next pause (potentially minutes away),
   so its kill stays async and its notice is the delivery; the
   process's stop is immediate and its response is the delivery.
+- **Pre-rollback sweep.** `stop_running_background_work(container,
+  on_stopped, settle_timeout_s)` stops every running process and
+  subagent before a workspace rollback (used by the web server's
+  rewind and shared with the CLI's). Each record is marked
+  `outcome_collected` before the kill, so the exactly-once machinery
+  suppresses the model-facing completion notice entirely — the honest
+  state for a rewound timeline that never knew about the work. The
+  sweep repeats until no work is running or the settle budget
+  (`SUBAGENT_SETTLE_S`) expires, catching a dying subagent's
+  last-gasp spawn, and fails open; `on_stopped(kind, record, summary)`
+  reports each successfully stopped record.
 - **Completion watcher.** One thread per registry, started lazily on
   the first spawn and living for the registry's lifetime (a cheap
   3s poll loop; it only execs while processes exist, and exits when

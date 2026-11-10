@@ -11,7 +11,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from ..ask_utils import show_welcome
-from ..config import get_env
+from ..config import get_env, load_checkpoints_enabled
 from .session import AgentSession, resolve_context_budget
 from .terminal import PROMPT_TEXT, TerminalChat, TerminalSession, terminal_command_help
 
@@ -105,7 +105,11 @@ def _create_conversation() -> TerminalSession:
         persist_outputs=True,
         context_budget_tokens=resolve_context_budget(model),
     )
-    terminal = TerminalSession(session, notify=print)
+    terminal = TerminalSession(
+        session,
+        notify=print,
+        checkpoints_enabled=load_checkpoints_enabled(),
+    )
     _ui_state["terminal"] = terminal
     return terminal
 

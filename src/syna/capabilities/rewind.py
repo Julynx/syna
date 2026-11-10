@@ -32,6 +32,7 @@ honest consequence of reverting changes inside a tracked project.
 import re
 import shlex
 import threading
+import time
 
 from ..config import get_logger
 from ..pod_io import pod_exec

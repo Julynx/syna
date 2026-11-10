@@ -706,7 +706,7 @@ def test_stop_background_for_rewind_fails_open(monkeypatch):
 
     monkeypatch.setattr(processes, "registry_for", lambda container: registry)
     monkeypatch.setattr(processes, "kill_process", boom)
-    monkeypatch.setattr(server_module, "REWIND_SUBAGENT_SETTLE_S", 0)
+    monkeypatch.setattr(processes, "SUBAGENT_SETTLE_S", 0)
 
     record._stop_background_for_rewind()
 
