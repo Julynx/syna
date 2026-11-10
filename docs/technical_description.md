@@ -921,11 +921,12 @@ keeping the state machine testable without a console.
 
 ### `src/syna/conversation/commands.py`
 
-User slash commands (`/send`, `/receive`, `/help`, `/bye`) executed locally on
+User slash commands (`/send-to`, `/get-from`, `/help`, `/exit`) executed locally on
 the host. `send`/`receive` copy files between host and pod through the
-thread's container; they open native file dialogs via tkinter, so the CLI's
+session's container; they open native file dialogs via tkinter, so the CLI's
 file-transfer commands require a desktop session. `parse_and_execute_command`
-validates and dispatches.
+validates and dispatches; the terminal front-end delegates these to the
+registry after its own terminal-level commands.
 
 ### `src/syna/__init__.py`
 
