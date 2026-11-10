@@ -20,7 +20,6 @@
   "pod_pids_limit": 512,
   "max_steps_per_turn": 100,
   "step_warning_remaining": 20,
-  "context_budget_tokens": 100000,
   "elide_keep_recent_messages": 12,
   "elide_interval_messages": 30,
   "elide_every_requests": 10,

@@ -58,6 +58,7 @@ from .config import (
     DEFAULT_VOICE_ENABLED,
     asset_path,
     get_data_home,
+    get_env,
     get_logger,
     load_config,
     read_asset_text,
@@ -68,7 +69,12 @@ from .capabilities.imaging import (
     fit_image_to_box,
     image_exceeds_box,
 )
-from .conversation.session import AgentSession, shared_file_metadata
+from .conversation.session import (
+    DEFAULT_CONTEXT_BUDGET_TOKENS,
+    AgentSession,
+    resolve_context_budget,
+    shared_file_metadata,
+)
 from .pod_init import shared_copy_notice
 from .state import (
     create_container,
@@ -136,6 +142,9 @@ class SessionRecord:
             emit_tool_errors=True,
             persist_outputs=True,
             session_id=client_id,
+            context_budget_tokens=resolve_context_budget(
+                get_env().get("MODEL") or DEFAULT_MODEL
+            ),
         )
         self.worker = threading.Thread(
             target=self._run_worker,
@@ -1321,7 +1330,7 @@ def get_settings():
         "command_timeout_s": 50,
         "tool_call_timeout_s": 60,
         "pod_memory_mb": 8192,
-        "context_budget_tokens": 100000,
+        "context_budget_tokens": DEFAULT_CONTEXT_BUDGET_TOKENS,
         "max_command_output_chars": 40000,
         "voice_enabled": DEFAULT_VOICE_ENABLED,
         "continuous_conversation": DEFAULT_CONTINUOUS_CONVERSATION,

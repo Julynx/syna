@@ -5,7 +5,8 @@ import sys
 from ..ask_utils import show_welcome
 from .commands import parse_and_execute_command
 from ..interaction import InteractionCancelled, register_responder, unregister_responder
-from .session import AgentSession
+from .session import AgentSession, resolve_context_budget
+from ..config import get_env
 from ..state import reset_shared_container
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -107,7 +108,14 @@ def _handle_slash_command(query: str, session: AgentSession):
 
 def _create_session() -> AgentSession:
     """Create an agent session that renders its events on the terminal."""
-    return AgentSession(on_event=_print_event, persist_outputs=True)
+    from ..config import DEFAULT_MODEL
+
+    model = get_env().get("MODEL") or DEFAULT_MODEL
+    return AgentSession(
+        on_event=_print_event,
+        persist_outputs=True,
+        context_budget_tokens=resolve_context_budget(model),
+    )
 
 
 def _reset_session(session: AgentSession) -> AgentSession:

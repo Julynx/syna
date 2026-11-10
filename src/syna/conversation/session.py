@@ -65,7 +65,10 @@ DEFAULT_MAX_HISTORY_MESSAGES = 300
 DEFAULT_ENABLE_COMPACTION = True
 DEFAULT_MAX_STEPS_PER_TURN = 100
 DEFAULT_STEP_WARNING_REMAINING = 20
-DEFAULT_CONTEXT_BUDGET_TOKENS = 100000
+# Fallback for the compaction trigger when the model's real context window
+# is unknown (non-OpenRouter endpoints, models missing from the list, or a
+# failed lookup). Known windows resolve to half their size instead.
+DEFAULT_CONTEXT_BUDGET_TOKENS = 250_000
 DEFAULT_ELIDE_KEEP_RECENT = 12
 DEFAULT_ELIDE_INTERVAL_MESSAGES = 30
 DEFAULT_ELIDE_EVERY_REQUESTS = 10
@@ -232,6 +235,112 @@ def is_openrouter() -> bool:
     return is_openrouter_base_url(load_base_url())
 
 
+_context_lengths_cache: dict[str, int] | None = None
+_context_fetch_lock = threading.Lock()
+_context_fetch_started = False
+
+
+def _load_context_lengths() -> dict[str, int]:
+    """Fetch every OpenRouter model's context window via the SDK.
+
+    Entries with a missing, non-integer, or non-positive context_length
+    are dropped - a bogus value would misplace the compaction trigger.
+    Any failure returns an empty dict: the caller caches it, so a
+    struggling endpoint is asked once per process, not on every session.
+    """
+    api_key = get_env().get("OPENROUTER_API_KEY")
+    if not api_key:
+        return {}
+    try:
+        client = OpenRouter(
+            api_key=api_key, server_url=load_base_url(), timeout_ms=10000
+        )
+        data = client.models.list().result.data
+    except Exception:
+        get_logger().warning(
+            "Could not fetch OpenRouter model context lengths;"
+            " keeping the fallback context budget",
+            exc_info=True,
+        )
+        return {}
+    lengths = {}
+    for model in data:
+        length = getattr(model, "context_length", None)
+        if isinstance(length, int) and not isinstance(length, bool) and length > 0:
+            lengths[model.id] = length
+    return lengths
+
+
+def _context_fetch_worker():
+    """Body of the background fetch thread; caches success and failure alike."""
+    global _context_lengths_cache
+    _context_lengths_cache = _load_context_lengths()
+
+
+def ensure_context_fetch():
+    """Start the background models-list fetch once per process.
+
+    Non-blocking: the calling thread returns immediately, the result
+    lands in the module cache when it arrives, and sessions pick it up
+    on their next turn. Only OpenRouter endpoints use the list, so
+    other endpoints never start the thread.
+    """
+    global _context_fetch_started
+    if not is_openrouter_base_url(load_base_url()):
+        return
+    with _context_fetch_lock:
+        if _context_fetch_started:
+            return
+        _context_fetch_started = True
+    threading.Thread(
+        target=_context_fetch_worker, name="syna-context-fetch", daemon=True
+    ).start()
+
+
+def peek_context_lengths() -> dict[str, int] | None:
+    """Return the fetched context lengths, or None while none have arrived.
+
+    Never touches the network: the lookup runs on the turn path, and a
+    pending or failed fetch simply yields None.
+    """
+    return _context_lengths_cache
+
+
+def resolved_budget_for(model: str | None) -> int | None:
+    """Half the model's context window once the fetch has landed, else None.
+
+    Some OpenRouter ids carry a literal `~` prefix (their router-alias
+    namespace), so the lookup tries the id verbatim first and the
+    stripped form second. Half leaves room for the reply and for
+    estimate_tokens' error margin. Unknown models yield None.
+    """
+    lengths = peek_context_lengths()
+    if lengths is None:
+        return None
+    model_id = model or ""
+    context_length = lengths.get(model_id) or lengths.get(model_id.lstrip("~"))
+    if not context_length:
+        return None
+    return context_length // 2
+
+
+def resolve_context_budget(model: str | None) -> int:
+    """Return the budget a new session starts with, and kick the async fetch.
+
+    The start value is `context_budget_tokens` from the config, or the
+    250000 default when unset. On OpenRouter this is only the pre-fetch
+    budget: the background models-list fetch overrides it with half the
+    model's real context window once it lands, regardless of the config
+    value. Non-OpenRouter endpoints and failed fetches keep the start
+    value permanently. Never blocks: the fetch runs on a daemon thread.
+    """
+    ensure_context_fetch()
+    fallback = load_config().get("context_budget_tokens")
+    if isinstance(fallback, int) and not isinstance(fallback, bool) and fallback > 0:
+        return fallback
+    return DEFAULT_CONTEXT_BUDGET_TOKENS
+
+
 def create_model_client():
     """Instantiate an OpenRouter client configured with timeout and retry limits.
 
@@ -348,6 +457,7 @@ class AgentSession:
         session_id: str | None = None,
         excluded_tools: tuple[str, ...] = (),
         injection_filter=None,
+        context_budget_tokens: int | None = None,
     ):
         self.on_event = on_event or (lambda event: None)
         self.request_delay = request_delay
@@ -370,9 +480,11 @@ class AgentSession:
             "step_warning_remaining", DEFAULT_STEP_WARNING_REMAINING
         )
         self._base_step_warning_remaining = self.step_warning_remaining
-        self.context_budget_tokens = load_config().get(
-            "context_budget_tokens", DEFAULT_CONTEXT_BUDGET_TOKENS
-        )
+        if context_budget_tokens is None:
+            context_budget_tokens = load_config().get(
+                "context_budget_tokens", DEFAULT_CONTEXT_BUDGET_TOKENS
+            )
+        self.context_budget_tokens = context_budget_tokens
         self.elide_keep_recent_messages = load_config().get(
             "elide_keep_recent_messages", DEFAULT_ELIDE_KEEP_RECENT
         )
@@ -974,7 +1086,7 @@ class AgentSession:
         """
         interval = self.elide_interval_messages
         interval_reached = bool(interval) and len(history) >= interval
-        budget_exceeded = total_tokens > self.context_budget_tokens
+        budget_exceeded = total_tokens > self._current_budget()
         if not (interval_reached or budget_exceeded):
             return 0
         batch_due = self._requests_since_elide >= self.elide_every_requests
@@ -1004,6 +1116,17 @@ class AgentSession:
                 }
             )
         return elided
+
+    def _current_budget(self) -> int:
+        """The budget in force this turn: resolved window or the start value.
+
+        While the background models-list fetch is pending (or failed, or
+        the endpoint is not OpenRouter) the budget a new session started
+        with applies; once the fetch has landed, half the model's real
+        context window takes over regardless of the config value.
+        """
+        resolved = resolved_budget_for(self.model)
+        return resolved if resolved is not None else self.context_budget_tokens
 
     @staticmethod
     def _tail_atomic_slice(history: list[dict]) -> list[dict]:
@@ -1040,7 +1163,7 @@ class AgentSession:
             total_tokens = estimate_history_tokens(self.messages)
         if (
             len(history) < self.max_history_messages
-            and total_tokens <= self.context_budget_tokens
+            and total_tokens <= self._current_budget()
         ):
             return
         compactable = self._select_compactable(history)

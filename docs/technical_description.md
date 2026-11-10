@@ -178,7 +178,7 @@ from the canonical constants in `config.py`.
 | `subagent_check_tail_chars`         | How many transcript characters a subagent check previews (default 1200). Whole JSON-escaped messages are denser than plain output, so the transcript gets its own smaller budget; the check text always points at the full transcript path.                                   |
 | `max_steps_per_turn`                | Model requests allowed per turn (default 100). Before the cap, the model receives a wrap-up warning; past it, the turn ends with one final request reserved for a `respond` status report.                                                                                    |
 | `step_warning_remaining`            | Remaining-steps count that triggers the wrap-up warning (default 20).                                                                                                                                                                                                         |
-| `context_budget_tokens`             | Estimated-token budget for the whole conversation (default 100000). When exceeded, old tool outputs are elided first and summarization runs only if the budget is still exceeded.                                                                                             |
+| `context_budget_tokens`             | The token budget a new session starts with (default 250000 when unset). On OpenRouter it is only the pre-fetch value: a background fetch of the models list overrides it with half the model's real context window once it lands, regardless of this setting. Non-OpenRouter endpoints and failed fetches keep this value. When exceeded, old tool outputs are elided first and summarization runs only if the budget is still exceeded. |
 | `elide_keep_recent_messages`        | History messages kept untouched by output elision (default 12).                                                                                                                                                                                                               |
 | `elide_interval_messages`           | History size at which lossless output elision runs on its own, instead of waiting for the token budget (default 30). Keeps prompts small through long runs; elided outputs remain readable in the pod at their `saved_to` paths.                                              |
 | `elide_every_requests`              | Requests between batched elision passes once the message interval is reached (default 10). Batching keeps the conversation prefix stable between passes so the provider prompt cache stays warm; the token-budget path always elides immediately.                             |
@@ -715,7 +715,13 @@ the loop, `ask_utils.py` sends the model requests, and
   `elide_interval_messages`, and additionally whenever estimated tokens
   exceed `context_budget_tokens`, old tool outputs (those with `saved_to`)
   outside the recent window are elided to pointers; lossless, since the
-  model can re-read them in the pod. Archived large user messages are
+  model can re-read them in the pod. The budget a session starts with
+  comes from `context_budget_tokens` (or 250000); on OpenRouter a
+  background fetch of the models list (one daemon thread per process,
+  started at session creation) overrides it with half the model's real
+  context window once it lands, regardless of the config value;
+  non-OpenRouter endpoints and failed fetches keep the start value.
+  Archived large user messages are
   elided the same way (head excerpt plus pointer to the verbatim file).
   To keep the provider prompt cache warm,
   the rewrite is batched: outside the budget-exceeded path it only runs every

@@ -227,8 +227,10 @@ def spawn_subagent(
 
 def _default_session_factory(record: SubagentRecord, registry: PodRegistry):
     """Build the real agent session for a subagent record."""
-    from ..conversation.session import AgentSession
+    from ..conversation.session import AgentSession, resolve_context_budget
+    from ..config import DEFAULT_MODEL, get_env
 
+    model = get_env().get("MODEL") or DEFAULT_MODEL
     return AgentSession(
         on_event=lambda event: _on_subagent_event(registry, record, event),
         emit_tool_errors=True,
@@ -236,6 +238,7 @@ def _default_session_factory(record: SubagentRecord, registry: PodRegistry):
         session_id=f"subagent-{record.id}",
         excluded_tools=SUBAGENT_EXCLUDED_TOOLS,
         injection_filter=_injection_filter(registry),
+        context_budget_tokens=resolve_context_budget(model),
     )
 
 
