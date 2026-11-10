@@ -204,7 +204,7 @@ def test_create_container_runs_init_steps(monkeypatch):
             script = argv[-1]
             seen.setdefault("argvs", []).append(script)
             if "GIT_DIR" in script:
-                return "a" * 40
+                return f"outer {'a' * 40}"
             seen["argv"] = argv
             return pod_init.SUCCESS_MARKER
 
@@ -367,7 +367,7 @@ def test_create_container_delivers_the_shared_copy_sink(monkeypatch):
     class FakeContainer:
         def exec(self, argv):
             if "GIT_DIR" in argv[-1]:
-                return "b" * 40
+                return "outer " + "b" * 40
             return pod_init.SUCCESS_MARKER
 
         def copy_to(self, source, dest):
@@ -396,7 +396,7 @@ def test_create_container_skips_the_sink_when_shared_is_empty(monkeypatch):
     class FakeContainer:
         def exec(self, argv):
             if "GIT_DIR" in argv[-1]:
-                return "c" * 40
+                return "outer " + "c" * 40
             return pod_init.SUCCESS_MARKER
 
         def copy_to(self, source, dest):

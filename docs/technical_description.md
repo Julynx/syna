@@ -190,6 +190,7 @@ from the canonical constants in `config.py`.
 | `verify_log_tail_chars`             | How many characters of the serialized conversation log the `review_work` reviewer receives (default 128000).                                                                                                                                                                  |
 | `max_history_messages`              | History length that triggers compaction as a safety net for degenerate all-small-message histories; the token budget is the primary trigger.                                                                                                                                  |
 | `enable_compaction`                 | Master switch for history compaction.                                                                                                                                                                                                                                         |
+| `checkpoints_enabled`               | Master switch for the web UI's rewind checkpoints (default `false`): when on, the workspace is snapshotted before each user message and the undo buttons appear; snapshots carry some per-message delay, hence the settings dialog's wording.                                 |
 | `max_visible_tool_calls`            | UI limit on rendered tool rows.                                                                                                                                                                                                                                               |
 | `voice_enabled`                     | Voice category toggle (default `true`): off hides the mic, disables the top-bar voice icon, and makes the speech tools report themselves as unavailable.                                                                                                                      |
 | `continuous_conversation`           | Hands-free voice mode (default `false`): in voice mode, the client reopens the microphone after each reply reaches the chat; applied through the settings GUI on Save and Restart.                                                                                            |
@@ -800,15 +801,23 @@ the loop, `ask_utils.py` sends the model requests, and
   as an immediate instruction.
 - **Rewind points**: `run_turn(query, rewind=None)` records an optional
   rewind point for the web UI's undo feature: a dict with the message
-  key, the pod-side workspace tree snapshot taken before the turn, and
-  the pod's identity. The point lives beside the message (keyed by id,
-  never inside the content the model sees), survives elision rewrites
-  (matched by identity), is purged when compaction removes its message,
-  and `rewind(key)` truncates history back to just before it — deleting
-  the message and everything after, clearing the pending failures and
-  pending injections, and returning the original text for the input
-  refill. File rollback is the caller's responsibility and must precede
-  it. CLI and subagent turns pass no rewind and pay nothing.
+  key, the pod-side workspace snapshot taken before the turn (outer
+  tree plus nested repository trees), and the pod's identity. The point
+  lives beside the message (keyed by id, never inside the content the
+  model sees), survives elision rewrites (matched by identity), and
+  survives compaction marked as compacted: the UI still shows the
+  message, and rewinding to a compacted point cuts the history back to
+  its verbatim beginning (system prompt plus first real user message —
+  the summary covering the point cannot be split) while the point's
+  tree snapshot still restores exactly. `rewind(key)` truncates history
+  to just before the point — deleting the message and everything after,
+  clearing the pending failures and pending injections, and returning
+  the original text for the input refill. `record_rewind_notice`
+  appends a harness notice telling the model what the rewind left
+  behind (with a revert: history and workspace agree; without one: the
+  workspace may contain files from the undone work). File rollback is
+  the caller's responsibility and must precede it. CLI and subagent
+  turns pass no rewind and pay nothing.
 - **Queued-message injection ("Send now")**: `queue_injection(item)` holds  a queued web message thread-safely; at the top of the turn loop: after
   the previous tool batch's results are in history and before the next
   `ask_question`: `apply_injections()` appends every pending message to
@@ -1304,38 +1313,47 @@ work tree is `REWIND_SNAP_ROOT` (`/workspace`) — the directory every
 command and tool artifact lives in (`execute_command`'s runner cds
 there first); the container's nominal WORKDIR is `/` and holds the pod
 machinery that must never be reverted. Every pod call here goes through
-`pod_io` like the rest of the codebase.
+`pod_io` like the rest of the codebase. The whole feature is off unless
+the `checkpoints_enabled` setting is turned on in the settings GUI.
 
 - **Snapshot** (`snapshot(container)`): before each user message is sent,
   the session's worker snapshots `/workspace`. One exec runs
-  `git status --porcelain` first: an unchanged workspace reuses the
-  previous tree hash (near-zero cost on idle trees), a changed one runs
-  `git add -A && git write-tree`. The cache is seeded at pod creation —
-  `create_container` snapshots the pristine workspace (shared copy
-  included) right after init — so the first message's rewind point is
-  the pristine tree at the cost of one status call, and rewinding to the
-  first message restores the pod exactly as handed over. Any failure
-  returns None — the message then simply has no rewind point. The last
-  tree per pod is cached host-side (`_last_tree`, keyed by container
-  identity, forgotten at pod destruction), and a successful rollback
-  re-points it at the restored tree so the next snapshot's skip check
+  `git status --porcelain` first: when the workspace AND every nested
+  repository are unchanged, the previous snapshot mapping is reused
+  (near-zero cost on idle trees — a nested repo's internal edits do not
+  dirty the outer gitlink, so they are checked explicitly); otherwise
+  the outer tree is written with `git add -A && git write-tree`. Each
+  nested repository's tracked files are then staged through a temporary
+  index (`GIT_INDEX_FILE`, so the repository's own index and HEAD are
+  never touched) and recorded as `nested: {path: tree}`. The cache is
+  seeded at pod creation — `create_container` snapshots the pristine
+  workspace (shared copy included) right after init — so the first
+  message's rewind point is the pristine tree at the cost of one status
+  call, and rewinding to the first message restores the pod exactly as
+  handed over. Any failure returns None — the message then simply has
+  no rewind point. The last mapping per pod is cached host-side (keyed
+  by container identity, forgotten at pod destruction), and a
+  successful rollback re-points it so the next snapshot's skip check
   stays true.
-- **Rollback** (`rollback(container, tree)`): `git read-tree` resets
-  the index to the snapshot, `checkout-index -a -f` rewrites every file
-  it tracked, and `clean -fd` deletes what appeared after it — `-fd`,
-  not `-fdx`, so `.gitignore` is respected (`.venv`, `node_modules`,
-  `.env` survive and may linger stale). The pod confirms with a marker;
-  a False answer means the workspace is in an unknown state and the
-  caller must not truncate history (files first, then messages).
-- **Nested git repositories are protected** by git's own semantics: a
-  snapshot records a nested repo as a gitlink (its contents and history
-  stay in its own `.git` on disk), and `clean -fd` refuses to remove
-  directories containing a `.git` (that would need `-ff`), so a nested
-  repo survives a rollback whether it existed at snapshot time or was
-  cloned after it; the shadow store's own git dir sits outside the work
-  tree. The same protection means a rollback leaves nested repos in
-  their post-snapshot state: their internal files are managed by their
-  own repo, not the snapshot.
+- **Rollback** (`rollback(container, tree, nested)`): the outer restore
+  is `read-tree` + `checkout-index -a -f` + `clean -fd` against the
+  shadow store: every file the snapshot tracked is rewritten,
+  everything that appeared after it is deleted, and `.gitignore` is
+  respected so ignored files (.venv, node_modules, .env) survive and
+  may linger stale. Each nested repository is then restored from its
+  own snapshotted tree through a temporary index: tracked files return
+  to their snapshot state, the repository's `.git` (history, HEAD,
+  index) and its gitignored files are untouched, and untracked
+  non-ignored files added after the snapshot are removed — the restored
+  files show as a dirty working tree, the honest consequence of
+  reverting changes inside a tracked project. The pod confirms with a
+  marker; a False answer means the workspace is in an unknown state and
+  the caller must not truncate history (files first, then messages).
+- **Nested repositories and post-snapshot clones**: a rollback's outer
+  clean refuses to remove directories containing a `.git`, so a repo
+  cloned after the snapshot survives untouched (it is not in the
+  snapshot's nested map); the shadow store's own git dir sits outside
+  the work tree.
 - **Scope**: exactly the `/workspace` tree. Installed packages, `/tmp`,
   `/tool_outputs`, `/user_messages`, `/home/user/uploads`, and the
   store itself survive. The in-pod store is ephemeral by design: a
@@ -1344,7 +1362,10 @@ machinery that must never be reverted. Every pod call here goes through
   the lost ones. Note for artifact promises: `process` and `subagent`
   artifacts under `/workspace/processes` and `/workspace/subagents` are
   workspace files too, so a rewind can remove them; the completion
-  viewer's transcript lives host-side and stays readable.
+  viewer's transcript lives host-side and stays readable. A killed
+  subagent's runner finalize re-copies its artifacts after the
+  rollback, so orphan artifact dirs can reappear; they are untracked
+  files, not code.
 - **Availability** (`available_for(container)`): the recorded
   `pod_init` step result — a pod without the step (failed install) runs
   without rewind.
@@ -1645,30 +1666,33 @@ event loop. Teardown (`new-chat`, janitor, shutdown) stops running
 subagents and drops the session's registry; the pod's processes die
 with the pod itself.
 
-Rewind (the web UI's undo): the worker snapshots the workspace through
+Rewind (the web UI's undo): gated by the `checkpoints_enabled` setting
+(off by default). When on, the worker snapshots the workspace through
 `capabilities/rewind.py` before every user-message turn (background
 notice turns are exempt — they are not user messages) and the session
 records a rewind point keyed by the message's client id, emitting a
 persistent `rewind_state` delta event (`added`/`removed` id arrays,
-decorated with the pod's availability) that clients apply in order and
-converge on. A `rewind` WebSocket message is honored between turns only:
-while idle it is enqueued as a `rewind` inbox item, so it runs strictly
-after the previous turn; while a turn is busy it takes the stop button's
-path (`session.cancel()` plus releasing a pending question) and parks as
+decorated with availability: the setting, the pod, and its prepared
+store) that clients apply in order and converge on. A `rewind`
+WebSocket message is honored between turns only: while idle it is
+enqueued as a `rewind` inbox item, so it runs strictly after the
+previous turn; while a turn is busy it takes the stop button's path
+(`session.cancel()` plus releasing a pending question) and parks as
 `pending_rewind`, which the worker executes right after the turn ends —
 cancel first, rewind when the stop lands. Execution is ordered:
-`_execute_rewind` resolves the point, and for "Messages & changes" stops
-the pod's background work first (each record is marked collected before
-the kill, so the exactly-once machinery suppresses the model-facing
-notice — the rewound timeline never knew about the work — while a
-synthetic `background_done` keeps the panel honest; processes are killed
-blocking-bounded, subagents gracefully with a bounded settle wait, and
-the sweep repeats so a dying subagent's last-gasp spawn is caught),
-then restores the workspace snapshot (a foreign-pod snapshot or a
-failed restore leaves every message in place and pushes an error toast);
-only then does the session truncate history at the chosen message
-(deleting it and everything after, purging the later rewind points, the
-pending failures, and pending injections), the inbox is cleared of
+`_execute_rewind` resolves the point, and for "Messages & workspace"
+stops the pod's background work first (each record is marked collected
+before the kill, so the exactly-once machinery suppresses the
+model-facing notice — the rewound timeline never knew about the work —
+while a synthetic `background_done` keeps the panel honest; processes
+are killed blocking-bounded, subagents gracefully with a bounded settle
+wait, and the sweep repeats so a dying subagent's last-gasp spawn is
+caught), then restores the workspace snapshot (a foreign-pod snapshot
+or a failed restore leaves every message in place and pushes an error
+toast); only then does the session truncate history at the chosen
+message (deleting it and everything after, purging the later rewind
+points, the pending failures, and pending injections) and append the
+rewind notice the model reads next turn. The inbox is then cleared of
 everything queued but not started — rewind requests already in the
 inbox survive, so a click during the busy-clear window is never
 swallowed — the persistent event log is cut at the chosen message's
@@ -1677,9 +1701,7 @@ message's id plus its original text) rebuilds every connected client:
 they drop the transcript from the bubble on and refill the input for
 editing and re-sending. A recreated pod clears every point at container
 start — snapshots live inside the pod, so a new pod invalidates all
-stored trees at once. A killed subagent's runner finalize re-copies its
-artifacts into `/workspace/subagents/{id}/` after the rollback, so
-orphan artifact dirs can reappear; they are untracked files, not code.
+stored trees at once.
 
 Server auth (hardened boundaries): `main()` generates a per-process token
 (`AUTH_TOKEN`, `secrets.token_urlsafe`); the HTTP middleware then requires
@@ -1958,7 +1980,7 @@ drops are ignored.
   on the live list show an `undo` hover button styled like the
   model bubbles' copy buttons. Clicking it opens the "Choose what to
   revert" modal — three stacked wide buttons, "Messages only",
-  "Messages & changes", "Cancel" — and the choice sends a `rewind`
+  "Messages & workspace", "Cancel" — and the choice sends a `rewind`
   message over the WebSocket (while busy the status pill shows
   "Stopping...", since the rewind rides the stop path). A persistent
   `history_rewind` event applies the server's decision everywhere: the
@@ -1967,8 +1989,10 @@ drops are ignored.
   with the rewound message's original text (overwriting any draft) for
   editing and re-sending or deletion. Reconnects replay the log's
   `rewind_state` and `history_rewind` events in order, so every tab
-  converges on the rewound timeline; a pod without rewind simply never
-  lists ids, and the buttons stay hidden.
+  converges on the rewound timeline; the feature is opt-in through the
+  settings dialog's Checkpoints section (`Enable checkpoints`, default
+  No), and a session without it never lists ids, so the buttons stay
+  hidden.
 
 ## 11. Voice and narration
 

@@ -60,6 +60,7 @@ from .config import (
     get_data_home,
     get_env,
     get_logger,
+    load_checkpoints_enabled,
     load_config,
     read_asset_text,
 )
@@ -139,6 +140,7 @@ class SessionRecord:
         self.container_starting = False
         self.busy = threading.Event()
         self.pending_rewind: dict | None = None
+        self.checkpoints_enabled = load_checkpoints_enabled()
         self.connected = False
         self.shutdown = threading.Event()
         self.last_activity = time.time()
@@ -464,13 +466,16 @@ class SessionRecord:
     def _decorate_rewind_state(self, event: dict) -> dict:
         """Add availability to a session's rewind_state event.
 
-        Availability is the pod's: git installed and the shadow store
-        prepared by the init step. The event's deltas apply to the
-        messages with a live snapshot on the current pod.
+        Availability needs the checkpoints setting, the pod, and its
+        prepared store: git installed by the init step. The event's
+        deltas apply to the messages with a live snapshot on the current
+        pod.
         """
         decorated = dict(event)
-        decorated["available"] = self.container is not None and rewind.available_for(
-            self.container
+        decorated["available"] = (
+            self.checkpoints_enabled
+            and self.container is not None
+            and rewind.available_for(self.container)
         )
         return decorated
 
@@ -634,19 +639,19 @@ class SessionRecord:
         self.push({"type": "info", "text": shared_copy_notice(report)})
 
     def _rewind_info_for(self, item: dict) -> dict | None:
-        """Snapshot the workspace before a turn; the rewind point's tree.
+        """Snapshot the workspace before a turn; the rewind point's data.
 
-        Returns None when the pod cannot snapshot (rewind unavailable,
-        snapshot failed, pod gone): the message then simply gets no undo
-        button. Background notices run turns too but are not user
-        messages - no snapshot, no point.
+        Returns None when checkpoints are disabled or the pod cannot
+        snapshot (rewind unavailable, snapshot failed, pod gone): the
+        message then simply gets no undo button. Background notices run
+        turns too but are not user messages - no snapshot, no point.
         """
-        if self.container is None or item.get("bg_id"):
+        if not self.checkpoints_enabled or self.container is None or item.get("bg_id"):
             return None
-        tree = rewind.snapshot(self.container)
-        if tree is None:
+        snap = rewind.snapshot(self.container)
+        if snap is None:
             return None
-        return {"key": item.get("id"), "tree": tree, "pod": id(self.container)}
+        return {"key": item.get("id"), "snap": snap, "pod": id(self.container)}
 
     def _run_pending_rewind(self):
         """Run the rewind a user requested while the last turn was busy.
@@ -788,7 +793,10 @@ class SessionRecord:
                 )
                 return
             stopped = self._stop_background_for_rewind()
-            if not rewind.rollback(self.container, point["tree"]):
+            snap = point["snap"]
+            if not rewind.rollback(
+                self.container, snap["tree"], snap.get("nested", {})
+            ):
                 text = (
                     "Could not restore the workspace files;"
                     " the conversation was left unchanged."
@@ -806,6 +814,7 @@ class SessionRecord:
                 }
             )
             return
+        self.session.record_rewind_notice(request.get("mode") == "all")
         with self.inbox_ready:
             self.inbox = deque(
                 item for item in self.inbox if item.get("kind") == "rewind"
@@ -1590,6 +1599,7 @@ def get_settings():
         "voice_enabled": DEFAULT_VOICE_ENABLED,
         "continuous_conversation": DEFAULT_CONTINUOUS_CONVERSATION,
         "image_generation_enabled": DEFAULT_IMAGE_GENERATION_ENABLED,
+        "checkpoints_enabled": False,
     }
     current_base = (env.get("BASE_URL") or "").strip()
     detected_provider = "openrouter"
@@ -1648,6 +1658,10 @@ def get_settings():
             "image_generation_enabled": runtime_cfg.get(
                 "image_generation_enabled",
                 defaults["image_generation_enabled"],
+            ),
+            "checkpoints_enabled": runtime_cfg.get(
+                "checkpoints_enabled",
+                defaults["checkpoints_enabled"],
             ),
         },
         "defaults": defaults,

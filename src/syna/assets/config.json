@@ -32,6 +32,7 @@
   "verify_log_tail_chars": 128000,
   "max_history_messages": 300,
   "enable_compaction": true,
+  "checkpoints_enabled": false,
   "max_visible_tool_calls": 3,
   "log_file": "syna.log",
   "session_dump_file": "message-session-log.json",

@@ -388,6 +388,12 @@ DEFAULT_MAX_CONCURRENT_SUBAGENTS = 4
 DEFAULT_WAIT_FOR_TIMEOUT = 120
 DEFAULT_CHECK_TAIL_CHARS = 4000
 DEFAULT_SUBAGENT_TAIL_CHARS = 1200
+DEFAULT_CHECKPOINTS_ENABLED = False
+
+
+def load_checkpoints_enabled() -> bool:
+    """Whether the web UI's rewind checkpoints snapshot the workspace."""
+    return bool(load_config().get("checkpoints_enabled", DEFAULT_CHECKPOINTS_ENABLED))
 
 
 def load_user_message_archive_min_chars() -> int:
@@ -491,6 +497,7 @@ __all__ = [
     "get_data_home",
     "load_browser_launch_timeout_s",
     "load_check_tail_chars",
+    "load_checkpoints_enabled",
     "load_command_timeout_s",
     "load_config",
     "load_max_cancel_wait_s",

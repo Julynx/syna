@@ -205,3 +205,30 @@ overwriting a parked rewind, a cancelled turn still recording its point,
 rewind items surviving the purge, delta shapes, and the background-work
 stop (fake registry).
 
+## Round-3 changes (user decisions, 2026-11-10)
+
+1. **Git-tracked projects revert file-level.** The old behavior (nested
+   repos entirely untouched) was baffling. Now a snapshot captures each
+   nested repository's tracked files through a temporary index and a
+   rollback restores them per repo: the `.git` directory (history, HEAD,
+   index) and the repo's gitignored files are respected, everything
+   else returns to the snapshot state and shows as a dirty working tree.
+   A post-snapshot clone is not in the snapshot's nested map and
+   survives untouched.
+2. **Rewind past compaction.** Compaction marks a point `compacted`
+   instead of purging it (the UI still shows the message); rewinding to
+   it cuts the history back to the verbatim beginning (system prompt +
+   first real user message — the summary covering the point cannot be
+   split) and its tree still restores exactly.
+3. **The modal's second button reads "Messages & workspace".**
+4. **Checkpoints are opt-in.** New `checkpoints_enabled` setting
+   (default false) plus a Checkpoints section in the settings GUI with
+   an "Enable checkpoints" dropdown: "No (Default)" / "Yes (checkpoints
+   carry some delay)". When off, no snapshots are taken and availability
+   reports false, so no buttons appear.
+5. **The model is told.** After a successful rewind the session appends
+   a harness notice: with a revert, history and workspace agree (with
+   the gitignored/nested/outside-workspace caveats); without one, the
+   workspace may contain files from the undone work and the model is
+   told to inspect before relying on it.
+

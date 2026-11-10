@@ -10,12 +10,14 @@ Covers, in order:
    snapshot reuses the tree without writing one.
 3. Snapshot / change / snapshot / rollback round trip: file creation,
    modification, and deletion inside /workspace are all reverted; a
-   nested repo that existed at snapshot time survives with its history;
-   an unchanged workspace reuses the previous tree hash.
+   nested repository's tracked files revert too while its .git and
+   history survive (leaving a dirty working tree); gitignored and
+   post-snapshot clone directories are respected.
 4. A real AgentSession turn records a rewind point carrying the
-   pristine tree, and a "Messages & changes" rewind through the record
-   stops a running background process (with its model notice
-   suppressed), restores the workspace, and truncates the history.
+   pristine tree, and a "Messages & workspace" rewind through the
+   record stops a running background process (with its model notice
+   suppressed), restores the workspace, truncates the history, and
+   leaves a harness notice explaining the rewound state.
 """
 
 import sys
@@ -39,6 +41,7 @@ from syna import pod_init
 from syna.capabilities import processes, rewind
 from syna.capabilities.tools import process as process_tool
 from syna.conversation.session import AgentSession
+from syna.protocol.channel import is_channel_message, unwrap_channel
 from syna.server import SessionRecord
 from syna.state import (
     create_container,
@@ -122,8 +125,11 @@ def check_pristine_seed(container):
     reused = any("SYNA_LAST_TREE" in script for script in scripts)
     report(
         "pod creation seeded the pristine tree",
-        seeded is not None and len(seeded) == 40 and reused,
-        f"tree={seeded}, reused={reused}",
+        seeded is not None
+        and len(seeded["tree"]) == 40
+        and seeded["nested"] == {}
+        and reused,
+        f"tree={seeded and seeded['tree']}, reused={reused}",
     )
 
 
@@ -143,16 +149,19 @@ def check_snapshot_round_trip(container):
 
     first = rewind.snapshot(container)
     report(
-        "the first snapshot captures the pristine tree",
-        first is not None and len(first) == 40,
-        f"tree={first}",
+        "the first snapshot captures the pristine tree and the nested repo",
+        first is not None
+        and len(first["tree"]) == 40
+        and len(first["nested"].get("/workspace/probe/nested", "")) == 40,
+        f"snap tree={first and first['tree'][:8]},"
+        f" nested={list((first or {}).get('nested', {}))}",
     )
 
     again = rewind.snapshot(container)
     report(
-        "an unchanged workspace reuses the previous hash",
+        "an unchanged workspace reuses the previous snapshot",
         again == first,
-        f"second={again}",
+        f"second={again and again['tree'][:8]}",
     )
 
     pod_run(
@@ -161,42 +170,57 @@ def check_snapshot_round_trip(container):
         " && echo v2 > /workspace/probe/edited.txt"
         " && rm /workspace/probe/keep.txt"
         " && echo changed-inside > /workspace/probe/nested/inner.txt"
+        " && git -C /workspace/probe/nested add -A"
+        " && git -C /workspace/probe/nested commit -qm change"
         " && cd /workspace && git clone -q probe/nested probe/cloned",
     )
 
     second = rewind.snapshot(container)
     report(
         "a changed workspace produces a new tree hash",
-        second is not None and second != first,
-        f"tree={second}",
+        second is not None and second["tree"] != first["tree"],
+        f"tree={second and second['tree'][:8]}",
     )
 
-    ok = rewind.rollback(container, first)
+    ok = rewind.rollback(container, first["tree"], first["nested"])
     report("the rollback confirms success", ok)
 
     # `git clean -fd` deletes untracked plain files but refuses to remove
-    # directories containing a nested .git (that needs -ff): the nested-repo
-    # protection the plan locked in covers post-snapshot clones too.
+    # directories containing a nested .git: a post-snapshot clone is not
+    # in the snapshot's nested map, so it survives as it was left, while
+    # the tracked files of the pre-existing repo revert to the snapshot.
     state = pod_run(
         container,
         "cat /workspace/probe/keep.txt 2>/dev/null;"
         " cat /workspace/probe/edited.txt 2>/dev/null;"
-        " ls /workspace/probe/added.txt /workspace/probe/cloned 2>/dev/null;"
         " cat /workspace/probe/nested/inner.txt 2>/dev/null;"
-        " test -d /workspace/probe/nested/.git && echo NESTED_GIT_OK",
+        " test -d /workspace/probe/nested/.git && echo NESTED_GIT_OK;"
+        " git -C /workspace/probe/nested status --porcelain | head -2;"
+        " git -C /workspace/probe/nested log --oneline | wc -l;"
+        " test -d /workspace/probe/cloned/.git && echo CLONED_OK;"
+        " ls /workspace/probe/added.txt 2>/dev/null; echo END",
     )
     lines = [line.strip() for line in state.splitlines() if line.strip()]
     report(
         "created files are reverted and edits restored",
-        lines[:2] == ["pristine", "v1"] and "/workspace/probe/added.txt" not in lines,
+        lines[:2] == ["pristine", "v1"]
+        and lines[2] == "inside"
+        and "added.txt" not in " ".join(lines),
         f"state={lines}",
     )
     report(
-        "nested repos survive with their .git and their own work tree",
-        "/workspace/probe/cloned:" in lines
-        and "inner.txt" in lines
-        and "changed-inside" in lines
-        and "NESTED_GIT_OK" in lines,
+        "the nested repo keeps its history but its files reverted",
+        "NESTED_GIT_OK" in lines and lines[-3] == "2",
+        f"state={lines}",
+    )
+    report(
+        "the reverted tracked file shows as a dirty working tree",
+        any("M inner.txt" in line for line in lines),
+        f"status={[line for line in lines if 'inner' in line]}",
+    )
+    report(
+        "a post-snapshot clone survives untouched",
+        "CLONED_OK" in lines,
         f"state={lines}",
     )
     return first
@@ -216,20 +240,22 @@ def check_session_rewind(container):
         "`echo alpha > /workspace/rewind_probe.txt`. Then reply done.",
         rewind={
             "key": "live-msg-1",
-            "tree": rewind.snapshot(container),
+            "snap": rewind.snapshot(container),
             "pod": id(container),
         },
     )
     point = session.rewind_points.get("live-msg-1")
     report(
-        "the turn recorded a rewind point with a real tree",
-        point is not None and len(point["tree"]) == 40,
-        f"tree={point and point['tree']}",
+        "the turn recorded a rewind point with a real snapshot",
+        point is not None and len(point["snap"]["tree"]) == 40,
+        f"tree={point and point['snap']['tree'][:8]}",
     )
     probe = pod_run(container, "cat /workspace/rewind_probe.txt").strip()
     report("the task's file exists before the rewind", probe == "alpha", probe)
 
-    rolled = rewind.rollback(container, point["tree"])
+    rolled = rewind.rollback(
+        container, point["snap"]["tree"], point["snap"].get("nested", {})
+    )
     gone = pod_run(
         container, "ls /workspace/rewind_probe.txt 2>/dev/null; echo ."
     ).strip()
@@ -261,12 +287,13 @@ def check_session_rewind(container):
 
 
 def check_rewind_stops_background_work(container):
-    """The round-2 fix: a "Messages & changes" rewind stops running work.
+    """A "Messages & workspace" rewind stops running work.
 
     A detached process is spawned after the snapshot; the rewind must
     kill it before rolling back, suppress its model-facing completion
     notice (the rewound timeline never knew about it), still tell the
-    work panel, restore the workspace, and truncate the history.
+    work panel, restore the workspace, truncate the history, and append
+    the harness notice that explains the rewound state to the model.
     """
     notices = []
     pushed = []
@@ -297,8 +324,8 @@ def check_rewind_stops_background_work(container):
     tree = rewind.snapshot(container)
     report(
         "background check: snapshot taken before the spawn",
-        tree is not None and len(tree) == 40,
-        f"tree={tree}",
+        tree is not None and len(tree["tree"]) == 40,
+        f"tree={tree['tree'][:8]}",
     )
     spawn_report = process_tool(
         "spawn",
@@ -328,7 +355,7 @@ def check_rewind_stops_background_work(container):
         session.run_turn(
             "Run this exact command with execute_command: "
             "`echo beta > /workspace/bg_probe.txt`. Then reply done.",
-            rewind={"key": "bg-msg-1", "tree": tree, "pod": id(container)},
+            rewind={"key": "bg-msg-1", "snap": tree, "pod": id(container)},
         )
     finally:
         pass
@@ -373,8 +400,12 @@ def check_rewind_stops_background_work(container):
         f"ls={leftovers!r}",
     )
     report(
-        "history truncated to the system message",
-        len(session.messages) == 1,
+        "history truncated to the system message plus the rewind notice",
+        len(session.messages) == 2
+        and is_channel_message(
+            session.messages[1].get("content") or "", "HARNESS_NOTICE"
+        )
+        and "reverted" in (unwrap_channel(session.messages[1]["content"])[1]),
         f"{len(session.messages)} message(s)",
     )
     rewinds = [event for event in pushed if event.get("type") == "history_rewind"]

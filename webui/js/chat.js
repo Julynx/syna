@@ -377,7 +377,7 @@ function openRewindModal(id) {
     return btn;
   };
   modal.appendChild(choice("Messages only", () => sendRewind(id, "messages")));
-  modal.appendChild(choice("Messages & changes", () => sendRewind(id, "all")));
+  modal.appendChild(choice("Messages & workspace", () => sendRewind(id, "all")));
   modal.appendChild(choice("Cancel", null));
   backdrop.appendChild(modal);
   backdrop.addEventListener("click", (event) => {
@@ -2830,7 +2830,31 @@ async function openSettingsModal() {
 
   body.appendChild(cat4);
 
-  // --- Category 5: Advanced (collapsed by default) ---
+  // --- Checkpoints ---
+  const catCheck = document.createElement("div");
+  catCheck.className = "settings-group";
+  catCheck.appendChild(categoryHeader("Checkpoints"));
+
+  const checkOpts = [
+    { value: "off", label: "No (Default)" },
+    { value: "on", label: "Yes (checkpoints carry some delay)" },
+  ];
+  const { row: checkRow } = createField({
+    label: "Enable checkpoints",
+    desc: "Snapshot the workspace before each message so it can be rewound to.",
+    value: config.checkpoints_enabled ? "on" : "off",
+    defaultValue: "off",
+    isSelect: true,
+    options: checkOpts,
+    onChange: (val) => {
+      config.checkpoints_enabled = val === "on";
+    },
+  });
+  catCheck.appendChild(checkRow);
+
+  body.appendChild(catCheck);
+
+  // --- Advanced (collapsed by default) ---
   const cat5 = document.createElement("details");
   cat5.className = "settings-details";
   const cat5Summary = document.createElement("summary");

@@ -21,6 +21,7 @@ from syna import interaction, pod_init, server as server_module, state
 from syna.capabilities import processes, rewind, subagents
 from syna.conversation import session as session_module
 from syna.conversation.session import AgentSession
+from syna.protocol.channel import unwrap_channel
 from syna.server import SessionRecord
 
 SNAP_ENV_PREFIX = (
@@ -53,7 +54,7 @@ def _point(session, key, text="hello"):
     """Append a user message and record its rewind point; the message."""
     message = {"role": "user", "content": text}
     session.messages.append(message)
-    session.add_rewind_point(key, text, "a" * 40, 1234, message)
+    session.add_rewind_point(key, text, {"tree": "a" * 40, "nested": {}}, 1234, message)
     return message
 
 
@@ -61,12 +62,13 @@ def _make_record(session):
     """A SessionRecord shell with the state the rewind paths touch."""
     record = SessionRecord.__new__(SessionRecord)
     record.client_id = "rewind-test"
-    record.inbox = []
+    record.inbox = deque()
     record.inbox_ready = threading.Condition()
     record.event_log = []
     record.event_log_lock = threading.Lock()
     record.subscribers = []
     record.pending_rewind = None
+    record.checkpoints_enabled = True
     record.container = None
     record.session = session
     record.pushed = []
@@ -121,23 +123,24 @@ def test_rewind_step_failure_disables_rewind():
 
 
 def test_snapshot_composes_status_add_and_write_tree():
-    pod = RecordingPod([f"{'b' * 40}\n"])
-    tree = rewind.snapshot(pod)
-    assert tree == "b" * 40
+    pod = RecordingPod([f"outer {'b' * 40}\n"])
+    snap = rewind.snapshot(pod)
+    assert snap == {"tree": "b" * 40, "nested": {}}
     script = pod.scripts[0]
     assert SNAP_ENV_PREFIX in script
     assert "git status --porcelain" in script
     assert "git add -A" in script
     assert "git write-tree" in script
+    assert "find" in script and "env -u GIT_DIR" in script
     print("PASS the snapshot runs status, add -A, and write-tree")
 
 
 def test_snapshot_reuses_the_last_tree_when_unchanged():
-    pod = RecordingPod([f"{'b' * 40}\n", "reused " + "b" * 40])
-    tree = rewind.snapshot(pod)
-    assert rewind.snapshot(pod) == tree
+    pod = RecordingPod([f"outer {'b' * 40}\n", f"outer reused {'b' * 40}"])
+    snap = rewind.snapshot(pod)
+    assert rewind.snapshot(pod) == snap
     script = pod.scripts[1]
-    assert f"SYNA_LAST_TREE={tree}" in script
+    assert f"SYNA_LAST_TREE={'b' * 40}" in script
     assert '"$(git status --porcelain)"' in script
     assert (
         "git add -A" not in script.split("SYNA_LAST_TREE", 1)[1].split("reused", 1)[0]
@@ -145,10 +148,40 @@ def test_snapshot_reuses_the_last_tree_when_unchanged():
     print("PASS an unchanged workspace reuses the previous tree")
 
 
+def test_snapshot_captures_nested_repositories():
+    nested_tree = "f" * 40
+    pod = RecordingPod([f"outer {'b' * 40}\nnested /workspace/proj\t{nested_tree}\n"])
+    snap = rewind.snapshot(pod)
+    assert snap == {"tree": "b" * 40, "nested": {"/workspace/proj": nested_tree}}
+    script = pod.scripts[0]
+    assert f"GIT_INDEX_FILE={rewind.NESTED_INDEX_PATH}" in script
+    assert 'git -C "$repo" add -A' in script
+    assert 'git -C "$repo" write-tree' in script
+    print("PASS nested repositories are snapshotted through a temp index")
+
+
+def test_snapshot_reuses_nested_trees_when_all_clean():
+    nested_tree = "f" * 40
+    pod = RecordingPod(
+        [
+            f"outer {'b' * 40}\nnested /workspace/proj\t{nested_tree}\n",
+            f"outer reused {'b' * 40}\nnested reused /workspace/proj\t{nested_tree}",
+        ]
+    )
+    first = rewind.snapshot(pod)
+    second = rewind.snapshot(pod)
+    assert second == first
+    script = pod.scripts[1]
+    assert "/workspace/proj" in script and nested_tree in script
+    assert "SYNA_LAST_NESTED" in script
+    print("PASS a fully clean workspace reuses the nested trees too")
+
+
 def test_snapshot_failure_and_garbage_yield_none():
     assert rewind.snapshot(RecordingPod([rewind.SNAP_ERROR_MARK])) is None
     assert rewind.snapshot(RecordingPod(["not a hash at all"])) is None
-    assert rewind.snapshot(RecordingPod([f"{'z' * 39}\n"])) is None
+    assert rewind.snapshot(RecordingPod([f"outer {'z' * 39}\n"])) is None
+    assert rewind.snapshot(RecordingPod(["outer a * 40\nnested /p bad\n"])) is None
 
     class DeadPod:
         def exec(self, argv):
@@ -169,6 +202,35 @@ def test_rollback_composes_read_tree_checkout_and_clean_fd():
     assert "-fdx" not in script
     assert SNAP_ENV_PREFIX in script
     print("PASS the rollback restores the tree and cleans with -fd")
+
+
+def test_rollback_restores_nested_repositories_with_temp_index():
+    pod = RecordingPod([rewind.ROLLBACK_OK_MARK])
+    nested_tree = "f" * 40
+    assert rewind.rollback(pod, "c" * 40, {"/workspace/proj": nested_tree}) is True
+    script = pod.scripts[0]
+    assert f"git -C /workspace/proj read-tree {nested_tree}" in script
+    assert "git -C /workspace/proj checkout-index -a -f" in script
+    assert "git -C /workspace/proj clean -fd" in script
+    assert "if [ -d /workspace/proj ]" in script
+    assert "rev-parse --git-dir" in script
+    assert f"GIT_INDEX_FILE={rewind.NESTED_INDEX_PATH}" in script
+    print("PASS nested repositories restore through a temp index, .git untouched")
+
+
+def test_rollback_skips_a_nested_repo_that_vanished():
+    pod = RecordingPod([rewind.ROLLBACK_OK_MARK])
+    nested_tree = "f" * 40
+    assert rewind.rollback(pod, "c" * 40, {"/workspace/gone": nested_tree}) is True
+    script = pod.scripts[0]
+    assert "if [ -d /workspace/gone ]" in script
+    assert "rev-parse --git-dir" in script
+    # The guarded commands sit inside the if, so a vanished repo is
+    # skipped by the pod and the restore still confirms.
+    assert script.index("if [ -d /workspace/gone ]") < script.index(
+        "git -C /workspace/gone read-tree"
+    )
+    print("PASS a deleted nested repository no longer aborts the rollback")
 
 
 def test_rollback_failure_reports_false():
@@ -194,11 +256,11 @@ def test_run_turn_records_a_point_and_emits_state(monkeypatch):
     )
     session.run_turn(
         "hello",
-        rewind={"key": "msg-1", "tree": "a" * 40, "pod": 77},
+        rewind={"key": "msg-1", "snap": {"tree": "a" * 40, "nested": {}}, "pod": 77},
     )
     point = session.rewind_points["msg-1"]
     assert point["text"] == "hello"
-    assert point["tree"] == "a" * 40
+    assert point["snap"] == {"tree": "a" * 40, "nested": {}}
     assert point["pod"] == 77
     assert point["message"] is session.messages[1]
     state_events = [event for event in events if event["type"] == "rewind_state"]
@@ -251,17 +313,67 @@ def test_rewind_purges_later_points_and_pending_state():
     print("PASS rewinding purges later points, failures, and injections")
 
 
-def test_rewind_of_a_compacted_away_message_fails_cleanly():
+def test_rewind_of_a_compacted_away_message_still_works():
+    """Compaction summarized the message, but the UI still shows it.
+
+    The rewind cuts the history back to its verbatim beginning (system
+    prompt plus first real user message) - the summary covering the
+    point cannot be split - and the point's tree snapshot still
+    restores exactly.
+    """
     session = _make_session()
     _point(session, "msg-1")
-    stale = dict(session.rewind_points["msg-1"])
-    session.rewind_points["msg-1"]["message"] = {"role": "user", "content": "gone"}
+    _point(session, "msg-2", "second")
+    del session.messages[2]
+    session._mark_compacted_rewind_points()
+    assert session.rewind_points["msg-2"]["compacted"] is True
+    assert "msg-1" not in [
+        name for name, p in session.rewind_points.items() if p.get("compacted")
+    ]
 
-    assert session.rewind("msg-1") is None
-    assert "msg-1" not in session.rewind_points
+    text = session.rewind("msg-2")
+
+    assert text == "second"
     assert len(session.messages) == 2
-    assert stale["message"]["content"] == "hello"
-    print("PASS a point whose message left history rewinds nothing")
+    assert session.messages[-1] == {"role": "user", "content": "hello"}
+    assert "msg-2" not in session.rewind_points
+    assert "msg-1" in session.rewind_points
+    print("PASS a compacted-away message rewinds to the verbatim beginning")
+
+
+def test_compaction_marks_stale_points_without_a_delta():
+    events = []
+    session = _make_session(events.append)
+    _point(session, "msg-1")
+    _point(session, "msg-2", "second")
+    del session.messages[2]
+
+    session._mark_compacted_rewind_points()
+
+    assert list(session.rewind_points) == ["msg-1", "msg-2"]
+    assert session.rewind_points["msg-2"]["compacted"] is True
+    assert session.rewind_points["msg-2"]["message"] is None
+    deltas = [event for event in events if event["type"] == "rewind_state"]
+    assert len(deltas) == 2
+    print("PASS compaction marks points without hiding their buttons")
+
+
+def test_rewind_notice_records_what_happened():
+    session = _make_session()
+    _point(session, "msg-1")
+
+    session.record_rewind_notice(reverted=True)
+
+    notice = session.messages[-1]
+    assert notice["role"] == "user"
+    kind, body = unwrap_channel(notice["content"])
+    assert kind == "HARNESS_NOTICE"
+    assert "reverted" in body and "/workspace" in body
+
+    session.record_rewind_notice(reverted=False)
+    kind, body = unwrap_channel(session.messages[-1]["content"])
+    assert "NOT reverted" in body
+    print("PASS the rewind notice tells the model what state it faces")
 
 
 def test_rewinding_an_unknown_point_returns_none():
@@ -287,22 +399,21 @@ def test_rewind_delta_events_track_the_point_lifecycle():
     print("PASS rewind_state events are small ordered deltas")
 
 
-def test_compaction_purges_stale_points_and_emits_state():
+def test_compaction_marks_stale_points_and_emits_state():
     events = []
     session = _make_session(events.append)
     _point(session, "msg-1")
     _point(session, "msg-2", "second")
     del session.messages[1]
 
-    session._purge_stale_rewind_points()
+    session._mark_compacted_rewind_points()
 
-    assert list(session.rewind_points) == ["msg-2"]
-    assert events[-1] == {
-        "type": "rewind_state",
-        "added": [],
-        "removed": ["msg-1"],
-    }
-    print("PASS points whose messages were compacted away are purged")
+    assert list(session.rewind_points) == ["msg-1", "msg-2"]
+    assert session.rewind_points["msg-1"]["compacted"] is True
+    assert session.rewind_points["msg-2"]["compacted"] is not True
+    deltas = [event for event in events if event["type"] == "rewind_state"]
+    assert len(deltas) == 2
+    print("PASS points whose messages were compacted away stay rewirable")
 
 
 # --- server-side rewind execution ------------------------------------------
@@ -334,8 +445,10 @@ def test_execute_rewind_truncates_history_log_and_inbox():
     assert list(record.inbox) == []
     assert len(record.event_log) == 1
     assert record.event_log[0]["id"] == "msg-1"
-    assert len(session.messages) == 2
-    print("PASS a messages-only rewind truncates history, log, and inbox")
+    assert len(session.messages) == 3
+    kind, body = unwrap_channel(session.messages[-1]["content"])
+    assert kind == "HARNESS_NOTICE" and "NOT reverted" in body
+    print("PASS a messages-only rewind truncates, notifies, logs, and purges")
 
 
 def test_execute_rewind_is_files_first(monkeypatch):
@@ -405,7 +518,7 @@ def test_pending_rewind_runs_after_the_turn(monkeypatch):
 
     assert record.pending_rewind is None
     assert record.pushed and record.pushed[0]["type"] == "history_rewind"
-    assert len(session.messages) == 2
+    assert len(session.messages) == 3
 
     record._run_pending_rewind()
     assert len(record.pushed) == 1
@@ -437,7 +550,14 @@ def test_rewind_state_event_is_decorated_with_availability(monkeypatch):
         {"type": "rewind_state", "added": [], "removed": []}
     )
     assert event["available"] is False
-    print("PASS rewind_state carries the pod's availability")
+
+    record.container = FakeContainer()
+    record.checkpoints_enabled = False
+    event = record._decorate_rewind_state(
+        {"type": "rewind_state", "added": [], "removed": []}
+    )
+    assert event["available"] is False
+    print("PASS rewind_state carries the checkpoints setting and pod availability")
 
 
 # --- round-2 fixes ----------------------------------------------------------
@@ -451,7 +571,7 @@ def test_route_rewind_parks_when_busy_and_queues_when_idle():
 
     server_module._route_rewind(record, "m1", "messages")
     assert record.pending_rewind is None
-    assert record.inbox == [{"kind": "rewind", "id": "m1", "mode": "messages"}]
+    assert list(record.inbox) == [{"kind": "rewind", "id": "m1", "mode": "messages"}]
 
     record.busy.set()
     server_module._route_rewind(record, "m2", "all")
@@ -499,7 +619,9 @@ def test_cancelled_turn_still_records_its_point(monkeypatch):
 
     monkeypatch.setattr(session_module, "ask_question", fake_ask)
     session.cancel()
-    session.run_turn("hello", rewind={"key": "msg-1", "tree": "a" * 40, "pod": 7})
+    session.run_turn(
+        "hello", rewind={"key": "msg-1", "snap": {"tree": "a" * 40}, "pod": 7}
+    )
 
     assert "msg-1" in session.rewind_points
     assert session.rewind_points["msg-1"]["text"] == "hello"
@@ -601,9 +723,9 @@ def test_create_container_seeds_the_pristine_tree(monkeypatch):
             script = argv[-1]
             scripts.append(script)
             if "SYNA_LAST_TREE" in script:
-                return f"reused {tree}"
+                return f"outer reused {tree}"
             if "write-tree" in script:
-                return tree
+                return f"outer {tree}"
             return pod_init.SUCCESS_MARKER
 
     class FakeClient:
@@ -619,7 +741,7 @@ def test_create_container_seeds_the_pristine_tree(monkeypatch):
         seed_scripts = [script for script in scripts if "write-tree" in script]
         assert len(seed_scripts) == 1
         seeded = rewind.snapshot(container)
-        assert seeded == tree
+        assert seeded == {"tree": tree, "nested": {}}
         assert "SYNA_LAST_TREE" in scripts[-1]
     finally:
         rewind.forget_pod(container)
@@ -654,17 +776,22 @@ def main():
             test_rewind_step_failure_disables_rewind,
             test_snapshot_composes_status_add_and_write_tree,
             test_snapshot_reuses_the_last_tree_when_unchanged,
+            test_snapshot_captures_nested_repositories,
+            test_snapshot_reuses_nested_trees_when_all_clean,
             test_snapshot_failure_and_garbage_yield_none,
             test_rollback_composes_read_tree_checkout_and_clean_fd,
+            test_rollback_restores_nested_repositories_with_temp_index,
+            test_rollback_skips_a_nested_repo_that_vanished,
             test_rollback_failure_reports_false,
             test_run_turn_records_a_point_and_emits_state,
             test_run_turn_without_rewind_records_nothing,
             test_rewind_truncates_history_and_returns_the_text,
             test_rewind_purges_later_points_and_pending_state,
-            test_rewind_of_a_compacted_away_message_fails_cleanly,
+            test_rewind_of_a_compacted_away_message_still_works,
             test_rewinding_an_unknown_point_returns_none,
             test_rewind_delta_events_track_the_point_lifecycle,
-            test_compaction_purges_stale_points_and_emits_state,
+            test_compaction_marks_stale_points_without_a_delta,
+            test_rewind_notice_records_what_happened,
             test_execute_rewind_truncates_history_log_and_inbox,
             test_execute_rewind_is_files_first,
             test_execute_rewind_rejects_a_foreign_pod,

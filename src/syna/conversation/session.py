@@ -671,23 +671,23 @@ class AgentSession:
         )
 
     def add_rewind_point(
-        self, key: str, text: str, tree_hash: str, pod_id: int, message: dict
+        self, key: str, text: str, snap: dict, pod_id: int, message: dict
     ):
         """Record a rewind point for the turn about to run.
 
-        Called with the pod-side workspace snapshot (`tree_hash`) taken
-        before the turn and the message appended to history for it. The
-        point lets the web UI rewind the conversation to just before this
-        message - deleting it and everything after - and, for "Messages &
-        changes", restore the snapshot's tree. The original text rides
-        along so the input field can be refilled for editing and
-        re-sending; the tree hash and every other detail stay out of the
-        message content the model sees.
+        Called with the pod-side workspace snapshot (`snap`: the outer
+        tree plus per-nested-repository trees) taken before the turn and
+        the message appended to history for it. The point lets the web UI
+        rewind the conversation to just before this message - deleting it
+        and everything after - and, for "Messages & workspace", restore
+        the snapshot. The original text rides along so the input field
+        can be refilled for editing and re-sending; the snapshot and every
+        other detail stay out of the message content the model sees.
         """
         self.rewind_points[key] = {
             "message": message,
             "text": text,
-            "tree": tree_hash,
+            "snap": snap,
             "pod": pod_id,
         }
         self._emit_rewind_delta(added=(key,))
@@ -708,39 +708,54 @@ class AgentSession:
     def rewind(self, key: str) -> str | None:
         """Truncate history back to just before the rewind point `key`.
 
-        Deletes the point's message and everything after it (compaction
-        survivors are matched by identity, so elision rewrites do not
-        break the lookup), purges the points and pending state that died
-        with the truncation, and returns the point's original text for
-        the input refill - or None when the point or its message no
-        longer exists, in which case nothing was changed. File rollback
-        is the caller's responsibility and must happen before this call
-        (files first, then messages).
+        For a live point, deletes the point's message and everything
+        after it (matched by identity, so elision rewrites do not break
+        the lookup). For a point whose message compaction summarized
+        away, the cut goes back to the conversation's verbatim
+        beginning - system prompt plus first real user message - because
+        the summary covering the point cannot be split; the point's tree
+        snapshot is unaffected by compaction and still restores exactly.
+
+        Either way the points and pending state that died with the cut
+        are purged, and the point's original text is returned for the
+        input refill - or None when the point no longer exists, in which
+        case nothing was changed. File rollback is the caller's
+        responsibility and must happen before this call (files first,
+        then messages).
         """
         point = self.rewind_points.get(key)
         if point is None:
             return None
-        index = next(
-            (
-                position
-                for position, message in enumerate(self.messages)
-                if message is point["message"]
-            ),
-            None,
-        )
-        if index is None:
-            del self.rewind_points[key]
-            self._emit_rewind_delta(removed=(key,))
-            return None
-        del self.messages[index:]
-        survivors = {id(message) for message in self.messages}
-        purged = [
-            name
-            for name, entry in self.rewind_points.items()
-            if id(entry["message"]) not in survivors
-        ]
-        for name in purged:
-            del self.rewind_points[name]
+        if point.get("compacted"):
+            first_user = self._first_user_index(self.messages[1:])
+            cutoff = first_user + 2 if first_user is not None else 1
+            del self.messages[cutoff:]
+            keys = list(self.rewind_points)
+            purged = keys[keys.index(key) :]
+            for name in purged:
+                del self.rewind_points[name]
+        else:
+            index = next(
+                (
+                    position
+                    for position, message in enumerate(self.messages)
+                    if message is point["message"]
+                ),
+                None,
+            )
+            if index is None:
+                del self.rewind_points[key]
+                self._emit_rewind_delta(removed=(key,))
+                return None
+            del self.messages[index:]
+            survivors = {id(message) for message in self.messages}
+            purged = [
+                name
+                for name, entry in self.rewind_points.items()
+                if id(entry["message"]) not in survivors
+            ]
+            for name in purged:
+                del self.rewind_points[name]
         self._pending_failed_messages.clear()
         with self._injection_lock:
             self._pending_injections = []
@@ -752,19 +767,55 @@ class AgentSession:
         )
         return point["text"]
 
-    def _purge_stale_rewind_points(self):
-        """Drop points whose messages compaction removed from history."""
+    def _mark_compacted_rewind_points(self):
+        """Keep points whose messages compaction summarized, marked.
+
+        Compaction removes messages from history but the UI still shows
+        them, so their rewind points stay usable: a rewind to one cuts
+        the history back to its verbatim beginning and restores the
+        point's tree, which lives in the pod's store and is unaffected
+        by compaction. No delta is emitted - the buttons stay.
+        """
         survivors = {id(message) for message in self.messages}
-        stale = [
-            name
-            for name, entry in self.rewind_points.items()
-            if id(entry["message"]) not in survivors
-        ]
-        if not stale:
-            return
-        for name in stale:
-            del self.rewind_points[name]
-        self._emit_rewind_delta(removed=stale)
+        for entry in self.rewind_points.values():
+            if id(entry["message"]) not in survivors:
+                entry["compacted"] = True
+                entry["message"] = None
+
+    def record_rewind_notice(self, reverted: bool):
+        """Tell the model a rewind happened and what state it now faces.
+
+        Appended to the truncated history, so the model reads it as the
+        latest event of the rewound timeline. With a workspace revert
+        the history and the files agree; without one they deliberately
+        do not - the workspace may contain files from the undone work -
+        and the notice is what keeps the model from trusting them
+        blindly. Either way files outside /workspace may still reflect
+        the undone work; the notice says so.
+        """
+        if reverted:
+            notice = (
+                "The user rewound the conversation: every message after"
+                " the last one in this history was undone, and /workspace"
+                " was reverted to the state it had at that point."
+                " Gitignored files and nested repository histories keep"
+                " their current content, and files outside /workspace may"
+                " still reflect the undone work. Treat the current"
+                " /workspace contents as the starting point."
+            )
+        else:
+            notice = (
+                "The user rewound the conversation: every message after"
+                " the last one in this history was undone. /workspace was"
+                " NOT reverted and may contain files from that undone"
+                " work; inspect it before relying on it."
+            )
+        msg = {
+            "role": "user",
+            "content": wrap_channel("HARNESS_NOTICE", harness_notice(notice)),
+        }
+        self.messages.append(msg)
+        get_logger().info(str(msg))
 
     def close(self):
         """Release the underlying model client's HTTP resources."""
@@ -988,7 +1039,7 @@ class AgentSession:
         logger.info(str(msg))
         if rewind:
             self.add_rewind_point(
-                rewind["key"], user_text, rewind["tree"], rewind["pod"], msg
+                rewind["key"], user_text, rewind["snap"], rewind["pod"], msg
             )
 
         no_tool_streak = 0
@@ -1342,7 +1393,7 @@ class AgentSession:
             *tail_group,
         ]
         self._pending_failed_messages.clear()
-        self._purge_stale_rewind_points()
+        self._mark_compacted_rewind_points()
         self._emit({"type": "compaction", "summary": summary})
         logger.info(
             "Compacted %d messages into a summary (interval=%d)",
