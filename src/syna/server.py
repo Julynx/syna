@@ -1,6 +1,7 @@
 """FastAPI web server exposing Syna agent sessions over HTTP and WebSocket."""
 
 import asyncio
+import importlib.metadata
 import ipaddress
 import json
 import os
@@ -864,6 +865,14 @@ class SessionRecord:
             self.push({"type": "ready"}, persistent=False)
 
 
+def _app_version() -> str:
+    """The running syna-agent version for the UI's logo tag."""
+    try:
+        return importlib.metadata.version("syna-agent")
+    except importlib.metadata.PackageNotFoundError:
+        return ""
+
+
 def _sanitize_client_id(client_id: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_-]", "", client_id)[:64]
     return cleaned or uuid.uuid4().hex
@@ -1070,6 +1079,7 @@ def index():
         "max_visible_tool_calls": config.get("max_visible_tool_calls", 3),
         "voice": speech.client_configuration(speech_settings, config),
         "auth_token": AUTH_TOKEN,
+        "version": _app_version(),
     }
     payload = json.dumps(gui_config).replace("</", "<\\/")
     script = f"<script>window.SYNA_CONFIG = {payload};</script>"

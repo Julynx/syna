@@ -35,6 +35,8 @@ const WS_BASE = isServed
   ? (location.protocol === "https:" ? "wss://" : "ws://") + location.host
   : "ws://127.0.0.1:8000";
 const AUTH_TOKEN = (window.SYNA_CONFIG && window.SYNA_CONFIG.auth_token) || "";
+const APP_VERSION =
+  (window.SYNA_CONFIG && window.SYNA_CONFIG.version) || "";
 
 /* The per-process server token rides along on every authenticated call:
    headers for fetches, the query string for direct links (<img>, file
@@ -3050,6 +3052,7 @@ async function openSettingsModal() {
 
 attachBtn.innerHTML = ICONS.clip;
 newchatBtn.innerHTML = ICONS.newchat;
+if (APP_VERSION) document.getElementById("brand-version").textContent = APP_VERSION;
 if (settingsBtn) {
   settingsBtn.innerHTML = ICONS.settings;
   settingsBtn.addEventListener("click", openSettingsModal);

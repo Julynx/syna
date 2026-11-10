@@ -45,7 +45,16 @@ header {
   width: auto;
 }
 
-.inline-status {
+.brand-version {
+  align-self: flex-end;
+  transform: translateY(3px);
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--muted);
+  letter-spacing: 0.3px;
+  user-select: none;
+}.inline-status {
   display: flex;
   align-items: center;
   gap: 7px;

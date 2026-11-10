@@ -344,7 +344,16 @@ header {
   width: auto;
 }
 
-.inline-status {
+.brand-version {
+  align-self: flex-end;
+  transform: translateY(3px);
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--muted);
+  letter-spacing: 0.3px;
+  user-select: none;
+}.inline-status {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -2538,7 +2547,8 @@ body.voice-off #mic-btn {
     <header>
       <span class="brand"
         ><img class="brand-logo" src="vendor/syna-logo.png" alt="Syna"
-      /></span>
+        /><span class="brand-version" id="brand-version"></span
+      ></span>
       <div class="header-actions">
         <button
           id="bg-btn"
@@ -3594,6 +3604,8 @@ const WS_BASE = isServed
   ? (location.protocol === "https:" ? "wss://" : "ws://") + location.host
   : "ws://127.0.0.1:8000";
 const AUTH_TOKEN = (window.SYNA_CONFIG && window.SYNA_CONFIG.auth_token) || "";
+const APP_VERSION =
+  (window.SYNA_CONFIG && window.SYNA_CONFIG.version) || "";
 
 /* The per-process server token rides along on every authenticated call:
    headers for fetches, the query string for direct links (<img>, file
@@ -6609,6 +6621,7 @@ async function openSettingsModal() {
 
 attachBtn.innerHTML = ICONS.clip;
 newchatBtn.innerHTML = ICONS.newchat;
+if (APP_VERSION) document.getElementById("brand-version").textContent = APP_VERSION;
 if (settingsBtn) {
   settingsBtn.innerHTML = ICONS.settings;
   settingsBtn.addEventListener("click", openSettingsModal);
