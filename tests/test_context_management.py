@@ -150,6 +150,28 @@ def test_elide_is_idempotent():
     assert body.count("output elided") == 1
 
 
+def test_elide_min_chars_keeps_short_outputs_full_text():
+    short = _tool_results_message(
+        1, "web_search", "tiny output", "/tool_outputs/0001_web_search.txt"
+    )
+    long = _tool_results_message(
+        2, "web_search", "x" * 2500, "/tool_outputs/0002_web_search.txt"
+    )
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "task"},
+        short,
+        long,
+    ]
+    elided = elide_tool_outputs(messages, keep_recent=0, min_chars=2000)
+    assert elided == 1
+    _, short_body = unwrap_channel(short["content"])
+    assert "tiny output" in short_body, "below-threshold output must stay full text"
+    assert "saved_to=" in short_body, "pointer stays attached to the inline text"
+    _, long_body = unwrap_channel(long["content"])
+    assert "output elided" in long_body
+
+
 def test_pod_host_config_assembles_limits():
     host_config = build_pod_host_config(memory_mb=1024, pids_limit=64)
     assert host_config == {
@@ -326,6 +348,7 @@ def test_session_elides_old_outputs_on_message_interval():
         session.elide_keep_recent_messages = 1
         session.elide_interval_messages = 2
         session.elide_every_requests = 1
+        session.elide_min_chars = 0
         session.client = FakeChat(
             [
                 _make_tool_call_reply(
@@ -355,6 +378,53 @@ def test_session_elides_old_outputs_on_message_interval():
     assert "[output elided; full text in /tool_outputs/" in first_body
     assert "ran: first" not in first_body
     assert "ran: second" in second_body, "recent output must stay intact"
+
+
+def test_session_keeps_short_outputs_full_text_on_interval_path():
+    TOOL_REGISTRY["smoke_tool"] = lambda label="unlabeled": f"ran: {label}"
+    pod = FakePod()
+    register_container(pod)
+    try:
+        from syna.conversation.session import AgentSession
+
+        session = AgentSession(session_id="context-short-test")
+        session.dump_path = Path(tempfile.mkdtemp(prefix="syna-short-")) / "dump.json"
+        session.request_delay = 0
+        session.context_budget_tokens = 10**9
+        session.max_history_messages = 10**6
+        session.elide_keep_recent_messages = 1
+        session.elide_interval_messages = 2
+        session.elide_every_requests = 1
+        session.client = FakeChat(
+            [
+                _make_tool_call_reply(
+                    "smoke_tool", {"label": "short"}, call_id="call_1"
+                ),
+                _make_tool_call_reply(
+                    "smoke_tool", {"label": "x" * 9}, call_id="call_2"
+                ),
+                _make_text_reply("done"),
+            ]
+        )
+        session.run_turn("probe")
+    finally:
+        unregister_container()
+        TOOL_REGISTRY.pop("smoke_tool", None)
+
+    assert not session.client.replies, "summarization must not run"
+    tool_messages = [
+        m
+        for m in session.messages
+        if is_channel_message(m.get("content") or "", "TOOL_RESULTS")
+    ]
+    assert len(tool_messages) == 2
+    first = unwrap_channel(tool_messages[0]["content"])[1]
+    assert "ran: short" in first, "short output must stay inline on the interval path"
+    assert "saved_to=" in first, "pointer stays attached"
+    assert "output elided" not in first
+    assert "output elided" not in str(session.messages), (
+        "no output is long enough to elide"
+    )
 
 
 def test_session_elision_is_batched_by_request_interval():

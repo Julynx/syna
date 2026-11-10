@@ -345,6 +345,7 @@ def load_pod_doh_bootstrap_alt() -> str:
 DEFAULT_USER_MESSAGE_ARCHIVE_MIN_CHARS = 2000
 DEFAULT_USER_MESSAGES_DEST = "/user_messages"
 DEFAULT_ELIDE_USER_MESSAGE_HEAD_CHARS = 300
+DEFAULT_ELIDE_MIN_CHARS = 2000
 DEFAULT_VERIFY_LOG_TAIL_CHARS = 128000
 
 # Background work. Processes and subagents get their own runtime caps,
@@ -380,6 +381,18 @@ def load_elide_user_message_head_chars() -> int:
     return load_config().get(
         "elide_user_message_head_chars", DEFAULT_ELIDE_USER_MESSAGE_HEAD_CHARS
     )
+
+
+def load_elide_min_chars() -> int:
+    """Return the output size at which routine elision replaces text with a pointer.
+
+    Eliding a short output is a net loss for the prompt cache: the
+    pointer is nearly as long as the text, and rewriting one message
+    re-bills the whole suffix after it at the uncached rate. Outputs
+    shorter than this stay inline with their saved_to pointer attached.
+    The budget-exceeded elision path ignores the threshold.
+    """
+    return load_config().get("elide_min_chars", DEFAULT_ELIDE_MIN_CHARS)
 
 
 def load_verify_log_tail_chars() -> int:

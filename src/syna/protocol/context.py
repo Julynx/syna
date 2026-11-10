@@ -5,9 +5,11 @@ Two mechanisms keep the conversation within the model's context budget:
 1. Eliding old tool outputs: every executed call's full output is saved in
    the pod (`saved_to`), so old outputs in history can be replaced by a
    one-line pointer without losing information. Only recoverable outputs,
-   those carrying a `saved_to` path, are elided. Archived large user
-   messages (user_messages.py) are elided the same way: head excerpt plus
-   a pointer to the verbatim file.
+   those carrying a `saved_to` path, are elided. Short outputs stay
+   full text: their pointer would be nearly as long, and rewriting the
+   message breaks the provider prompt cache for the suffix after it.
+   Archived large user messages (user_messages.py) are elided the same
+   way: head excerpt plus a pointer to the verbatim file.
 2. Summarization (compaction, in `session.py`): the lossy fallback that
    rewrites older turns, applied only when the budget is still exceeded
    after elision.
@@ -76,13 +78,18 @@ def estimate_history_tokens(messages: list[dict]) -> int:
     return total
 
 
-def elide_tool_outputs(messages: list[dict], keep_recent: int) -> int:
+def elide_tool_outputs(
+    messages: list[dict], keep_recent: int, min_chars: int = 0
+) -> int:
     """Replace recoverable old tool outputs in history with pointers.
 
     Message contents are updated in place. The system message and the most
     recent `keep_recent` history messages are left untouched. Only results
     carrying a `saved_to` path are elided; anything unrecoverable stays.
-    Already-elided messages are skipped, making the pass idempotent.
+    Outputs shorter than `min_chars` keep their full text, pointer
+    attached: eliding them would replace the text with a nearly identical
+    pointer while rewriting the message re-bills the cache suffix after
+    it. Already-elided messages are skipped, making the pass idempotent.
 
     Returns the number of results elided.
     """
@@ -102,7 +109,7 @@ def elide_tool_outputs(messages: list[dict], keep_recent: int) -> int:
         if unwrapped is None:
             continue
         kind, body = unwrapped
-        new_body, count = _elide_result_blocks(body)
+        new_body, count = _elide_result_blocks(body, min_chars)
         if count:
             message["content"] = wrap_channel(kind, new_body)
             elided_count += count
@@ -149,8 +156,11 @@ def elide_archived_user_messages(
     return elided_count
 
 
-def _elide_result_blocks(body: str) -> tuple[str, int]:
-    """Elide every saved_to-bearing result output inside one message body."""
+def _elide_result_blocks(body: str, min_chars: int = 0) -> tuple[str, int]:
+    """Elide every saved_to-bearing result output inside one message body.
+
+    Outputs shorter than `min_chars` are left as-is.
+    """
     count = 0
 
     def replace(match: re.Match) -> str:
@@ -158,7 +168,7 @@ def _elide_result_blocks(body: str) -> tuple[str, int]:
         opening_tag = match.group(1)
         output = match.group(2)
         saved_to = SAVED_TO_PATTERN.search(opening_tag)
-        if saved_to is None or ELIDED_MARKER in output:
+        if saved_to is None or ELIDED_MARKER in output or len(output) < min_chars:
             return match.group(0)
         count += 1
         return (

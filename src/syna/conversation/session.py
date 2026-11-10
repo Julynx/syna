@@ -24,6 +24,7 @@ from ..config import (
     is_openrouter_base_url,
     load_command_timeout_s,
     load_config,
+    load_elide_min_chars,
     load_elide_user_message_head_chars,
     load_output_limit_chars,
     load_user_message_archive_min_chars,
@@ -381,6 +382,7 @@ class AgentSession:
             "elide_every_requests", DEFAULT_ELIDE_EVERY_REQUESTS
         )
         self.elide_user_message_head_chars = load_elide_user_message_head_chars()
+        self.elide_min_chars = load_elide_min_chars()
         self.compaction_prompt = load_compaction_prompt()
         self.session_id = session_id
         self.messages: list[dict] = []
@@ -955,9 +957,14 @@ class AgentSession:
         token budget, and whenever the budget is exceeded regardless of
         count. To keep the provider prompt cache warm, the rewrite itself is
         batched: outside the budget-exceeded path it only runs every
-        `elide_every_requests` requests. Every output still becomes a pointer
-        eventually; it simply stays full-text a few requests longer. Lossless:
-        elided output stays readable in the pod at its saved_to path, and an
+        `elide_every_requests` requests. Outputs below `elide_min_chars`
+        stay full text (with their saved_to pointer attached): a pointer
+        would be nearly as long, and rewriting the message re-bills the
+        cache suffix after it at the uncached rate. When the budget is
+        exceeded the threshold is ignored - fitting in the budget beats
+        cache economics. Larger outputs still become pointers eventually;
+        they simply stay full-text a few requests longer. Lossless: elided
+        output stays readable in the pod at its saved_to path, and an
         archived user message at its archive path.
         """
         interval = self.elide_interval_messages
@@ -968,7 +975,10 @@ class AgentSession:
         batch_due = self._requests_since_elide >= self.elide_every_requests
         if not (budget_exceeded or batch_due):
             return 0
-        elided = elide_tool_outputs(self.messages, self.elide_keep_recent_messages)
+        min_chars = 0 if budget_exceeded else self.elide_min_chars
+        elided = elide_tool_outputs(
+            self.messages, self.elide_keep_recent_messages, min_chars
+        )
         elided += elide_archived_user_messages(
             self.messages,
             self.elide_keep_recent_messages,
