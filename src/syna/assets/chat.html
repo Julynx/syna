@@ -2125,6 +2125,14 @@ footer {
   padding-top: 18px;
 }
 
+/* Hairline between a flat group and a collapsible card section: the
+   card has its own border, so the line must be a separate element. */
+.settings-modal-body .settings-divider {
+  height: 1px;
+  flex: none;
+  background: var(--border, rgba(255, 255, 255, 0.08));
+}
+
 .settings-category-header {
   display: flex;
   align-items: center;
@@ -6431,6 +6439,10 @@ async function openSettingsModal() {
   catCheck.appendChild(checkRow);
 
   body.appendChild(catCheck);
+
+  const checkDivider = document.createElement("div");
+  checkDivider.className = "settings-divider";
+  body.appendChild(checkDivider);
 
   // --- Advanced (collapsed by default) ---
   const cat5 = document.createElement("details");

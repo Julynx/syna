@@ -2860,6 +2860,10 @@ async function openSettingsModal() {
 
   body.appendChild(catCheck);
 
+  const checkDivider = document.createElement("div");
+  checkDivider.className = "settings-divider";
+  body.appendChild(checkDivider);
+
   // --- Advanced (collapsed by default) ---
   const cat5 = document.createElement("details");
   cat5.className = "settings-details";
