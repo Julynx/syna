@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from syna.config import sticky_routing_fields
+from syna.config import cache_control_fields, sticky_routing_fields
 
 
 def test_sticky_routing_fields_by_endpoint_family(monkeypatch):
@@ -40,6 +40,56 @@ def test_sticky_routing_fields_by_endpoint_family(monkeypatch):
     )
     monkeypatch.setattr(config_module, "get_env", dict)
     assert sticky_routing_fields(None) == {}, "no session id, no routing fields"
+
+
+def test_cache_control_fields_target_anthropic_on_openrouter(monkeypatch):
+    import syna.config as config_module
+
+    monkeypatch.setattr(config_module, "get_env", dict)
+    monkeypatch.setattr(config_module, "load_config", dict)
+    assert cache_control_fields("~anthropic/claude-sonnet-5.5") == {
+        "cache_control": {"type": "ephemeral"}
+    }, "the default model id's ~ prefix is stripped before the provider check"
+    assert cache_control_fields("anthropic/claude-opus-5.5") == {
+        "cache_control": {"type": "ephemeral"}
+    }, "plain anthropic model ids get caching too"
+
+    assert cache_control_fields("~z-ai/glm-flash-latest") == {}, (
+        "providers that cache automatically must not receive the field"
+    )
+    assert cache_control_fields(None) == {} and cache_control_fields("") == {}, (
+        "no model, no cache field"
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_env",
+        lambda: {"BASE_URL": "https://api.openai.com/v1"},
+    )
+    assert cache_control_fields("anthropic/claude-opus-5.5") == {}, (
+        "a non-OpenRouter endpoint must not receive OpenRouter-only fields"
+    )
+
+
+def test_cache_control_fields_honor_ttl_config(monkeypatch):
+    import syna.config as config_module
+
+    monkeypatch.setattr(config_module, "get_env", dict)
+    monkeypatch.setattr(
+        config_module,
+        "load_config",
+        lambda: {"anthropic_cache_ttl": "1h"},
+    )
+    assert cache_control_fields("anthropic/claude-opus-5.5") == {
+        "cache_control": {"type": "ephemeral", "ttl": "1h"}
+    }, "the one-hour TTL avoids re-writing the prefix during long tool calls"
+    monkeypatch.setattr(
+        config_module,
+        "load_config",
+        lambda: {"anthropic_cache_ttl": "5m"},
+    )
+    assert cache_control_fields("anthropic/claude-opus-5.5") == {
+        "cache_control": {"type": "ephemeral"}
+    }, "the default TTL matches Anthropic's own default"
 
 
 class FakeUsageDetails:
@@ -91,6 +141,7 @@ def test_ask_question_applies_routing_fields_and_reports_usage(monkeypatch):
     usage_samples = []
     client = FakeChat()
     monkeypatch.setattr(config_module, "get_env", dict)
+    monkeypatch.setattr(config_module, "load_config", dict)
 
     reply = ask_question(
         client,
@@ -104,6 +155,9 @@ def test_ask_question_applies_routing_fields_and_reports_usage(monkeypatch):
     assert reply["content"] == "done"
     assert client.requests[0].get("session_id") == "sess-1", (
         "the OpenRouter default sends the session_id routing key"
+    )
+    assert "cache_control" not in client.requests[0], (
+        "non-anthropic models get no cache opt-in"
     )
     assert usage_samples == [(1000, 800)], "usage flows to the callback"
 
@@ -123,6 +177,19 @@ def test_ask_question_applies_routing_fields_and_reports_usage(monkeypatch):
     request = client.requests[0]
     assert "session_id" not in request and "prompt_cache_key" not in request, (
         "strict custom endpoints get a byte-clean request body"
+    )
+
+    monkeypatch.setattr(config_module, "get_env", dict)
+    client = FakeChat()
+    ask_question(
+        client,
+        "~anthropic/claude-sonnet-5.5",
+        [{"role": "user", "content": "hi"}],
+        delay=0,
+        session_id="sess-1",
+    )
+    assert client.requests[0].get("cache_control") == {"type": "ephemeral"}, (
+        "Claude conversations must opt in to prompt caching"
     )
 
 
@@ -174,6 +241,8 @@ def main():
     run_suite(
         [
             test_sticky_routing_fields_by_endpoint_family,
+            test_cache_control_fields_target_anthropic_on_openrouter,
+            test_cache_control_fields_honor_ttl_config,
             test_ask_question_applies_routing_fields_and_reports_usage,
             test_session_logs_cache_summary_on_close,
         ]

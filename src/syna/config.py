@@ -110,6 +110,31 @@ def sticky_routing_fields(session_id: str | None) -> dict:
     return {}
 
 
+def cache_control_fields(model: str | None) -> dict:
+    """Return the request-body field that opts a model into prompt caching.
+
+    Most providers cache automatically, but Anthropic does not: without
+    an explicit opt-in a Claude conversation gets zero prompt caching.
+    On OpenRouter, a top-level `cache_control` enables Anthropic's
+    automatic mode - the breakpoint sits on the last cacheable block and
+    advances as the conversation grows, which matches an append-only
+    agent history. Cache reads run at 0.1x input price; writes at 1.25x
+    (5-minute TTL) or 2x (1-hour TTL, `anthropic_cache_ttl`), so the
+    longer TTL suits sessions with tool calls longer than five minutes
+    that would otherwise re-write the whole prefix. Every other model
+    and endpoint gets no field: providers that cache automatically need
+    no opt-in, and strict custom endpoints reject unknown fields.
+    """
+    if not model or not model.lstrip("~").startswith("anthropic/"):
+        return {}
+    if normalize_base_url(get_env().get("BASE_URL")) != DEFAULT_OPENROUTER_BASE_URL:
+        return {}
+    directive: dict = {"type": "ephemeral"}
+    if load_config().get("anthropic_cache_ttl") == "1h":
+        directive["ttl"] = "1h"
+    return {"cache_control": directive}
+
+
 # Feature toggles edited in the settings modal. Voice stays available with
 # default models but voice mode itself starts off; image generation is
 # opt-in because it is expensive and model-initiated.

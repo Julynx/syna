@@ -7,7 +7,7 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
-from .config import get_logger, load_config, sticky_routing_fields
+from .config import get_logger, load_config, cache_control_fields, sticky_routing_fields
 
 EMPTY_RESPONSE_MAX_ATTEMPTS = 3
 DEFAULT_MAX_OUTPUT_TOKENS = 16384
@@ -140,6 +140,7 @@ def ask_question(
             if effort:
                 request["reasoning"] = {"effort": effort}
             request.update(sticky_routing_fields(session_id))
+            request.update(cache_control_fields(model))
             _write_dump(dump_path, request)
             response = client.chat.send(**request)
             _log_response_meta(logger, response, attempt)

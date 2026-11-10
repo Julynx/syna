@@ -437,7 +437,7 @@ Global Docker client plus per-thread container registry and per-call context.
 
 Agentic loops resend the full history on every step, so provider-side
 prompt caching is the largest lever on cost and latency. Syna's approach,
-in three parts:
+in four parts:
 
 1. **Routing keys per endpoint family** (`config.sticky_routing_fields`):
    OpenRouter requests carry a top-level `session_id` (the session's
@@ -448,14 +448,27 @@ in three parts:
    field: strict OpenAI-compatible servers reject unknown top-level
    fields with a 400 (the same failure mode the ungated `reasoning`
    object had), and they still benefit from automatic prefix caching.
-2. **Prefix stability**: provider caches match the request prefix byte
+2. **Explicit opt-in for providers that need it**
+   (`config.cache_control_fields`): most providers cache automatically,
+   but Anthropic does not - without an explicit opt-in a Claude
+   conversation gets zero prompt caching. Anthropic models on OpenRouter
+   therefore carry a top-level `cache_control: {"type": "ephemeral"}`,
+   which enables Anthropic's automatic mode: the breakpoint sits on the
+   last cacheable block and advances as the append-only history grows.
+   Cache reads cost 0.1x input; writes 1.25x (5-minute TTL, the
+   default) or 2x with `anthropic_cache_ttl: "1h"` - the hour suits
+   sessions whose tool calls outlast five minutes and would otherwise
+   re-write the whole prefix. Every other model gets no field: it would
+   be dead weight at best on automatic-caching providers, and a 400 on
+   non-OpenRouter endpoints (the gate is endpoint- and model-scoped).
+3. **Prefix stability**: provider caches match the request prefix byte
    for byte, so the common path is strictly append-only, pinned by
    `test_request_prefix_is_stable_across_steps`. The documented
    invalidation events are the deliberate ones: batched elision passes
    (every `elide_every_requests` requests), compaction, and the
    purge-after-repair splice. The system prompt changes only across
    days (`{{CURRENT_DATE}}`), never between requests of a session.
-3. **Measurement**: per-response cached-token counts are logged on every
+4. **Measurement**: per-response cached-token counts are logged on every
    request and aggregated into one session-end summary line (requests,
    prompt tokens, cached tokens, hit ratio). A low ratio on a long
    session points at something repeatedly invalidating the prefix; that
