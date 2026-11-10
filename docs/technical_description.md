@@ -288,6 +288,7 @@ Every module and the chapter that describes it:
 | `src/syna/capabilities/imaging.py`          | [Capabilities](#srcsynacapabilitiesimagingpy)          |
 | `src/syna/capabilities/net_guard.py`        | [The browser stack](#srcsynacapabilitiesnet_guardpy)   |
 | `src/syna/capabilities/processes.py`        | [Capabilities](#srcsynacapabilitiesprocessespy)        |
+| `src/syna/capabilities/rewind.py`           | [Capabilities](#srcsynacapabilitiesrewindpy)           |
 | `src/syna/capabilities/subagents.py`        | [Capabilities](#srcsynacapabilitiessubagentspy)        |
 | `src/syna/capabilities/speech.py`           | [Voice and narration](#srcsynacapabilitiesspeechpy)    |
 | `src/syna/capabilities/tools.py`            | [Capabilities](#srcsynacapabilitiestoolspy)            |
@@ -349,7 +350,13 @@ Global Docker client plus per-thread container registry and per-call context.
   installs `dnscrypt-proxy`, points the pod resolver at Quad9's
   unfiltered endpoint over HTTPS (`pod_doh_uri`, `pod_doh_bootstrap`,
   `pod_doh_bootstrap_alt`, pinned inside dnscrypt stamps), and enables
-  transparent HTTP/3 for curl. `pod_init.copy_shared_dir()` then copies
+  transparent HTTP/3 for curl, and the rewind step installs git and prepares the shadow
+   snapshot store the web UI's rewind feature snapshots the workspace
+   with (git dir `REWIND_SNAP_DIR`, work tree `REWIND_SNAP_ROOT`, both
+   under `pod_init`); each step's result is recorded per pod
+   (`record_init_results` / `init_results_for`) so features can gate on
+   what went active, and is forgotten at pod destruction.
+   `pod_init.copy_shared_dir()` then copies
   the user's shared directory (next section) into the pod and, when the
   caller passed a `shared_copy_sink`, hands it the copy report so a UI
   can tell the user what landed.
@@ -791,8 +798,18 @@ the loop, `ask_utils.py` sends the model requests, and
   it misled a log investigation. The notice sits in history as the turn's
   last message: the model reads it later, as context of the next turn, not
   as an immediate instruction.
-- **Queued-message injection ("Send now")**: `queue_injection(item)` holds
-  a queued web message thread-safely; at the top of the turn loop: after
+- **Rewind points**: `run_turn(query, rewind=None)` records an optional
+  rewind point for the web UI's undo feature: a dict with the message
+  key, the pod-side workspace tree snapshot taken before the turn, and
+  the pod's identity. The point lives beside the message (keyed by id,
+  never inside the content the model sees), survives elision rewrites
+  (matched by identity), is purged when compaction removes its message,
+  and `rewind(key)` truncates history back to just before it — deleting
+  the message and everything after, clearing the pending failures and
+  pending injections, and returning the original text for the input
+  refill. File rollback is the caller's responsibility and must precede
+  it. CLI and subagent turns pass no rewind and pay nothing.
+- **Queued-message injection ("Send now")**: `queue_injection(item)` holds  a queued web message thread-safely; at the top of the turn loop: after
   the previous tool batch's results are in history and before the next
   `ask_question`: `apply_injections()` appends every pending message to
   `self.messages` (through `_prepare_user_message`, so large injected
@@ -806,7 +823,8 @@ the loop, `ask_utils.py` sends the model requests, and
   request without the message being in the same one. Injections left
   pending when a turn ends (final response, error, cancellation) are
   returned to the web session's inbox by the worker, so they run as the
-  next turn instead of being dropped.
+  next turn instead of being dropped. A rewind request is an inbox
+  item like a message, so it too runs strictly between turns.
 - **User message archives**: before appending the user message, `run_turn`
   hands it to `_prepare_user_message`: messages at least
   `user_message_archive_min_chars` long are archived verbatim into the pod
@@ -1277,8 +1295,61 @@ close a cycle: tools -> here -> session -> parse -> tools).
   spawner (top-level inbox, or an injection into a live parent
   subagent's turn; dropped when the parent is settled or gone).
 
-## 8. The browser stack
+### `src/syna/capabilities/rewind.py`
 
+Workspace snapshots backing the web UI's rewind feature. The pod's
+init (`pod_init`'s rewind step) installs git and prepares a shadow
+store: a git repo at `REWIND_SNAP_DIR` (`/var/lib/syna/snap.git`) whose
+work tree is `REWIND_SNAP_ROOT` (`/workspace`) — the directory every
+command and tool artifact lives in (`execute_command`'s runner cds
+there first); the container's nominal WORKDIR is `/` and holds the pod
+machinery that must never be reverted. Every pod call here goes through
+`pod_io` like the rest of the codebase.
+
+- **Snapshot** (`snapshot(container)`): before each user message is sent,
+  the session's worker snapshots `/workspace`. One exec runs
+  `git status --porcelain` first: an unchanged workspace reuses the
+  previous tree hash (near-zero cost on idle trees), a changed one runs
+  `git add -A && git write-tree`. The cache is seeded at pod creation —
+  `create_container` snapshots the pristine workspace (shared copy
+  included) right after init — so the first message's rewind point is
+  the pristine tree at the cost of one status call, and rewinding to the
+  first message restores the pod exactly as handed over. Any failure
+  returns None — the message then simply has no rewind point. The last
+  tree per pod is cached host-side (`_last_tree`, keyed by container
+  identity, forgotten at pod destruction), and a successful rollback
+  re-points it at the restored tree so the next snapshot's skip check
+  stays true.
+- **Rollback** (`rollback(container, tree)`): `git read-tree` resets
+  the index to the snapshot, `checkout-index -a -f` rewrites every file
+  it tracked, and `clean -fd` deletes what appeared after it — `-fd`,
+  not `-fdx`, so `.gitignore` is respected (`.venv`, `node_modules`,
+  `.env` survive and may linger stale). The pod confirms with a marker;
+  a False answer means the workspace is in an unknown state and the
+  caller must not truncate history (files first, then messages).
+- **Nested git repositories are protected** by git's own semantics: a
+  snapshot records a nested repo as a gitlink (its contents and history
+  stay in its own `.git` on disk), and `clean -fd` refuses to remove
+  directories containing a `.git` (that would need `-ff`), so a nested
+  repo survives a rollback whether it existed at snapshot time or was
+  cloned after it; the shadow store's own git dir sits outside the work
+  tree. The same protection means a rollback leaves nested repos in
+  their post-snapshot state: their internal files are managed by their
+  own repo, not the snapshot.
+- **Scope**: exactly the `/workspace` tree. Installed packages, `/tmp`,
+  `/tool_outputs`, `/user_messages`, `/home/user/uploads`, and the
+  store itself survive. The in-pod store is ephemeral by design: a
+  recreated pod (janitor reaping, new chat, server restart) has no
+  snapshots, and the UI hides the rewind buttons for the messages of
+  the lost ones. Note for artifact promises: `process` and `subagent`
+  artifacts under `/workspace/processes` and `/workspace/subagents` are
+  workspace files too, so a rewind can remove them; the completion
+  viewer's transcript lives host-side and stays readable.
+- **Availability** (`available_for(container)`): the recorded
+  `pod_init` step result — a pod without the step (failed install) runs
+  without rewind.
+
+## 8. The browser stack
 The stealth browser (Camoufox) behind `web_search` and the `browser`
 tool: page viewing and interaction, the host network guard, and search
 pacing.
@@ -1574,6 +1645,42 @@ event loop. Teardown (`new-chat`, janitor, shutdown) stops running
 subagents and drops the session's registry; the pod's processes die
 with the pod itself.
 
+Rewind (the web UI's undo): the worker snapshots the workspace through
+`capabilities/rewind.py` before every user-message turn (background
+notice turns are exempt — they are not user messages) and the session
+records a rewind point keyed by the message's client id, emitting a
+persistent `rewind_state` delta event (`added`/`removed` id arrays,
+decorated with the pod's availability) that clients apply in order and
+converge on. A `rewind` WebSocket message is honored between turns only:
+while idle it is enqueued as a `rewind` inbox item, so it runs strictly
+after the previous turn; while a turn is busy it takes the stop button's
+path (`session.cancel()` plus releasing a pending question) and parks as
+`pending_rewind`, which the worker executes right after the turn ends —
+cancel first, rewind when the stop lands. Execution is ordered:
+`_execute_rewind` resolves the point, and for "Messages & changes" stops
+the pod's background work first (each record is marked collected before
+the kill, so the exactly-once machinery suppresses the model-facing
+notice — the rewound timeline never knew about the work — while a
+synthetic `background_done` keeps the panel honest; processes are killed
+blocking-bounded, subagents gracefully with a bounded settle wait, and
+the sweep repeats so a dying subagent's last-gasp spawn is caught),
+then restores the workspace snapshot (a foreign-pod snapshot or a
+failed restore leaves every message in place and pushes an error toast);
+only then does the session truncate history at the chosen message
+(deleting it and everything after, purging the later rewind points, the
+pending failures, and pending injections), the inbox is cleared of
+everything queued but not started — rewind requests already in the
+inbox survive, so a click during the busy-clear window is never
+swallowed — the persistent event log is cut at the chosen message's
+`user_message` event, and a persistent `history_rewind` event (the
+message's id plus its original text) rebuilds every connected client:
+they drop the transcript from the bubble on and refill the input for
+editing and re-sending. A recreated pod clears every point at container
+start — snapshots live inside the pod, so a new pod invalidates all
+stored trees at once. A killed subagent's runner finalize re-copies its
+artifacts into `/workspace/subagents/{id}/` after the rollback, so
+orphan artifact dirs can reappear; they are untracked files, not code.
+
 Server auth (hardened boundaries): `main()` generates a per-process token
 (`AUTH_TOKEN`, `secrets.token_urlsafe`); the HTTP middleware then requires
 it on `/api/*` (header `X-Syna-Token` or `token` query; the query form
@@ -1845,6 +1952,23 @@ drops are ignored.
   tool activity brings it back, and ambient state changes re-sync the
   gain. Narration reuses the tool ambience without arming the fade, so
   spoken replies keep the beat.
+- Rewind: every user bubble stores its message id
+  (`data-msg-id`); persistent `rewind_state` delta events stream the
+  pod's availability plus added/removed message ids, and user bubbles
+  on the live list show an `undo` hover button styled like the
+  model bubbles' copy buttons. Clicking it opens the "Choose what to
+  revert" modal — three stacked wide buttons, "Messages only",
+  "Messages & changes", "Cancel" — and the choice sends a `rewind`
+  message over the WebSocket (while busy the status pill shows
+  "Stopping...", since the rewind rides the stop path). A persistent
+  `history_rewind` event applies the server's decision everywhere: the
+  chosen bubble and everything after it leaves the transcript, the
+  queue dock and any pending question clear, and the input is refilled
+  with the rewound message's original text (overwriting any draft) for
+  editing and re-sending or deletion. Reconnects replay the log's
+  `rewind_state` and `history_rewind` events in order, so every tab
+  converges on the rewound timeline; a pod without rewind simply never
+  lists ids, and the buttons stay hidden.
 
 ## 11. Voice and narration
 

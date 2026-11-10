@@ -44,7 +44,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 from . import interaction, setup
-from .capabilities import processes, speech, subagents
+from .capabilities import processes, rewind, speech, subagents
 from .pod_io import pod_copy_from
 from .protocol.channel import harness_notice, unwrap_channel, wrap_channel
 from .config import (
@@ -92,6 +92,10 @@ NEW_CHAT_STOP_TIMEOUT_S = 20
 IMAGE_CACHE_LIMIT = 32
 SERVER_ENTRY_POINT = "syna-server"
 EXECUTABLE_SUFFIXES = (".exe", ".bat", ".cmd")
+# How long a "Messages & changes" rewind waits for gracefully-stopping
+# subagents before rolling back anyway; their stop lands at the next
+# pause, which a long tool call can hold for a while.
+REWIND_SUBAGENT_SETTLE_S = 10
 
 SERVED_IMAGE_EXTENSIONS = {
     ".png": "image/png",
@@ -134,6 +138,7 @@ class SessionRecord:
         self.container_ready = threading.Event()
         self.container_starting = False
         self.busy = threading.Event()
+        self.pending_rewind: dict | None = None
         self.connected = False
         self.shutdown = threading.Event()
         self.last_activity = time.time()
@@ -456,7 +461,22 @@ class SessionRecord:
         first["content"] = wrap_channel("HARNESS_NOTICE", "\n\n".join(bodies))
         return first
 
+    def _decorate_rewind_state(self, event: dict) -> dict:
+        """Add availability to a session's rewind_state event.
+
+        Availability is the pod's: git installed and the shadow store
+        prepared by the init step. The event's deltas apply to the
+        messages with a live snapshot on the current pod.
+        """
+        decorated = dict(event)
+        decorated["available"] = self.container is not None and rewind.available_for(
+            self.container
+        )
+        return decorated
+
     def _on_session_event(self, event: dict):
+        if event.get("type") == "rewind_state":
+            event = self._decorate_rewind_state(event)
         metadata = shared_file_metadata(event)
         if metadata is not None:
             try:
@@ -511,12 +531,21 @@ class SessionRecord:
         back to the head of the queue (its pill stays honest) and the
         engine bring-up is retried after a pause. The queued pill becomes a
         chat bubble exactly when the message leaves the queue and starts
-        its turn."""
+        its turn. A rewind request is an inbox item like a message, so it
+        runs strictly between turns.
+        """
         self._start_container()
         try:
             while not self.shutdown.is_set():
                 item = self._next_message(timeout=1.0)
-                if item is None or item.get("kind") != "message":
+                if item is None:
+                    continue
+                if item.get("kind") == "rewind":
+                    if self.container is None and item.get("mode") == "all":
+                        self._start_container()
+                    self._execute_rewind(item)
+                    continue
+                if item.get("kind") != "message":
                     continue
                 item = self._merge_notice_batch(item)
                 if item is None:
@@ -536,7 +565,12 @@ class SessionRecord:
                         }
                     )
                 self.session.clear_cancel()
-                self._run_turn(item["content"], bool(item.get("allegro")))
+                self._run_turn(
+                    item["content"],
+                    bool(item.get("allegro")),
+                    self._rewind_info_for(item),
+                )
+                self._run_pending_rewind()
                 self._requeue_injections()
         finally:
             unregister_container()
@@ -583,6 +617,7 @@ class SessionRecord:
         registry = processes.registry_for(self.container)
         registry.event_sink = self._on_subagent_event
         registry.completion_sink = self._on_background_completion
+        self.session.clear_rewind_points()
         self.container_ready.set()
         self.container_starting = False
         logger.info("Container ready for session %s", self.client_id)
@@ -598,13 +633,216 @@ class SessionRecord:
         """
         self.push({"type": "info", "text": shared_copy_notice(report)})
 
-    def _run_turn(self, user_text: str, allegro: bool = False):
+    def _rewind_info_for(self, item: dict) -> dict | None:
+        """Snapshot the workspace before a turn; the rewind point's tree.
+
+        Returns None when the pod cannot snapshot (rewind unavailable,
+        snapshot failed, pod gone): the message then simply gets no undo
+        button. Background notices run turns too but are not user
+        messages - no snapshot, no point.
+        """
+        if self.container is None or item.get("bg_id"):
+            return None
+        tree = rewind.snapshot(self.container)
+        if tree is None:
+            return None
+        return {"key": item.get("id"), "tree": tree, "pod": id(self.container)}
+
+    def _run_pending_rewind(self):
+        """Run the rewind a user requested while the last turn was busy.
+
+        The websocket handler cancelled the turn exactly like the stop
+        button does and parked the request; it executes here, when the
+        stop has taken effect and before anything else leaves the inbox.
+        """
+        request = self.pending_rewind
+        if request is None:
+            return
+        self.pending_rewind = None
+        if request.get("mode") == "all" and self.container is None:
+            self._start_container()
+        self._execute_rewind(request)
+
+    def _stop_background_for_rewind(self) -> int:
+        """Stop every process and subagent before a workspace rollback.
+
+        Background work outlives turns by design, so a rollback would
+        revert the files underneath running work and destroy its output
+        artifacts mid-write. Each record is marked collected BEFORE the
+        kill: the exactly-once machinery then suppresses the model-facing
+        notice entirely, which is the honest state for a rewound timeline
+        that never knew about the work (a surviving check or wait_for can
+        still report the record's real end). A synthetic background_done
+        event per kill keeps the work panel honest immediately.
+
+        The sweep repeats until no work is running or the settle budget
+        expires, so a dying subagent's last-gasp spawn is caught too;
+        subagents stop gracefully (their next pause) and the wait is
+        bounded. The stop fails open: a record that cannot be killed is
+        logged and the rollback proceeds anyway. Returns how many
+        records were stopped.
+        """
+        if self.container is None:
+            return 0
+        registry = processes.registry_for(self.container)
+        stopped = 0
+        deadline = time.monotonic() + REWIND_SUBAGENT_SETTLE_S
+        still_stopping = 0
+        while True:
+            with registry.lock:
+                targets = [
+                    ("process", proc)
+                    for proc in registry.processes.values()
+                    if proc.state == "running"
+                ] + [
+                    ("subagent", sub)
+                    for sub in registry.subagents.values()
+                    if sub.state == "running" and not sub.kill_requested.is_set()
+                ]
+                still_stopping = sum(
+                    1 for sub in registry.subagents.values() if sub.state == "running"
+                )
+            for kind, record in targets:
+                with registry.lock:
+                    record.outcome_collected = True
+                try:
+                    if kind == "process":
+                        processes.kill_process(
+                            record.id,
+                            registry=registry,
+                            container=self.container,
+                            by="user",
+                        )
+                    else:
+                        subagents.kill_subagent(
+                            record.id,
+                            registry=registry,
+                            container=self.container,
+                            by="user",
+                        )
+                except Exception:
+                    logger.exception("Rewind could not stop %s '%s'", kind, record.id)
+                    continue
+                stopped += 1
+                summary = (
+                    processes.process_status_summary(record)
+                    if kind == "process"
+                    else subagents.subagent_status_summary(record)
+                )
+                self.push(
+                    {
+                        "type": "background_done",
+                        "id": record.id,
+                        "kind": kind,
+                        "summary": summary,
+                    }
+                )
+            if still_stopping == 0 or time.monotonic() >= deadline:
+                break
+            time.sleep(0.2)
+        if still_stopping:
+            logger.info(
+                "Rewind proceeding with %d subagent(s) still stopping",
+                still_stopping,
+            )
+        return stopped
+
+    def _execute_rewind(self, request: dict):
+        """Truncate the conversation back to a rewind point.
+
+        "Messages only" rewrites history alone. "Messages & changes"
+        stops the pod's background work (a rollback must not race it),
+        then destructively restores the workspace snapshot - files
+        first: a failed restore leaves every message in place. Only
+        after the history truncation succeeds is anything committed: the
+        persistent event log is cut at the chosen message and a
+        `history_rewind` event rebuilds every connected client.
+
+        Everything queued but not started dies with a successful rewind:
+        inbox items and pending injections were sent after the chosen
+        message and have no place in the rewound timeline. A rewind
+        request already in the inbox survives the purge, so a click
+        during the busy-clear window is never swallowed.
+        """
+        key = str(request.get("id", ""))
+        point = self.session.rewind_points.get(key)
+        if point is None:
+            self.push(
+                {
+                    "type": "error",
+                    "text": "That message can no longer be rewound.",
+                }
+            )
+            return
+        if request.get("mode") == "all":
+            if self.container is None or point["pod"] != id(self.container):
+                self.push(
+                    {
+                        "type": "error",
+                        "text": (
+                            "The pod was recreated since that message;"
+                            " its file snapshot is gone. Messages can still"
+                            " be rewound."
+                        ),
+                    }
+                )
+                return
+            stopped = self._stop_background_for_rewind()
+            if not rewind.rollback(self.container, point["tree"]):
+                text = (
+                    "Could not restore the workspace files;"
+                    " the conversation was left unchanged."
+                )
+                if stopped:
+                    text += " Background work was stopped."
+                self.push({"type": "error", "text": text})
+                return
+        text = self.session.rewind(key)
+        if text is None:
+            self.push(
+                {
+                    "type": "error",
+                    "text": "That message can no longer be rewound.",
+                }
+            )
+            return
+        with self.inbox_ready:
+            self.inbox = deque(
+                item for item in self.inbox if item.get("kind") == "rewind"
+            )
+        self._truncate_event_log_at(key)
+        self.push({"type": "history_rewind", "id": key, "content": text})
+        logger.info("Rewound session %s to before message %s", self.client_id, key)
+
+    def _truncate_event_log_at(self, key: str):
+        """Drop the persistent events from the chosen user message onward.
+
+        The replayed history on a reconnect must show the rewound
+        timeline, so the log is cut at the message's own event (its last
+        occurrence: a queued message logs the queue pill first and the
+        chat bubble second) and the `history_rewind` event is appended
+        after the cut. An event evicted by the log's cap means everything
+        still logged postdates the message, so the whole log goes.
+        """
+        with self.event_log_lock:
+            cut = None
+            for index, event in enumerate(self.event_log):
+                if event.get("type") == "user_message" and event.get("id") == key:
+                    cut = index
+            if cut is None:
+                self.event_log.clear()
+            else:
+                del self.event_log[cut:]
+
+    def _run_turn(
+        self, user_text: str, allegro: bool = False, rewind_info: dict | None = None
+    ):
         self.busy.set()
         self.push({"type": "busy"}, persistent=False)
         interaction.register_responder(self._answer_question)
         try:
             self.session.set_allegro(allegro)
-            self.session.run_turn(user_text)
+            self.session.run_turn(user_text, rewind=rewind_info)
         except Exception:
             logger.exception("Turn failed for session %s", self.client_id)
             self.push(
@@ -1000,6 +1238,23 @@ async def new_chat(client_id: str):
         _sessions.pop(client_id, None)
     await asyncio.to_thread(_reset_browser)
     return {"status": "ok", "reset": True}
+
+
+def _route_rewind(record: SessionRecord, key: str, mode: str):
+    """Route a client's rewind request.
+
+    While a turn is busy the request takes the stop button's path -
+    cancel the turn, release a pending question, and park the rewind so
+    the worker executes it when the stop has taken effect. While idle it
+    is enqueued as a rewind inbox item, so it runs strictly between
+    turns instead of racing one.
+    """
+    if record.busy.is_set():
+        record.session.cancel()
+        record.release_pending_question()
+        record.pending_rewind = {"id": key, "mode": mode}
+    else:
+        record.enqueue_message({"kind": "rewind", "id": key, "mode": mode})
 
 
 @app.get("/api/files/{client_id}/{token}")
@@ -1685,6 +1940,12 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             elif message_type == "stop":
                 record.session.cancel()
                 record.release_pending_question()
+            elif message_type == "rewind":
+                key = str(data.get("id", "")).strip()
+                if not key:
+                    continue
+                mode = "all" if data.get("mode") == "all" else "messages"
+                _route_rewind(record, key, mode)
             elif message_type in ("process_kill", "subagent_kill"):
                 background_id = str(data.get("id", "")).strip()
                 if background_id:

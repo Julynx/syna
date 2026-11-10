@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from _runner import run_suite
 
 from syna import pod_init, state
+from syna.capabilities import rewind
 from syna.config import (
     load_pod_doh_bootstrap,
     load_pod_doh_bootstrap_alt,
@@ -175,7 +176,8 @@ class _SentinelContainer:
 def test_disabled_step_never_touches_the_pod(monkeypatch):
     monkeypatch.setattr(pod_init, "load_pod_doh_uri", lambda: "")
     results = pod_init.run_pod_init_steps(_SentinelContainer())
-    assert results == {"doh": False}
+    assert results["doh"] is False
+    assert results["rewind"] is False
 
 
 def test_steps_fail_open(monkeypatch):
@@ -183,13 +185,15 @@ def test_steps_fail_open(monkeypatch):
         pod_init, "load_pod_doh_uri", lambda: "https://dns10.quad9.net/dns-query"
     )
     monkeypatch.setattr(pod_init, "load_pod_doh_bootstrap", lambda: "9.9.9.10")
-    ok = _SentinelContainer([f"noise\n{pod_init.SUCCESS_MARKER}\n"])
-    assert pod_init.run_pod_init_steps(ok) == {"doh": True}
-    assert ok.calls == 1
+    ok = _SentinelContainer(
+        [f"noise\n{pod_init.SUCCESS_MARKER}\n", f"noise\n{pod_init.SUCCESS_MARKER}\n"]
+    )
+    assert pod_init.run_pod_init_steps(ok) == {"doh": True, "rewind": True}
+    assert ok.calls == 2
     missing = _SentinelContainer(["apt-get failed"])
-    assert pod_init.run_pod_init_steps(missing) == {"doh": False}
+    assert pod_init.run_pod_init_steps(missing) == {"doh": False, "rewind": False}
     exploding = _SentinelContainer(None)
-    assert pod_init.run_pod_init_steps(exploding) == {"doh": False}
+    assert pod_init.run_pod_init_steps(exploding) == {"doh": False, "rewind": False}
 
 
 def test_create_container_runs_init_steps(monkeypatch):
@@ -197,6 +201,10 @@ def test_create_container_runs_init_steps(monkeypatch):
 
     class FakeContainer:
         def exec(self, argv):
+            script = argv[-1]
+            seen.setdefault("argvs", []).append(script)
+            if "GIT_DIR" in script:
+                return "a" * 40
             seen["argv"] = argv
             return pod_init.SUCCESS_MARKER
 
@@ -213,6 +221,8 @@ def test_create_container_runs_init_steps(monkeypatch):
     assert seen["args"][0] == state.CONTAINER_IMAGE
     assert "base64 -d" in seen["argv"][2]
     assert container.exec(["true"]) == pod_init.SUCCESS_MARKER
+    rewind.forget_pod(container)
+    pod_init.forget_init_results(container)
 
 
 def test_shared_dir_report_creates_the_directory(monkeypatch):
@@ -356,6 +366,8 @@ def test_create_container_delivers_the_shared_copy_sink(monkeypatch):
 
     class FakeContainer:
         def exec(self, argv):
+            if "GIT_DIR" in argv[-1]:
+                return "b" * 40
             return pod_init.SUCCESS_MARKER
 
         def copy_to(self, source, dest):
@@ -383,6 +395,8 @@ def test_create_container_delivers_the_shared_copy_sink(monkeypatch):
 def test_create_container_skips_the_sink_when_shared_is_empty(monkeypatch):
     class FakeContainer:
         def exec(self, argv):
+            if "GIT_DIR" in argv[-1]:
+                return "c" * 40
             return pod_init.SUCCESS_MARKER
 
         def copy_to(self, source, dest):

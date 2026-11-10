@@ -267,6 +267,94 @@
   }
 }
 
+/* The rewind button rides on user bubbles: same hover treatment as the
+   model bubbles' copy buttons, tuned to the accent surface it sits on. */
+.copy-btn[hidden] {
+  display: none;
+}
+.bubble.user .rewind-btn {
+  background-color: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.32);
+  color: var(--on-accent);
+}
+.bubble.user:hover .rewind-btn,
+.bubble.user:focus-within .rewind-btn,
+.rewind-btn:focus-visible,
+.rewind-btn.copied {
+  opacity: 1;
+  pointer-events: auto;
+}
+.bubble.user .rewind-btn:hover {
+  color: var(--on-accent);
+  border-color: rgba(255, 255, 255, 0.55);
+}
+@media (hover: none) {
+  .bubble.user .rewind-btn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.rewind-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  z-index: 50;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.rewind-modal-backdrop.open {
+  opacity: 1;
+}
+
+.rewind-modal {
+  width: min(380px, 100%);
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.65);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text);
+}
+.rewind-modal-title {
+  margin: 0 0 4px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.rewind-choice {
+  width: 100%;
+  height: 42px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-line);
+  background: var(--surface-soft);
+  color: var(--text);
+  font-size: 13.5px;
+  cursor: pointer;
+  text-align: center;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.2s var(--ease);
+}
+.rewind-choice:hover {
+  border-color: var(--accent-line);
+  transform: translateY(-1px);
+}
+.rewind-choice:active {
+  transform: scale(0.98);
+}
+
 .inline-image-frame {
   position: relative;
   display: inline-block;

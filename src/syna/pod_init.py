@@ -15,6 +15,7 @@ previous behavior intact.
 import base64
 import shlex
 import struct
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -34,6 +35,19 @@ SUCCESS_MARKER = "pod-init: step OK"
 
 # Pod destination of the user's shared directory, copied at pod init.
 POD_SHARED_DIR = "/workspace/shared"
+
+# Shadow snapshot store for the rewind feature: a git repo inside the
+# pod whose work tree is driven explicitly via GIT_WORK_TREE. The
+# workspace root is
+# `/workspace`, the directory every command and tool artifact lives in
+# (`execute_command`'s runner cds there first); the container's nominal
+# WORKDIR is `/`, which holds the pod machinery that must never be
+# reverted (/tool_outputs, /user_messages, /home/user/uploads).
+REWIND_SNAP_DIR = "/var/lib/syna/snap.git"
+REWIND_SNAP_ROOT = "/workspace"
+
+_init_results: dict[int, dict[str, bool]] = {}
+_init_results_lock = threading.Lock()
 
 
 class PodInitStep:
@@ -115,7 +129,23 @@ def _doh_step() -> PodInitStep:
 
 def pod_init_steps() -> list[PodInitStep]:
     """Every initialization step, in execution order."""
-    return [_doh_step()]
+    return [_doh_step(), _rewind_step()]
+
+
+def _rewind_step() -> PodInitStep:
+    """The rewind step: git plus the shadow snapshot store.
+
+    Always enabled: the step installs git into the pod and prepares the
+    store the rewind feature snapshots the workspace with. Its result
+    gates the feature (`init_results_for`), so a pod without it simply
+    runs without rewind.
+    """
+    return PodInitStep(
+        name="rewind",
+        asset="pod_rewind_setup.sh",
+        env={"SNAP_DIR": REWIND_SNAP_DIR, "SNAP_ROOT": REWIND_SNAP_ROOT},
+        enabled=True,
+    )
 
 
 def step_command(step: PodInitStep) -> list[str]:
@@ -172,6 +202,31 @@ def run_pod_init_steps(container: Container) -> dict[str, bool]:
         get_logger().info("Pod init step '%s' active in %.1fs.", step.name, elapsed)
         results[step.name] = True
     return results
+
+
+def record_init_results(container: Container, results: dict[str, bool]) -> None:
+    """Remember which init steps went active for this pod.
+
+    `create_container` calls this right after `run_pod_init_steps`, so
+    feature availability (rewind's git, DoH) can be probed later without
+    re-running anything inside the pod. Keyed by container identity like
+    the background registries; `forget_init_results` drops the entry at
+    pod destruction.
+    """
+    with _init_results_lock:
+        _init_results[id(container)] = dict(results)
+
+
+def init_results_for(container: Container) -> dict[str, bool]:
+    """The recorded init results of a pod; {} when unknown."""
+    with _init_results_lock:
+        return dict(_init_results.get(id(container), {}))
+
+
+def forget_init_results(container: Container) -> None:
+    """Drop the recorded init results of a pod (destruction path)."""
+    with _init_results_lock:
+        _init_results.pop(id(container), None)
 
 
 def shared_dir_report() -> dict:

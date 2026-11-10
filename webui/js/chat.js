@@ -124,6 +124,7 @@ const ICONS = {
   copy: GLYPH("content_copy", "i-copy"),
   check: GLYPH("check", "i-check"),
   download: GLYPH("download", "i-download"),
+  undo: GLYPH("undo", "i-undo"),
   history: GLYPH("history"),
   mic: GLYPH("mic", "m-on"),
   micOff: GLYPH("mic_off", "m-off"),
@@ -284,7 +285,7 @@ function cancelAnim(host) {
   }
 }
 
-function addBubble(content, side) {
+function addBubble(content, side, msgId) {
   const bubble = document.createElement("div");
   bubble.className = "bubble " + side;
   const rendered = side === "model" ? renderMarkdown(content) : "";
@@ -300,8 +301,119 @@ function addBubble(content, side) {
   if (side === "model") {
     addDownloadButton(bubble, content);
     addCopyButton(bubble, content);
+  } else if (side === "user" && msgId) {
+    bubble.dataset.msgId = msgId;
+    addRewindButton(bubble, msgId);
   }
   append(bubble);
+}
+
+/* Rewind: the server streams rewind_state deltas (added/removed message
+   ids plus pod availability); a bubble whose id is on the live list gets
+   an undo button that opens the revert-choice modal. */
+let rewindAvailable = false;
+const rewindIds = new Set();
+
+function rewindEligible(id) {
+  return rewindAvailable && rewindIds.has(id);
+}
+
+function addRewindButton(bubble, id) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "copy-btn rewind-btn";
+  btn.title = "Rewind to here";
+  btn.setAttribute("aria-label", "Rewind to this message");
+  btn.innerHTML = ICONS.undo;
+  btn.hidden = !rewindEligible(id);
+  btn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openRewindModal(id);
+  });
+  bubble.appendChild(btn);
+  return btn;
+}
+
+function applyRewindState() {
+  chat.querySelectorAll(".bubble.user").forEach((bubble) => {
+    const id = bubble.dataset.msgId;
+    if (!id) return;
+    const btn = bubble.querySelector(".rewind-btn");
+    if (rewindEligible(id)) {
+      if (btn) btn.hidden = false;
+      else addRewindButton(bubble, id);
+    } else if (btn) {
+      btn.remove();
+    }
+  });
+}
+
+function sendRewind(id, mode) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "rewind", id: id, mode: mode }));
+  if (busy) setStatus("working", "Stopping...");
+}
+
+function openRewindModal(id) {
+  Sfx.play("click");
+  const backdrop = document.createElement("div");
+  backdrop.className = "rewind-modal-backdrop";
+  const modal = document.createElement("div");
+  modal.className = "rewind-modal";
+  const title = document.createElement("h3");
+  title.className = "rewind-modal-title";
+  title.textContent = "Choose what to revert";
+  modal.appendChild(title);
+  const close = () => backdrop.remove();
+  const choice = (label, action) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "rewind-choice";
+    btn.textContent = label;
+    btn.addEventListener("click", () => {
+      close();
+      if (action) action();
+    });
+    return btn;
+  };
+  modal.appendChild(choice("Messages only", () => sendRewind(id, "messages")));
+  modal.appendChild(choice("Messages & changes", () => sendRewind(id, "all")));
+  modal.appendChild(choice("Cancel", null));
+  backdrop.appendChild(modal);
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) close();
+  });
+  document.body.appendChild(backdrop);
+  requestAnimationFrame(() => backdrop.classList.add("open"));
+}
+
+/* Apply one history_rewind event: drop the chosen user bubble and
+   everything after it, clear the queue dock, and refill the input with
+   the rewound message so it can be edited and re-sent (or deleted). */
+function rewindTranscript(id, content) {
+  const bubble = chat.querySelector(
+    '.bubble.user[data-msg-id="' + CSS.escape(id) + '"]',
+  );
+  if (bubble) {
+    let node = bubble;
+    while (node) {
+      const next = node.nextSibling;
+      node.remove();
+      node = next;
+    }
+  }
+  clearQueuedMessages();
+  resetAskState();
+  toolRun = null;
+  runningToolRow = null;
+  openFileGroup = null;
+  thinkingRow = null;
+  Sfx.endToolWait();
+  input.value = content;
+  fitInput();
+  setSendState();
+  scrollToBottom();
+  if (!replaying) input.focus();
 }
 
 /* Images from the pod render inline through the session's image endpoint;
@@ -1430,7 +1542,9 @@ function render(event) {
     event.type !== "ready" &&
     event.type !== "compaction" &&
     event.type !== "subagent_message" &&
-    event.type !== "background_done"
+    event.type !== "background_done" &&
+    event.type !== "rewind_state" &&
+    event.type !== "history_rewind"
   ) {
     resetToolRun();
   }
@@ -1440,8 +1554,17 @@ function render(event) {
         addQueuedMessage(event.id, event.content);
       } else {
         if (event.id) resolveQueuedMessage(event.id);
-        addBubble(event.content, "user");
+        addBubble(event.content, "user", event.id);
       }
+      break;
+    case "rewind_state":
+      rewindAvailable = !!event.available;
+      (event.added || []).forEach((id) => rewindIds.add(id));
+      (event.removed || []).forEach((id) => rewindIds.delete(id));
+      applyRewindState();
+      break;
+    case "history_rewind":
+      rewindTranscript(event.id, event.content);
       break;
     case "model_message":
       finishStaleToolRows();
@@ -1566,6 +1689,8 @@ function connect() {
     thinkingRow = null;
     resetAskState();
     clearQueuedMessages();
+    rewindAvailable = false;
+    rewindIds.clear();
     closeBackgroundModal();
     if (window.Voice) Voice.reset();
     setStatus("ready", "Ready");

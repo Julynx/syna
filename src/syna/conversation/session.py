@@ -500,6 +500,7 @@ class AgentSession:
         self.compaction_prompt = load_compaction_prompt()
         self.session_id = session_id
         self.messages: list[dict] = []
+        self.rewind_points: dict[str, dict] = {}
         self._pending_failed_messages: list[dict] = []
         self._user_message_seq = 0
         self._archive_nonce = secrets.token_hex(8)
@@ -652,6 +653,118 @@ class AgentSession:
                 )
             injected += 1
         return injected
+
+    def _emit_rewind_delta(self, added=(), removed=()):
+        """Emit one rewind_state delta event.
+
+        Deltas keep the event tiny and the replay cheap: a turn start
+        adds one id, a purge lists what died, and clients apply the
+        events in order (live or replayed on reconnect) and converge on
+        the server's point set.
+        """
+        self._emit(
+            {
+                "type": "rewind_state",
+                "added": list(added),
+                "removed": list(removed),
+            }
+        )
+
+    def add_rewind_point(
+        self, key: str, text: str, tree_hash: str, pod_id: int, message: dict
+    ):
+        """Record a rewind point for the turn about to run.
+
+        Called with the pod-side workspace snapshot (`tree_hash`) taken
+        before the turn and the message appended to history for it. The
+        point lets the web UI rewind the conversation to just before this
+        message - deleting it and everything after - and, for "Messages &
+        changes", restore the snapshot's tree. The original text rides
+        along so the input field can be refilled for editing and
+        re-sending; the tree hash and every other detail stay out of the
+        message content the model sees.
+        """
+        self.rewind_points[key] = {
+            "message": message,
+            "text": text,
+            "tree": tree_hash,
+            "pod": pod_id,
+        }
+        self._emit_rewind_delta(added=(key,))
+
+    def clear_rewind_points(self):
+        """Drop every rewind point and publish the emptied state.
+
+        The web server calls this when a session's pod is (re)created:
+        snapshots live inside the pod, so a new pod invalidates every
+        stored tree at once.
+        """
+        if not self.rewind_points:
+            return
+        removed = list(self.rewind_points)
+        self.rewind_points.clear()
+        self._emit_rewind_delta(removed=removed)
+
+    def rewind(self, key: str) -> str | None:
+        """Truncate history back to just before the rewind point `key`.
+
+        Deletes the point's message and everything after it (compaction
+        survivors are matched by identity, so elision rewrites do not
+        break the lookup), purges the points and pending state that died
+        with the truncation, and returns the point's original text for
+        the input refill - or None when the point or its message no
+        longer exists, in which case nothing was changed. File rollback
+        is the caller's responsibility and must happen before this call
+        (files first, then messages).
+        """
+        point = self.rewind_points.get(key)
+        if point is None:
+            return None
+        index = next(
+            (
+                position
+                for position, message in enumerate(self.messages)
+                if message is point["message"]
+            ),
+            None,
+        )
+        if index is None:
+            del self.rewind_points[key]
+            self._emit_rewind_delta(removed=(key,))
+            return None
+        del self.messages[index:]
+        survivors = {id(message) for message in self.messages}
+        purged = [
+            name
+            for name, entry in self.rewind_points.items()
+            if id(entry["message"]) not in survivors
+        ]
+        for name in purged:
+            del self.rewind_points[name]
+        self._pending_failed_messages.clear()
+        with self._injection_lock:
+            self._pending_injections = []
+        self._emit_rewind_delta(removed=purged)
+        get_logger().info(
+            "Rewound history to before rewind point %s (%d messages kept)",
+            key,
+            len(self.messages),
+        )
+        return point["text"]
+
+    def _purge_stale_rewind_points(self):
+        """Drop points whose messages compaction removed from history."""
+        survivors = {id(message) for message in self.messages}
+        stale = [
+            name
+            for name, entry in self.rewind_points.items()
+            if id(entry["message"]) not in survivors
+        ]
+        if not stale:
+            return
+        for name in stale:
+            del self.rewind_points[name]
+        self._emit_rewind_delta(removed=stale)
 
     def close(self):
         """Release the underlying model client's HTTP resources."""
@@ -847,27 +960,36 @@ class AgentSession:
             appended += 1
         return appended
 
-    def run_turn(self, user_text: str):
+    def run_turn(self, user_text: str, rewind: dict | None = None):
         """Run one full think/act cycle for a user message.
 
         In Allegro mode the command and tool-call timeout loaders halve
         for exactly the duration of the turn: the scale is thread-local
         and the whole turn executes on the calling thread, so concurrent
         sessions keep their configured timeouts.
+
+        `rewind` records a rewind point for the web UI's undo button: a
+        dict with the message key, the pod-side workspace tree snapshot
+        taken before the turn, and the pod's identity. None (CLI turns,
+        snapshots unavailable) records no point.
         """
         set_timeout_scale(ALLEGRO_TIMEOUT_SCALE if self.allegro else None)
         set_background_allegro(self.allegro)
         try:
-            self._run_turn_loop(user_text)
+            self._run_turn_loop(user_text, rewind)
         finally:
             set_timeout_scale(None)
             set_background_allegro(None)
 
-    def _run_turn_loop(self, user_text: str):
+    def _run_turn_loop(self, user_text: str, rewind: dict | None = None):
         logger = get_logger()
         msg = {"role": "user", "content": self._prepare_user_message(user_text)}
         self.messages.append(msg)
         logger.info(str(msg))
+        if rewind:
+            self.add_rewind_point(
+                rewind["key"], user_text, rewind["tree"], rewind["pod"], msg
+            )
 
         no_tool_streak = 0
         steps_used = 0
@@ -1220,6 +1342,7 @@ class AgentSession:
             *tail_group,
         ]
         self._pending_failed_messages.clear()
+        self._purge_stale_rewind_points()
         self._emit({"type": "compaction", "summary": summary})
         logger.info(
             "Compacted %d messages into a summary (interval=%d)",

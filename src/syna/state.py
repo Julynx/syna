@@ -17,6 +17,8 @@ from contextlib import ExitStack
 from bollard import Container, DockerClient
 
 from . import pod_init
+from .capabilities.rewind import forget_pod as _forget_rewind_pod
+from .capabilities.rewind import snapshot as _rewind_snapshot
 from .config import get_logger, load_config
 from .pod_io import pod_call
 
@@ -258,13 +260,20 @@ def create_container(shared_copy_sink=None) -> Container:
             command="sleep infinity",
             HostConfig=build_pod_host_config(),
         )
-    pod_init.run_pod_init_steps(container)
+    results = pod_init.run_pod_init_steps(container)
+    pod_init.record_init_results(container, results)
     shared_report = pod_init.copy_shared_dir(container)
     if shared_report is not None and shared_copy_sink is not None:
         try:
             shared_copy_sink(shared_report)
         except Exception:
             get_logger().exception("Shared-copy sink failed")
+    if results.get("rewind"):
+        # Seed the snapshot cache with the pristine workspace (shared
+        # copy included): the first user message's rewind point then
+        # reuses this tree with a single status call, and rewinding to
+        # the first message restores the pod exactly as handed over.
+        _rewind_snapshot(container)
     return container
 
 
@@ -281,6 +290,8 @@ def get_container() -> Container:
 
 def destroy_container(container: Container) -> None:
     """Stop and force-remove a container."""
+    pod_init.forget_init_results(container)
+    _forget_rewind_pod(container)
     pod_call(container.stop)
     pod_call(lambda: container.remove(force=True))
 
