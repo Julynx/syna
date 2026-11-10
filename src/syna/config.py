@@ -345,7 +345,8 @@ def load_pod_doh_bootstrap_alt() -> str:
 DEFAULT_USER_MESSAGE_ARCHIVE_MIN_CHARS = 2000
 DEFAULT_USER_MESSAGES_DEST = "/user_messages"
 DEFAULT_ELIDE_USER_MESSAGE_HEAD_CHARS = 300
-DEFAULT_ELIDE_MIN_CHARS = 2000
+DEFAULT_ELIDE_KEEP_CHARS = 200
+DEFAULT_ELIDE_MIN_CHARS = 2 * DEFAULT_ELIDE_KEEP_CHARS
 DEFAULT_VERIFY_LOG_TAIL_CHARS = 128000
 
 # Background work. Processes and subagents get their own runtime caps,
@@ -384,15 +385,27 @@ def load_elide_user_message_head_chars() -> int:
 
 
 def load_elide_min_chars() -> int:
-    """Return the output size at which routine elision replaces text with a pointer.
+    """Return the output size at which routine elision replaces text with an excerpt.
 
-    Eliding a short output is a net loss for the prompt cache: the
-    pointer is nearly as long as the text, and rewriting one message
+    Defaults to twice `elide_keep_chars`: below that size the head and
+    tail excerpt covers the whole output, so there is nothing to remove.
+    Eliding a short output is also a net loss for the prompt cache: the
+    excerpt is nearly as long as the text, and rewriting one message
     re-bills the whole suffix after it at the uncached rate. Outputs
     shorter than this stay inline with their saved_to pointer attached.
     The budget-exceeded elision path ignores the threshold.
     """
     return load_config().get("elide_min_chars", DEFAULT_ELIDE_MIN_CHARS)
+
+
+def load_elide_keep_chars() -> int:
+    """Return how much head and tail of an elided output stays in history.
+
+    The excerpt lets the model recall the shape of an old result (command
+    conclusions usually sit in the last lines, listings in the first)
+    without re-reading the file; the pointer covers the exact middle.
+    """
+    return load_config().get("elide_keep_chars", DEFAULT_ELIDE_KEEP_CHARS)
 
 
 def load_verify_log_tail_chars() -> int:

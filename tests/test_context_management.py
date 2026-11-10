@@ -91,7 +91,10 @@ def test_elide_replaces_old_saved_outputs_with_pointers():
         {"role": "system", "content": "system prompt"},
         {"role": "user", "content": "task"},
         _tool_results_message(
-            1, "web_search", "long result body", "/tool_outputs/0001_web_search.txt"
+            1,
+            "web_search",
+            "long result body " + "p" * 200,
+            "/tool_outputs/0001_web_search.txt",
         ),
     ]
     elided = elide_tool_outputs(messages, keep_recent=0)
@@ -117,13 +120,19 @@ def test_elide_keeps_results_without_saved_to():
 
 def test_elide_keeps_recent_messages_untouched():
     recent = _tool_results_message(
-        2, "web_search", "fresh output", "/tool_outputs/0002_web_search.txt"
+        2,
+        "web_search",
+        "fresh output " + "f" * 200,
+        "/tool_outputs/0002_web_search.txt",
     )
     messages = [
         {"role": "system", "content": "system prompt"},
         {"role": "user", "content": "task"},
         _tool_results_message(
-            1, "web_search", "old output", "/tool_outputs/0001_web_search.txt"
+            1,
+            "web_search",
+            "old output " + "o" * 200,
+            "/tool_outputs/0001_web_search.txt",
         ),
         {"role": "assistant", "content": "working"},
         recent,
@@ -141,7 +150,7 @@ def test_elide_is_idempotent():
         {"role": "system", "content": "system prompt"},
         {"role": "user", "content": "task"},
         _tool_results_message(
-            1, "web_search", "body", "/tool_outputs/0001_web_search.txt"
+            1, "web_search", "body " + "b" * 200, "/tool_outputs/0001_web_search.txt"
         ),
     ]
     assert elide_tool_outputs(messages, keep_recent=0) == 1
@@ -170,6 +179,60 @@ def test_elide_min_chars_keeps_short_outputs_full_text():
     assert "saved_to=" in short_body, "pointer stays attached to the inline text"
     _, long_body = unwrap_channel(long["content"])
     assert "output elided" in long_body
+
+
+def test_elide_keeps_head_and_tail_excerpt():
+    output = "HEAD-LINE\n" + "m" * 3000 + "\nTAIL-LINE"
+    message = _tool_results_message(
+        1, "web_search", output, "/tool_outputs/0001_web_search.txt"
+    )
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "task"},
+        message,
+    ]
+    elided = elide_tool_outputs(messages, keep_recent=0, min_chars=400, keep_chars=200)
+    assert elided == 1
+    _, body = unwrap_channel(message["content"])
+    assert "HEAD-LINE" in body, "head stays so the model recalls the shape"
+    assert "TAIL-LINE" in body, "tail stays: command conclusions sit there"
+    assert "first and last 200 chars kept" in body
+    assert "full text in /tool_outputs/0001_web_search.txt" in body
+    assert "mmmm" not in body, "the middle must be gone"
+    assert "[...]" in body
+
+
+def test_elide_excerpt_never_grows_a_result():
+    output = "short but over min_chars padding" + "y" * 320
+    message = _tool_results_message(
+        1, "web_search", output, "/tool_outputs/0001_web_search.txt"
+    )
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "task"},
+        message,
+    ]
+    elided = elide_tool_outputs(messages, keep_recent=0, min_chars=300, keep_chars=200)
+    assert elided == 0, "excerpt would be no shorter; nothing to remove"
+    _, body = unwrap_channel(message["content"])
+    assert "output elided" not in body
+    assert "short but over min_chars padding" in body
+
+
+def test_elide_keep_chars_zero_gives_pointer_only():
+    message = _tool_results_message(
+        1, "web_search", "z" * 1000, "/tool_outputs/0001_web_search.txt"
+    )
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "task"},
+        message,
+    ]
+    elided = elide_tool_outputs(messages, keep_recent=0, min_chars=0, keep_chars=0)
+    assert elided == 1
+    _, body = unwrap_channel(message["content"])
+    assert "[output elided; full text in /tool_outputs/0001_web_search.txt]" in body
+    assert "zzzz" not in body
 
 
 def test_pod_host_config_assembles_limits():
@@ -329,8 +392,11 @@ def test_session_elides_old_outputs_under_token_budget():
     ]
     assert len(tool_messages) == 1
     _, body = unwrap_channel(tool_messages[0]["content"])
-    assert "[output elided; full text in /tool_outputs/" in body
-    assert "ran: " not in body
+    assert "output elided" in body
+    assert "first and last 200 chars kept" in body, "excerpt survives the budget path"
+    assert "full text in /tool_outputs/" in body
+    assert body.count("x") < 400, "the middle of the output must be gone"
+    assert body.rstrip().endswith("</result>")
 
 
 def test_session_elides_old_outputs_on_message_interval():
@@ -349,10 +415,11 @@ def test_session_elides_old_outputs_on_message_interval():
         session.elide_interval_messages = 2
         session.elide_every_requests = 1
         session.elide_min_chars = 0
+        session.elide_keep_chars = 0
         session.client = FakeChat(
             [
                 _make_tool_call_reply(
-                    "smoke_tool", {"label": "first"}, call_id="call_1"
+                    "smoke_tool", {"label": "first " + "a" * 200}, call_id="call_1"
                 ),
                 _make_tool_call_reply(
                     "smoke_tool", {"label": "second"}, call_id="call_2"
@@ -376,7 +443,7 @@ def test_session_elides_old_outputs_on_message_interval():
     _, first_body = unwrap_channel(tool_messages[0]["content"])
     _, second_body = unwrap_channel(tool_messages[1]["content"])
     assert "[output elided; full text in /tool_outputs/" in first_body
-    assert "ran: first" not in first_body
+    assert "aaaa" not in first_body
     assert "ran: second" in second_body, "recent output must stay intact"
 
 

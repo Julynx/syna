@@ -182,7 +182,8 @@ from the canonical constants in `config.py`.
 | `elide_keep_recent_messages`        | History messages kept untouched by output elision (default 12).                                                                                                                                                                                                               |
 | `elide_interval_messages`           | History size at which lossless output elision runs on its own, instead of waiting for the token budget (default 30). Keeps prompts small through long runs; elided outputs remain readable in the pod at their `saved_to` paths.                                              |
 | `elide_every_requests`              | Requests between batched elision passes once the message interval is reached (default 10). Batching keeps the conversation prefix stable between passes so the provider prompt cache stays warm; the token-budget path always elides immediately.                             |
-| `elide_min_chars`                   | Output size below which routine elision keeps the full text inline with its `saved_to` pointer attached (default 2000 chars ~ 500 tokens). Eliding a short output saves less than the cache re-billing its rewrite causes. The token-budget path ignores this threshold.      |
+| `elide_min_chars`                   | Output size below which routine elision keeps the full text inline with its `saved_to` pointer attached (default 400, twice `elide_keep_chars`: below it the excerpt removes nothing). The token-budget path ignores this threshold.                                           |
+| `elide_keep_chars`                  | How much of an elided output's head and tail stays in history around the pointer (default 200). Keeps the shape of the result visible so the model recalls it without re-reading the file.                                                                                      |
 | `elide_user_message_head_chars`     | How much of an archived large user message stays in history after elision (default 300); the rest is replaced by a pointer to the verbatim archive file.                                                                                                                      |
 | `user_message_archive_min_chars`    | User message length at which the message is archived verbatim into the pod and annotated with its path (default 2000).                                                                                                                                                        |
 | `user_messages_dest`                | Pod directory holding the archived user messages (default `/user_messages`).                                                                                                                                                                                                  |
@@ -706,11 +707,14 @@ the loop, `ask_utils.py` sends the model requests, and
   To keep the provider prompt cache warm,
   the rewrite is batched: outside the budget-exceeded path it only runs every
   `elide_every_requests` requests, so history stays append-only (and the
-  cache prefix intact) between passes. Outputs shorter than
-  `elide_min_chars` keep their full text (pointer attached): eliding them
-  would replace the text with a nearly identical pointer while rewriting
-  the message re-bills the cache suffix after it at the uncached rate;
-  the budget-exceeded path ignores the threshold. Summarization runs only if the message count reaches
+  cache prefix intact) between passes. An elided output keeps its first
+  and last `elide_keep_chars` characters around the pointer, so the model
+  recalls the shape of the result without re-reading the file. Outputs
+  shorter than `elide_min_chars` (default twice `elide_keep_chars`) keep
+  their full text: the excerpt would remove nothing, and rewriting the
+  message re-bills the cache suffix after it at the uncached rate; the
+  budget-exceeded path ignores the threshold but keeps the excerpt.
+  Summarization runs only if the message count reaches
   `max_history_messages` or the budget is still exceeded after elision,
   keeping the system prompt, first real user message, the compaction
   summary, and the tail atomic message slice. The cadence rationale lives in

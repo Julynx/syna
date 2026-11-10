@@ -24,6 +24,7 @@ from ..config import (
     is_openrouter_base_url,
     load_command_timeout_s,
     load_config,
+    load_elide_keep_chars,
     load_elide_min_chars,
     load_elide_user_message_head_chars,
     load_output_limit_chars,
@@ -383,6 +384,7 @@ class AgentSession:
         )
         self.elide_user_message_head_chars = load_elide_user_message_head_chars()
         self.elide_min_chars = load_elide_min_chars()
+        self.elide_keep_chars = load_elide_keep_chars()
         self.compaction_prompt = load_compaction_prompt()
         self.session_id = session_id
         self.messages: list[dict] = []
@@ -957,15 +959,18 @@ class AgentSession:
         token budget, and whenever the budget is exceeded regardless of
         count. To keep the provider prompt cache warm, the rewrite itself is
         batched: outside the budget-exceeded path it only runs every
-        `elide_every_requests` requests. Outputs below `elide_min_chars`
-        stay full text (with their saved_to pointer attached): a pointer
-        would be nearly as long, and rewriting the message re-bills the
-        cache suffix after it at the uncached rate. When the budget is
-        exceeded the threshold is ignored - fitting in the budget beats
-        cache economics. Larger outputs still become pointers eventually;
-        they simply stay full-text a few requests longer. Lossless: elided
-        output stays readable in the pod at its saved_to path, and an
-        archived user message at its archive path.
+        `elide_every_requests` requests. An elided output keeps its first
+        and last `elide_keep_chars` characters around the pointer, so the
+        model recalls the shape of old results without re-reading them.
+        Outputs below `elide_min_chars` stay full text (pointer attached):
+        the excerpt would not remove anything, and rewriting the message
+        re-bills the cache suffix after it at the uncached rate. When the
+        budget is exceeded the threshold is ignored - fitting in the
+        budget beats cache economics - but the excerpt still applies.
+        Larger outputs still become excerpts eventually; they simply stay
+        full-text a few requests longer. Lossless: elided output stays
+        readable in the pod at its saved_to path, and an archived user
+        message at its archive path.
         """
         interval = self.elide_interval_messages
         interval_reached = bool(interval) and len(history) >= interval
@@ -977,7 +982,10 @@ class AgentSession:
             return 0
         min_chars = 0 if budget_exceeded else self.elide_min_chars
         elided = elide_tool_outputs(
-            self.messages, self.elide_keep_recent_messages, min_chars
+            self.messages,
+            self.elide_keep_recent_messages,
+            min_chars,
+            self.elide_keep_chars,
         )
         elided += elide_archived_user_messages(
             self.messages,

@@ -4,10 +4,12 @@ Two mechanisms keep the conversation within the model's context budget:
 
 1. Eliding old tool outputs: every executed call's full output is saved in
    the pod (`saved_to`), so old outputs in history can be replaced by a
-   one-line pointer without losing information. Only recoverable outputs,
-   those carrying a `saved_to` path, are elided. Short outputs stay
-   full text: their pointer would be nearly as long, and rewriting the
-   message breaks the provider prompt cache for the suffix after it.
+   pointer plus a head-and-tail excerpt without losing information. Only
+   recoverable outputs, those carrying a `saved_to` path, are elided. The
+   excerpt keeps the shape of the result visible so the model recalls it
+   instead of imagining it; short outputs stay full text because the
+   excerpt would remove nothing, and rewriting the message breaks the
+   provider prompt cache for the suffix after it.
    Archived large user messages (user_messages.py) are elided the same
    way: head excerpt plus a pointer to the verbatim file.
 2. Summarization (compaction, in `session.py`): the lossy fallback that
@@ -79,17 +81,21 @@ def estimate_history_tokens(messages: list[dict]) -> int:
 
 
 def elide_tool_outputs(
-    messages: list[dict], keep_recent: int, min_chars: int = 0
+    messages: list[dict], keep_recent: int, min_chars: int = 0, keep_chars: int = 0
 ) -> int:
-    """Replace recoverable old tool outputs in history with pointers.
+    """Replace recoverable old tool outputs in history with excerpts.
 
     Message contents are updated in place. The system message and the most
     recent `keep_recent` history messages are left untouched. Only results
     carrying a `saved_to` path are elided; anything unrecoverable stays.
-    Outputs shorter than `min_chars` keep their full text, pointer
-    attached: eliding them would replace the text with a nearly identical
-    pointer while rewriting the message re-bills the cache suffix after
-    it. Already-elided messages are skipped, making the pass idempotent.
+    An elided result keeps its first and last `keep_chars` characters
+    around a one-line pointer, so the model retains the shape of the
+    result (command conclusions usually sit in the last lines, listings
+    in the first) and only re-reads the file when it needs the exact
+    middle. Outputs shorter than `min_chars`, and results whose excerpt
+    would not actually shrink the text, keep their full text, pointer
+    attached. Already-elided messages are skipped, making the pass
+    idempotent.
 
     Returns the number of results elided.
     """
@@ -109,7 +115,7 @@ def elide_tool_outputs(
         if unwrapped is None:
             continue
         kind, body = unwrapped
-        new_body, count = _elide_result_blocks(body, min_chars)
+        new_body, count = _elide_result_blocks(body, min_chars, keep_chars)
         if count:
             message["content"] = wrap_channel(kind, new_body)
             elided_count += count
@@ -156,10 +162,16 @@ def elide_archived_user_messages(
     return elided_count
 
 
-def _elide_result_blocks(body: str, min_chars: int = 0) -> tuple[str, int]:
+def _elide_result_blocks(
+    body: str, min_chars: int = 0, keep_chars: int = 0
+) -> tuple[str, int]:
     """Elide every saved_to-bearing result output inside one message body.
 
-    Outputs shorter than `min_chars` are left as-is.
+    Each elided output is replaced by a pointer plus its first and last
+    `keep_chars` characters. A result is left untouched when the output
+    is below `min_chars`, when head and tail would overlap or cover the
+    whole output (nothing to remove), or when the excerpt would be no
+    shorter than the output itself.
     """
     count = 0
 
@@ -170,10 +182,20 @@ def _elide_result_blocks(body: str, min_chars: int = 0) -> tuple[str, int]:
         saved_to = SAVED_TO_PATTERN.search(opening_tag)
         if saved_to is None or ELIDED_MARKER in output or len(output) < min_chars:
             return match.group(0)
+        if keep_chars > 0 and len(output) <= 2 * keep_chars:
+            return match.group(0)
+        path = saved_to.group(1)
+        if keep_chars <= 0:
+            excerpt = f"[{ELIDED_MARKER}; full text in {path}]"
+        else:
+            excerpt = (
+                f"[{ELIDED_MARKER}; first and last {keep_chars} chars kept;"
+                f" full text in {path}]\n"
+                f"{output[:keep_chars]}\n[...]\n{output[-keep_chars:]}"
+            )
+        if len(excerpt) >= len(output):
+            return match.group(0)
         count += 1
-        return (
-            f"{opening_tag}[{ELIDED_MARKER}; full text in {saved_to.group(1)}]"
-            f"{match.group(3)}"
-        )
+        return f"{opening_tag}{excerpt}{match.group(3)}"
 
     return RESULT_BLOCK_PATTERN.sub(replace, body), count
