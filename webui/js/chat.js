@@ -3052,7 +3052,8 @@ async function openSettingsModal() {
 
 attachBtn.innerHTML = ICONS.clip;
 newchatBtn.innerHTML = ICONS.newchat;
-if (APP_VERSION) document.getElementById("brand-version").textContent = APP_VERSION;
+if (APP_VERSION)
+  document.getElementById("brand-version").textContent = "v" + APP_VERSION;
 if (settingsBtn) {
   settingsBtn.innerHTML = ICONS.settings;
   settingsBtn.addEventListener("click", openSettingsModal);

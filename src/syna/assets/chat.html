@@ -37,6 +37,7 @@
   --warn-tint: rgba(245, 166, 35, 0.12);
   --warn-line: rgba(245, 166, 35, 0.4);
   --ok: #4ade80;
+  --gray: #819796;
   --radius: 16px;
   --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
   --serif: "Lora", Charter, Georgia, "Times New Roman", serif;
@@ -346,13 +347,15 @@ header {
 
 .brand-version {
   align-self: flex-end;
-  margin-left: -4px;
-  transform: translateY(1px);
-  font-size: 9.5px;
+  margin-left: -30px;
+  transform: translateY(1.5px);
+  font-family: inherit;
+  font-stretch: condensed;
+  font-size: 7px;
   font-weight: 500;
   line-height: 1;
-  color: var(--muted);
-  letter-spacing: 0.3px;
+  color: var(--gray);
+  letter-spacing: 0;
   user-select: none;
 }.inline-status {
   display: flex;
@@ -6622,7 +6625,8 @@ async function openSettingsModal() {
 
 attachBtn.innerHTML = ICONS.clip;
 newchatBtn.innerHTML = ICONS.newchat;
-if (APP_VERSION) document.getElementById("brand-version").textContent = APP_VERSION;
+if (APP_VERSION)
+  document.getElementById("brand-version").textContent = "v" + APP_VERSION;
 if (settingsBtn) {
   settingsBtn.innerHTML = ICONS.settings;
   settingsBtn.addEventListener("click", openSettingsModal);
