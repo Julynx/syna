@@ -446,7 +446,7 @@ def edit_file(file_path: str, operations: list[dict]):
 
 def inspect_image(file_path: str):
     """
-    Inspect an image visually. Useful for checking your own visual output (convert to PNG first), e.g. verifying layout. To create or edit images, call text_to_image or script the file. You can be wrong about small text and exact numbers; when you need exact values, take them from the underlying data if you can. Large images are downscaled before analysis; if you need to inspect fine detail (small text, icons, flags), pass a zoomed crop of that region instead of a full-page render.
+    Inspect an image visually. Useful for checking your own visual output (convert to PNG first), e.g. verifying layout. Limitations: Large images are downscaled before analysis; if you need to inspect fine detail (small text, icons, flags), pass a zoomed crop of that region instead of the full image. When you need to extract text or numbers from an image with a uniform background, and layout is unimportant, an OCR script is often faster and more reliable.
     - `file_path` (string, required): absolute path to an image file in the pod.
     """
     return v_inspect_image(file_path)
