@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [[package]]
@@ -1235,7 +1235,7 @@ wheels = [
 
 [[package]]
 name = "syna-agent"
-version = "2.0.8"
+version = "2.0.9"
 source = { editable = "." }
 dependencies = [
     { name = "auto-self-update" },
