@@ -125,10 +125,17 @@ platform. The updater waits for the parent PID to disappear (capped at
 → `uv tool upgrade`, pipx metadata → `pipx upgrade`, else the venv's own
 pip, else `uv pip --python`; uv tool environments ship without pip and
 must never be mutated with raw pip anyway), verifies the installed
-version actually advanced (an update that did not land never relaunches,
-so a compare bug cannot loop), and re-executes the original command via
-`relaunch_argv` — the same builder the settings-save restart uses.
-Failures print the manual command and leave the old install untouched.
+version actually advanced from the launching one (advancement, not
+equality with the checked version: a release published mid-update is
+still a success; an update that did not land never relaunches, so a
+compare bug cannot loop), and re-executes the original command via
+`relaunch_argv` — the same builder the settings-save restart uses. The
+updater is detached from the terminal's interrupt delivery (its own
+session on POSIX, its own process group on Windows) so a Ctrl+C cannot
+reach it mid-upgrade, and the settings-save restart sets
+`SYNA_NO_AUTO_UPDATE` for the re-executed server: a restart is a
+settings reload, not a launch. Failures print the manual command and
+leave the old install untouched.
 Ephemeral `uvx` / `pipx run` environments live in an unmanaged cache and
 get a one-line note instead. `tests/test_selfupdate.py` covers the gate
 matrix, version ordering, installer detection, the updater's

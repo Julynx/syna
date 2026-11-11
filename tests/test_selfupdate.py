@@ -201,7 +201,7 @@ def test_maybe_selfupdate_happy_path(monkeypatch):
         payload = spawned[0]
         assert payload["command"] == ["fake", "upgrade"]
         assert payload["argv"] == ["shim"]
-        assert payload["target"] == "1.1.0"
+        assert payload["previous"] == "1.0.0"
         assert payload["pid"] == os.getpid()
         assert "1.0.0 -> 1.1.0" in out.getvalue()
 
@@ -284,7 +284,7 @@ def _payload(**overrides):
         "pid": 4321,
         "command": ["fake", "upgrade"],
         "argv": ["shim"],
-        "target": "1.1.0",
+        "previous": "1.0.0",
     }
     payload.update(overrides)
     return payload
@@ -324,7 +324,19 @@ def test_updater_main_command_cannot_run(monkeypatch):
     assert relaunched == []
 
 
-def test_updater_main_version_mismatch(monkeypatch):
+def test_updater_main_newer_release_mid_update(monkeypatch):
+    relaunched = _updater_patches(monkeypatch, installed="1.2.0")
+    out = StringIO()
+    with redirect_stdout(out):
+        code = selfupdate._main(["updater", json.dumps(_payload())])
+    assert code == 0
+    assert relaunched == [["shim"]], (
+        "a release published between check and upgrade is still a success"
+    )
+    assert "Updated to 1.2.0" in out.getvalue()
+
+
+def test_updater_main_version_did_not_advance(monkeypatch):
     relaunched = _updater_patches(monkeypatch, installed="1.0.0")
     code = selfupdate._main(["updater", json.dumps(_payload())])
     assert code == 1
@@ -334,6 +346,75 @@ def test_updater_main_version_mismatch(monkeypatch):
 def test_updater_main_bad_payload():
     assert selfupdate._main(["updater"]) == 2
     assert selfupdate._main(["updater", "not json"]) == 2
+    assert selfupdate._main(["updater", json.dumps({"pid": 1})]) == 2
+    assert selfupdate._main(["updater", json.dumps(["not", "a", "dict"])]) == 2
+
+
+def test_upgrade_command_pipx_falls_through_without_binary(monkeypatch):
+    holder = _prefix_with(monkeypatch, "pipx_metadata.json")
+    with holder:
+        monkeypatch.setattr(selfupdate.shutil, "which", lambda name: None)
+        monkeypatch.setattr(selfupdate, "_pip_available", lambda: True)
+        command = selfupdate._upgrade_command()
+        assert command[1:] == ["-m", "pip", "install", "--upgrade", "syna-agent"], (
+            "a pipx venv whose pipx left PATH falls back to its own pip"
+        )
+
+
+def test_spawn_updater_detaches_from_terminal_signals(monkeypatch):
+    captured = []
+
+    class FakePopen:
+        def __init__(self, args, **kwargs):
+            captured.append(kwargs)
+
+    monkeypatch.setattr(selfupdate.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(selfupdate.sys, "platform", "linux")
+    assert selfupdate._spawn_updater({"pid": 1})
+    assert captured[-1].get("start_new_session") is True, (
+        "POSIX: the updater must not receive the terminal's Ctrl+C"
+    )
+    monkeypatch.setattr(selfupdate.sys, "platform", "win32")
+    assert selfupdate._spawn_updater({"pid": 1})
+    flags = captured[-1].get("creationflags", 0)
+    assert flags & subprocess.CREATE_NEW_PROCESS_GROUP, (
+        "Windows: the updater leaves the console's Ctrl+C target set"
+    )
+
+
+def test_spawn_updater_failure(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("cannot spawn")
+
+    monkeypatch.setattr(selfupdate.subprocess, "Popen", boom)
+    assert selfupdate._spawn_updater({"pid": 1}) is False
+
+
+def test_package_init_stays_light():
+    import syna
+
+    assert not hasattr(syna, "ask_loop"), (
+        "the package init must not pull the agent stack: the updater"
+        " process pays for it and a broken optional import would kill it"
+    )
+
+
+def test_settings_restart_skips_selfupdate(monkeypatch):
+    from syna import server
+
+    monkeypatch.setattr(server, "shutdown_all_sessions", lambda: None)
+    monkeypatch.setattr(server.time, "sleep", lambda s: None)
+    exec_calls = []
+
+    def fake_execv(path, argv):
+        exec_calls.append(os.environ.get(selfupdate.NO_UPDATE_ENV))
+
+    monkeypatch.setattr(server.os, "execv", fake_execv)
+    monkeypatch.setitem(os.environ, selfupdate.NO_UPDATE_ENV, "")
+    server._delayed_restart()
+    assert exec_calls == ["1"], (
+        "a settings-save restart must never trigger the update flow"
+    )
 
 
 def test_relaunch_argv_prefers_the_running_shim(monkeypatch):
@@ -376,6 +457,7 @@ def main():
             test_ephemeral_note,
             test_upgrade_command_uv_tool,
             test_upgrade_command_pipx,
+            test_upgrade_command_pipx_falls_through_without_binary,
             test_upgrade_command_plain_pip,
             test_upgrade_command_uv_pip_last_resort,
             test_upgrade_command_none,
@@ -385,12 +467,17 @@ def main():
             test_maybe_selfupdate_no_installer,
             test_maybe_selfupdate_spawn_failure,
             test_maybe_selfupdate_never_raises,
+            test_spawn_updater_detaches_from_terminal_signals,
+            test_spawn_updater_failure,
+            test_package_init_stays_light,
+            test_settings_restart_skips_selfupdate,
             test_wait_for_parent_returns_when_gone,
             test_wait_for_parent_times_out,
             test_updater_main_success,
             test_updater_main_upgrade_failure,
             test_updater_main_command_cannot_run,
-            test_updater_main_version_mismatch,
+            test_updater_main_newer_release_mid_update,
+            test_updater_main_version_did_not_advance,
             test_updater_main_bad_payload,
             test_relaunch_argv_prefers_the_running_shim,
             test_relaunch_argv_script_goes_through_the_interpreter,

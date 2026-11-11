@@ -9,9 +9,11 @@ exiting first is the one flow that works identically everywhere. The
 updater waits for the parent to disappear, runs the installer's own
 upgrade command (pipx and uv tool environments must never be mutated
 with raw pip: their metadata would desync, and uv tool environments do
-not even ship pip), verifies the new version actually landed, and
-relaunches the original command. Any failure prints the manual command
-and leaves the old installation untouched.
+not even ship pip), verifies the installed version actually advanced
+(advancement, not equality with the checked version: a release
+published mid-update is still a success), and relaunches the original
+command. Any failure prints the manual command and leaves the old
+installation untouched.
 
 Ephemeral `uvx` / `pipx run` executions live in a cache no upgrade
 command manages; they get a one-line hint and launch normally.
@@ -81,7 +83,9 @@ def _latest_version() -> str | None:
     """
     try:
         response = httpx.get(
-            PYPI_JSON_URL, timeout=CHECK_TIMEOUT_S, follow_redirects=True
+            PYPI_JSON_URL,
+            timeout=httpx.Timeout(CHECK_TIMEOUT_S, connect=2.0),
+            follow_redirects=True,
         )
         response.raise_for_status()
         version = response.json().get("info", {}).get("version")
@@ -144,7 +148,8 @@ def _upgrade_command() -> list[str] | None:
         return [uv, "tool", "upgrade", PYPI_PACKAGE] if uv else None
     if (prefix / "pipx_metadata.json").is_file():
         pipx = shutil.which("pipx")
-        return [pipx, "upgrade", PYPI_PACKAGE] if pipx else None
+        if pipx:
+            return [pipx, "upgrade", PYPI_PACKAGE]
     if _pip_available():
         return [sys.executable, "-m", "pip", "install", "--upgrade", PYPI_PACKAGE]
     uv = shutil.which("uv")
@@ -189,9 +194,22 @@ def relaunch_argv(entry_point: str, argv: list[str] | None = None) -> list[str]:
 
 
 def _spawn_updater(payload: dict) -> bool:
-    """Start the detached updater process; False when it cannot start."""
+    """Start the detached updater process; False when it cannot start.
+
+    The updater is removed from the terminal's interrupt delivery (its
+    own session on POSIX, its own process group on Windows): a Ctrl+C
+    meant for the exiting launcher must never reach it mid-upgrade,
+    where an interrupted install can leave the environment broken.
+    """
+    kwargs: dict = {}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
     try:
-        subprocess.Popen([sys.executable, "-m", "syna.selfupdate", json.dumps(payload)])
+        subprocess.Popen(
+            [sys.executable, "-m", "syna.selfupdate", json.dumps(payload)], **kwargs
+        )
         return True
     except OSError as exc:
         get_logger().warning("Could not start the updater: %s", exc)
@@ -238,7 +256,7 @@ def maybe_selfupdate() -> bool:
             "pid": os.getpid(),
             "command": command,
             "argv": relaunch_argv(Path(sys.argv[0]).stem),
-            "target": latest,
+            "previous": installed,
         }
         if not _spawn_updater(payload):
             print(
@@ -303,11 +321,14 @@ def _main(argv: list[str]) -> int:
     """Updater entry point: wait for the parent, upgrade, verify, relaunch."""
     try:
         payload = json.loads(argv[1])
-    except (IndexError, ValueError):
+        pid = int(payload["pid"])
+        command = payload["command"]
+        previous = payload["previous"]
+        relaunch = payload["argv"]
+    except (IndexError, ValueError, KeyError, TypeError):
         print("  ! Updater called without a valid payload.", flush=True)
         return 2
-    _wait_for_parent(int(payload["pid"]))
-    command = payload["command"]
+    _wait_for_parent(pid)
     print(f"  + Running: {' '.join(command)}", flush=True)
     try:
         completed = subprocess.run(command, check=False, timeout=UPGRADE_TIMEOUT_S)
@@ -328,7 +349,7 @@ def _main(argv: list[str]) -> int:
         )
         return 1
     installed = _installed_version()
-    if installed != payload["target"]:
+    if not installed or not _is_newer(installed, previous):
         print(
             f"  ! The update did not land (still"
             f" {installed or 'unknown'}); not relaunching.",
@@ -336,7 +357,7 @@ def _main(argv: list[str]) -> int:
         )
         return 1
     print(f"  + Updated to {installed}; relaunching.\n", flush=True)
-    _relaunch(payload["argv"])
+    _relaunch(relaunch)
     return 0
 
 

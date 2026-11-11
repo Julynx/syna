@@ -2,13 +2,12 @@
 
 import sys
 
-from .conversation.ask import ask_loop
-from .state import close_docker_client
-
 
 def main() -> None:
     """Start the interactive agent loop."""
+    from .conversation.ask import ask_loop
     from .selfupdate import maybe_selfupdate
+    from .state import close_docker_client
 
     if maybe_selfupdate():
         return

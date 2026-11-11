@@ -79,7 +79,7 @@ from .conversation.session import (
 from .pod_init import shared_copy_notice
 from .pod_io import pod_copy_from
 from .protocol.channel import harness_notice, unwrap_channel, wrap_channel
-from .selfupdate import maybe_selfupdate, relaunch_argv
+from .selfupdate import NO_UPDATE_ENV, maybe_selfupdate, relaunch_argv
 from .state import (
     create_container,
     destroy_container,
@@ -1670,11 +1670,19 @@ def _restart_argv() -> list[str]:
 
 
 def _delayed_restart():
+    """Re-execute the server after a settings save.
+
+    The restart is a settings reload, not a launch: the env kill switch
+    keeps it from triggering the self-update flow, which would turn a
+    settings save into an unexpected upgrade and could leave the web UI
+    dead if the upgrade failed.
+    """
     time.sleep(0.6)
     try:
         shutdown_all_sessions()
     except Exception:
         pass
+    os.environ[NO_UPDATE_ENV] = "1"
     argv = _restart_argv()
     get_logger().info("Restarting server with: %s", argv)
     print(f"Restarting server with: {' '.join(argv)}", file=sys.stderr, flush=True)
