@@ -26,3 +26,5 @@ scripts/web_search_diagnosis.jsonl
 
 # Linter cache
 .ruff_cache/
+
+PLAN.md
