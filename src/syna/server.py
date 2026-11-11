@@ -1285,11 +1285,15 @@ def background_list(client_id: str):
 
     Feeds the top-bar indicator and its list modal: the button is
     visible while at least one process or subagent is running, and the
-    modal lists running work first, then finished work.
+    modal lists running work first, then finished work. A session whose
+    pod is still starting has no work yet, so it answers with empty
+    lists instead of an error the client's startup polls would log.
     """
     record = _sessions.get(client_id)
-    if record is None or record.container is None:
+    if record is None:
         raise HTTPException(status_code=404, detail="Unknown session.")
+    if record.container is None:
+        return {"processes": [], "subagents": []}
     registry = processes.registry_for(record.container)
     with registry.lock:
         process_rows = [

@@ -5843,8 +5843,12 @@ async function refreshBackgroundList() {
 
 function startBgListPolling() {
   if (bgListTimer) return;
-  refreshBackgroundList();
-  bgListTimer = setInterval(refreshBackgroundList, 4000);
+  /* Ticks only while the socket is open: the session record (and with
+     it this endpoint's 404) exists exactly when the socket does, and
+     ws.onopen refreshes immediately on every (re)connect. */
+  bgListTimer = setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) refreshBackgroundList();
+  }, 4000);
 }
 
 let bgListModal = null;
