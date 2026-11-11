@@ -8,6 +8,10 @@ from .state import close_docker_client
 
 def main() -> None:
     """Start the interactive agent loop."""
+    from .selfupdate import maybe_selfupdate
+
+    if maybe_selfupdate():
+        return
     try:
         ask_loop()
     except ValueError as exc:

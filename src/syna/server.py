@@ -46,13 +46,18 @@ from pydantic import BaseModel
 
 from . import interaction, setup
 from .capabilities import processes, rewind, speech, subagents
-from .pod_io import pod_copy_from
-from .protocol.channel import harness_notice, unwrap_channel, wrap_channel
+from .capabilities.imaging import (
+    MAX_SERVE_BYTES,
+    RECOMPRESS_BYTES,
+    fit_image_to_box,
+    image_exceeds_box,
+)
+from .capabilities.tools import _reset_browser
 from .config import (
+    DEFAULT_CONTINUOUS_CONVERSATION,
     DEFAULT_IMAGE_GENERATION_ENABLED,
     DEFAULT_IMAGE_MODEL,
     DEFAULT_MODEL,
-    DEFAULT_CONTINUOUS_CONVERSATION,
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
@@ -65,12 +70,6 @@ from .config import (
     load_config,
     read_asset_text,
 )
-from .capabilities.imaging import (
-    MAX_SERVE_BYTES,
-    RECOMPRESS_BYTES,
-    fit_image_to_box,
-    image_exceeds_box,
-)
 from .conversation.session import (
     DEFAULT_CONTEXT_BUDGET_TOKENS,
     AgentSession,
@@ -78,13 +77,15 @@ from .conversation.session import (
     shared_file_metadata,
 )
 from .pod_init import shared_copy_notice
+from .pod_io import pod_copy_from
+from .protocol.channel import harness_notice, unwrap_channel, wrap_channel
+from .selfupdate import maybe_selfupdate, relaunch_argv
 from .state import (
     create_container,
     destroy_container,
     register_container,
     unregister_container,
 )
-from .capabilities.tools import _reset_browser
 
 CONTAINER_START_TIMEOUT_S = 120
 EVENT_LOG_MAX_ITEMS = 500
@@ -93,7 +94,6 @@ CONTAINER_STARTING_TEXT = "Starting the container engine, please wait..."
 NEW_CHAT_STOP_TIMEOUT_S = 20
 IMAGE_CACHE_LIMIT = 32
 SERVER_ENTRY_POINT = "syna-server"
-EXECUTABLE_SUFFIXES = (".exe", ".bat", ".cmd")
 
 SERVED_IMAGE_EXTENSIONS = {
     ".png": "image/png",
@@ -1664,27 +1664,9 @@ async def save_settings(request: SettingsUpdateRequest):
 def _restart_argv() -> list[str]:
     """Build the argv that re-executes the server after a settings save.
 
-    Preference order: the current entry point (an entry-point executable
-    is re-executed directly, a script through the current interpreter),
-    the globally installed syna-server (any PATH entry outside the active
-    virtualenv), `uv run syna-server` for checkouts without a resolvable
-    entry point, and finally the current interpreter with the original
-    arguments.
+    Delegates to the shared relaunch builder with the server entry point.
     """
-    argv0 = Path(sys.argv[0])
-    candidate = argv0 if argv0.is_file() else argv0.with_suffix(".exe")
-    if candidate.is_file():
-        if candidate.suffix.lower() in EXECUTABLE_SUFFIXES:
-            return [str(candidate), *sys.argv[1:]]
-        return [sys.executable, str(candidate), *sys.argv[1:]]
-    venv_root = Path(sys.prefix).resolve()
-    found = shutil.which(SERVER_ENTRY_POINT)
-    if found and not Path(found).resolve().is_relative_to(venv_root):
-        return [found, *sys.argv[1:]]
-    uv = shutil.which("uv")
-    if uv:
-        return [uv, "run", SERVER_ENTRY_POINT, *sys.argv[1:]]
-    return [sys.executable, str(argv0), *sys.argv[1:]]
+    return relaunch_argv(SERVER_ENTRY_POINT)
 
 
 def _delayed_restart():
@@ -1925,6 +1907,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 
 def main():
     """Start the Syna web server."""
+    if maybe_selfupdate():
+        return
     global AUTH_TOKEN
     AUTH_TOKEN = secrets.token_urlsafe(32)
     port = _server_port()

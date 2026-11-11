@@ -143,6 +143,14 @@ DEFAULT_IMAGE_GENERATION_ENABLED = False
 # Hands-free voice mode: the client reopens the microphone after each
 # reply. Opt-in like voice mode itself.
 DEFAULT_CONTINUOUS_CONVERSATION = False
+# Launch-time self-update against PyPI for globally installed copies;
+# SYNA_NO_AUTO_UPDATE overrides this key.
+DEFAULT_AUTO_UPDATE = True
+
+
+def load_auto_update_enabled() -> bool:
+    """Whether the launch-time PyPI self-update check runs."""
+    return bool(load_config().get("auto_update", DEFAULT_AUTO_UPDATE))
 
 
 def load_output_limit_chars() -> int:

@@ -459,6 +459,10 @@ def sanity_check() -> dict:
 
 def main():
     """Start the web server with the setup wizard in the foreground."""
+    from .selfupdate import maybe_selfupdate
+
+    if maybe_selfupdate():
+        return
     import secrets
     import socket
     import threading

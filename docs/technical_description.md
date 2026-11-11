@@ -107,6 +107,33 @@ created and seeded with the bundled `config.json` on first run),
 assets (real paths on disk; entered-and-kept contexts for zipped
 installs).
 
+### `src/syna/selfupdate.py`
+
+Launch-time self-update for globally installed copies, entered through
+`maybe_selfupdate()` at the top of all three entry points. Gates skip the
+check silently: a repository checkout (the `paths.get_project_root`
+pyproject probe), `SYNA_NO_AUTO_UPDATE`, `auto_update: false` in
+config.json, and every failure (the whole check is fail-open). The PyPI
+JSON check is capped at `CHECK_TIMEOUT_S` (4 s) so a slow network never
+holds a launch hostage, and only dotted-numeric releases are update
+targets. A newer release spawns a detached updater (`python -m
+syna.selfupdate <payload>`) and the launcher exits immediately: Windows
+locks a running process's entry-point executable and native modules, so
+exiting before upgrading is the one flow that works identically on every
+platform. The updater waits for the parent PID to disappear (capped at
+`PARENT_WAIT_TIMEOUT_S`), runs the installer-native command (uv-receipt
+→ `uv tool upgrade`, pipx metadata → `pipx upgrade`, else the venv's own
+pip, else `uv pip --python`; uv tool environments ship without pip and
+must never be mutated with raw pip anyway), verifies the installed
+version actually advanced (an update that did not land never relaunches,
+so a compare bug cannot loop), and re-executes the original command via
+`relaunch_argv` — the same builder the settings-save restart uses.
+Failures print the manual command and leave the old install untouched.
+Ephemeral `uvx` / `pipx run` environments live in an unmanaged cache and
+get a one-line note instead. `tests/test_selfupdate.py` covers the gate
+matrix, version ordering, installer detection, the updater's
+wait/upgrade/verify/relaunch flow, and the relaunch-argv fallbacks.
+
 ### `src/syna/setup.py`
 
 First-run setup, shared by `syna-server` (which redirects `/` to the
@@ -194,6 +221,7 @@ from the canonical constants in `config.py`.
 | `max_history_messages`              | History length that triggers compaction as a safety net for degenerate all-small-message histories; the token budget is the primary trigger.                                                                                                                                  |
 | `enable_compaction`                 | Master switch for history compaction.                                                                                                                                                                                                                                         |
 | `checkpoints_enabled`               | Master switch for the web UI's rewind checkpoints (default `false`): when on, the workspace is snapshotted before each user message and the undo buttons appear; snapshots carry some per-message delay, hence the settings dialog's wording.                                 |
+| `auto_update`                       | Master switch for the launch-time self-update (default `true`): globally installed copies check PyPI on every launch and update automatically; `SYNA_NO_AUTO_UPDATE=1` overrides it. See `selfupdate.py`.                                                                     |
 | `max_visible_tool_calls`            | UI limit on rendered tool rows.                                                                                                                                                                                                                                               |
 | `voice_enabled`                     | Voice category toggle (default `true`): off hides the mic, disables the top-bar voice icon, and makes the speech tools report themselves as unavailable.                                                                                                                      |
 | `continuous_conversation`           | Hands-free voice mode (default `false`): in voice mode, the client reopens the microphone after each reply reaches the chat; applied through the settings GUI on Save and Restart.                                                                                            |
