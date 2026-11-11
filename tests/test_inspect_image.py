@@ -15,6 +15,7 @@ import sys
 import tempfile
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -23,7 +24,7 @@ from PIL import Image
 
 import syna.conversation.session as session_module
 import syna.protocol.parse as parse_module
-from syna.ask_utils import _write_dump
+from syna.ask_utils import _write_dump, ask_question
 from syna.capabilities import vision
 from syna.conversation.session import AgentSession
 from syna.protocol.channel import is_channel_message, unwrap_channel
@@ -380,6 +381,42 @@ def test_redact_image_data_leaves_other_text():
     assert "QUJD" not in redacted and "[image data redacted:" in redacted
 
 
+def test_wire_payload_strips_internal_keys(monkeypatch):
+    """Harness bookkeeping on messages must never reach the provider."""
+    captured = []
+
+    class FakeChat:
+        def send(self, **request):
+            captured.append(request)
+            message = SimpleNamespace(content="done", refusal=None, tool_calls=None)
+            choice = SimpleNamespace(finish_reason="stop", message=message)
+            return SimpleNamespace(choices=[choice], usage=None)
+
+    import syna.ask_utils as ask_utils_module
+
+    monkeypatch.setattr(ask_utils_module, "load_config", dict)
+    client = SimpleNamespace(chat=FakeChat())
+    messages = [
+        {"role": "system", "content": "sys"},
+        _image_message(),
+    ]
+    with tempfile.TemporaryDirectory() as temp_dir:
+        dump = Path(temp_dir) / "dump.json"
+        reply = ask_question(client, "vision/model", messages, delay=0, dump_path=dump)
+        written = dump.read_text(encoding="utf-8")
+
+    wire = captured[0]["messages"]
+    assert all(set(m) <= {"role", "content"} for m in wire), (
+        "image_tokens and image_path stay out of the request"
+    )
+    assert "image_tokens" not in json.dumps(captured[0])
+    assert messages[1].get("image_tokens") == 7, (
+        "the live history keeps its bookkeeping untouched"
+    )
+    assert reply["content"] == "done"
+    assert "done" in written, "the post-response dump still captures the reply"
+
+
 def main():
     """Run every inspect_image test and report a summary."""
     run_suite(
@@ -400,6 +437,7 @@ def main():
             test_compaction_transcript_uses_placeholders,
             test_dump_redaction,
             test_redact_image_data_leaves_other_text,
+            test_wire_payload_strips_internal_keys,
         ]
     )
 

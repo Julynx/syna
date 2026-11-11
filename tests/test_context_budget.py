@@ -134,18 +134,21 @@ def test_non_openrouter_endpoint_never_fetches(monkeypatch):
 
 
 class _FakeModelsItem:
-    def __init__(self, model_id, context_length):
+    def __init__(self, model_id, context_length, modalities=None):
         self.id = model_id
         self.context_length = context_length
+        if modalities is not None:
+            self.architecture = SimpleNamespace(input_modalities=modalities)
 
 
 _FAKE_ITEMS = [
-    _FakeModelsItem("good/model", 100_000),
+    _FakeModelsItem("good/model", 100_000, modalities=["text", "image"]),
     _FakeModelsItem("missing/model", None),
     _FakeModelsItem("string/model", "100000"),
     _FakeModelsItem("zero/model", 0),
     _FakeModelsItem("bool/model", True),
-    _FakeModelsItem("~z-ai/glm-flash-latest", 1048576),
+    _FakeModelsItem("~z-ai/glm-flash-latest", 1048576, modalities=["text"]),
+    _FakeModelsItem("weird/model", None, modalities=5),
 ]
 
 
@@ -195,6 +198,20 @@ def test_load_context_lengths_without_key_is_empty(monkeypatch):
     monkeypatch.setattr(session_module, "get_env", dict)
     assert session_module._load_context_lengths() == {}, (
         "no key, no SDK client, no fetch"
+    )
+
+
+def test_load_model_facts_captures_image_support(monkeypatch):
+    monkeypatch.setattr(session_module, "OpenRouter", _FakeOpenRouter)
+    monkeypatch.setattr(
+        session_module, "get_env", lambda: {"OPENROUTER_API_KEY": "sk-or-test"}
+    )
+    _lengths, support = session_module._load_model_facts()
+    assert support["good/model"] is True
+    assert support["~z-ai/glm-flash-latest"] is False
+    assert support["missing/model"] is False, "no architecture means no images"
+    assert support["weird/model"] is False, (
+        "a malformed modalities field reads as no support, never a crash"
     )
 
 
@@ -269,6 +286,7 @@ def main():
             test_load_context_lengths_filters_bogus_entries,
             test_load_context_lengths_failure_returns_empty,
             test_load_context_lengths_without_key_is_empty,
+            test_load_model_facts_captures_image_support,
             test_ensure_context_fetch_runs_once,
             test_server_session_record_constructs_with_a_budget,
         ]

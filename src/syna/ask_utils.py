@@ -13,6 +13,21 @@ from .protocol.images import redact_image_data
 EMPTY_RESPONSE_MAX_ATTEMPTS = 3
 DEFAULT_MAX_OUTPUT_TOKENS = 16384
 
+# Message keys the chat API understands. Message dicts also carry
+# harness bookkeeping (image_tokens and image_path on inspect_image
+# attachments) that must never reach the wire: strict OpenAI-compatible
+# endpoints can reject unknown message fields, and internal state does
+# not belong in provider logs.
+_REQUEST_MESSAGE_KEYS = ("role", "content", "tool_calls", "tool_call_id", "name")
+
+
+def _request_messages(messages) -> list[dict]:
+    """Copy messages for the wire, dropping harness-internal keys."""
+    return [
+        {key: value for key, value in message.items() if key in _REQUEST_MESSAGE_KEYS}
+        for message in messages
+    ]
+
 
 class ReplyRejected(Exception):
     """Raised when an assistant reply is rejected by the pre-history acceptance gate."""
@@ -133,7 +148,7 @@ def ask_question(
             time.sleep(delay)
             request = {
                 "model": model,
-                "messages": messages,
+                "messages": _request_messages(messages),
                 "max_tokens": load_config().get(
                     "max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS
                 ),
@@ -213,6 +228,9 @@ def ask_question(
                     msg["tool_calls"] = formatted_tool_calls
 
                 messages.append(msg)
+                # Keep the wire copy in step so the post-response dump
+                # still captures the reply (it re-serializes `request`).
+                request["messages"].append(msg)
                 logger.info(str(msg))
                 _write_dump(dump_path, request)
                 return msg

@@ -274,9 +274,13 @@ def _load_model_facts() -> tuple[dict[str, int], dict[str, bool]]:
         length = getattr(model, "context_length", None)
         if isinstance(length, int) and not isinstance(length, bool) and length > 0:
             lengths[model.id] = length
+        # Malformed entries must not kill the fetch: an exception here
+        # would leave both caches unset for the process lifetime.
         architecture = getattr(model, "architecture", None)
         modalities = getattr(architecture, "input_modalities", None)
-        image_support[model.id] = bool(modalities) and "image" in modalities
+        image_support[model.id] = (
+            isinstance(modalities, (list, tuple)) and "image" in modalities
+        )
     return lengths, image_support
 
 

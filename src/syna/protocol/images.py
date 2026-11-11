@@ -11,10 +11,11 @@ serialized text (session dumps and the work reviewer's log).
 import math
 import re
 
-# Roughly OpenAI's high-detail pricing of a full-frame image: tiles of
-# 768 pixels at one token each, rounded up. The estimate only drives
-# elision and compaction timing, so a provider's exact tiling rule does
-# not matter.
+# Heuristic pixel budget per token: 750 px/token lands near what
+# providers charge for a downscaled 1024x1024 image and errs on the
+# high side, the safe direction for elision and compaction timing.
+# The estimate only drives budget decisions, so a provider's exact
+# tiling rule does not matter.
 PIXELS_PER_IMAGE_TOKEN = 750
 
 DATA_URL_PATTERN = re.compile(r"data:image/[^\";]*;base64,[A-Za-z0-9+/=]+")
