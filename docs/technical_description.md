@@ -97,6 +97,8 @@ workflows keep working unchanged.
 - `prompt_toolkit`: the CLI's live prompt — `patch_stdout` lets the worker
   thread print events while the user types, without clobbering the input
   line, on Windows and POSIX alike.
+- `auto-self-update`: launch-time self-update for globally installed
+  copies (see the section below).
 
 ### `src/syna/paths.py`
 
@@ -107,39 +109,25 @@ created and seeded with the bundled `config.json` on first run),
 assets (real paths on disk; entered-and-kept contexts for zipped
 installs).
 
-### `src/syna/selfupdate.py`
+### Launch-time self-update (the `auto-self-update` package)
 
-Launch-time self-update for globally installed copies, entered through
-`maybe_selfupdate()` at the top of all three entry points. Gates skip the
-check silently: a repository checkout (the `paths.get_project_root`
-pyproject probe), `SYNA_NO_AUTO_UPDATE`, `auto_update: false` in
-config.json, and every failure (the whole check is fail-open). The PyPI
-JSON check is capped at `CHECK_TIMEOUT_S` (4 s) so a slow network never
-holds a launch hostage, and only dotted-numeric releases are update
-targets. A newer release spawns a detached updater (`python -m
-syna.selfupdate <payload>`) and the launcher exits immediately: Windows
-locks a running process's entry-point executable and native modules, so
-exiting before upgrading is the one flow that works identically on every
-platform. The updater waits for the parent PID to disappear (capped at
-`PARENT_WAIT_TIMEOUT_S`), runs the installer-native command (uv-receipt
-→ `uv tool upgrade`, pipx metadata → `pipx upgrade`, else the venv's own
-pip, else `uv pip --python`; uv tool environments ship without pip and
-must never be mutated with raw pip anyway), verifies the installed
-version actually advanced from the launching one (advancement, not
-equality with the checked version: a release published mid-update is
-still a success; an update that did not land never relaunches, so a
-compare bug cannot loop), and re-executes the original command via
-`relaunch_argv` — the same builder the settings-save restart uses. The
-updater is detached from the terminal's interrupt delivery (its own
-session on POSIX, its own process group on Windows) so a Ctrl+C cannot
-reach it mid-upgrade, and the settings-save restart sets
-`SYNA_NO_AUTO_UPDATE` for the re-executed server: a restart is a
-settings reload, not a launch. Failures print the manual command and
-leave the old install untouched.
-Ephemeral `uvx` / `pipx run` environments live in an unmanaged cache and
-get a one-line note instead. `tests/test_selfupdate.py` covers the gate
-matrix, version ordering, installer detection, the updater's
-wait/upgrade/verify/relaunch flow, and the relaunch-argv fallbacks.
+Self-update is delegated to the `auto-self-update` dependency (the
+single-file `selfupdate` module, published from the `Julynx/self-update`
+repository). Each entry point calls `selfupdate.check("syna-agent",
+enabled=load_auto_update_enabled())` as its first statement; True means
+an updater was spawned and the caller exits immediately. The package
+handles the PyPI check (4 s timeout, fail-open), checkout and ephemeral
+`uvx`/`pipx run` detection, the installer-native upgrade command (uv
+tool / pipx / pip), the detached updater process that waits for the
+parent, upgrades, verifies the version advanced, and relaunches. Syna
+adds only its own gates: the `auto_update` config key and
+`SYNA_NO_AUTO_UPDATE` (`config.AUTO_UPDATE_ENV`), both read by
+`config.load_auto_update_enabled()`, which fails closed on an unreadable
+config. The settings-save restart sets `SYNA_NO_AUTO_UPDATE` before
+re-executing: a restart is a settings reload, not a launch. The
+restart's argv builder is the package's `relaunch_argv`.
+`tests/test_selfupdate.py` covers the gate matrix, the restart
+exemption, checkout gating end-to-end, and the relaunch fallbacks.
 
 ### `src/syna/setup.py`
 
@@ -228,7 +216,7 @@ from the canonical constants in `config.py`.
 | `max_history_messages`              | History length that triggers compaction as a safety net for degenerate all-small-message histories; the token budget is the primary trigger.                                                                                                                                  |
 | `enable_compaction`                 | Master switch for history compaction.                                                                                                                                                                                                                                         |
 | `checkpoints_enabled`               | Master switch for the web UI's rewind checkpoints (default `false`): when on, the workspace is snapshotted before each user message and the undo buttons appear; snapshots carry some per-message delay, hence the settings dialog's wording.                                 |
-| `auto_update`                       | Master switch for the launch-time self-update (default `true`): globally installed copies check PyPI on every launch and update automatically; `SYNA_NO_AUTO_UPDATE=1` overrides it. See `selfupdate.py`.                                                                     |
+| `auto_update`                       | Master switch for the launch-time self-update (default `true`): globally installed copies check PyPI on every launch and update automatically; `SYNA_NO_AUTO_UPDATE=1` overrides it. The mechanism lives in the `auto-self-update` dependency.                                 |
 | `max_visible_tool_calls`            | UI limit on rendered tool rows.                                                                                                                                                                                                                                               |
 | `voice_enabled`                     | Voice category toggle (default `true`): off hides the mic, disables the top-bar voice icon, and makes the speech tools report themselves as unavailable.                                                                                                                      |
 | `continuous_conversation`           | Hands-free voice mode (default `false`): in voice mode, the client reopens the microphone after each reply reaches the chat; applied through the settings GUI on Save and Restart.                                                                                            |

@@ -3,6 +3,7 @@
 import json
 import logging
 import math
+import os
 import re
 import threading
 from functools import lru_cache
@@ -143,14 +144,28 @@ DEFAULT_IMAGE_GENERATION_ENABLED = False
 # Hands-free voice mode: the client reopens the microphone after each
 # reply. Opt-in like voice mode itself.
 DEFAULT_CONTINUOUS_CONVERSATION = False
-# Launch-time self-update against PyPI for globally installed copies;
-# SYNA_NO_AUTO_UPDATE overrides this key.
+# Launch-time self-update against PyPI for globally installed copies,
+# delegated to the auto-self-update package; AUTO_UPDATE_ENV overrides
+# the config key and doubles as the settings-restart exemption.
 DEFAULT_AUTO_UPDATE = True
+AUTO_UPDATE_ENV = "SYNA_NO_AUTO_UPDATE"
 
 
 def load_auto_update_enabled() -> bool:
-    """Whether the launch-time PyPI self-update check runs."""
-    return bool(load_config().get("auto_update", DEFAULT_AUTO_UPDATE))
+    """Whether the launch-time PyPI self-update check runs.
+
+    Fails closed on an unreadable config: skipping one update check is
+    cheaper than crashing an entry point on a broken config.json.
+    """
+    if os.environ.get(AUTO_UPDATE_ENV):
+        return False
+    try:
+        return bool(load_config().get("auto_update", DEFAULT_AUTO_UPDATE))
+    except Exception:
+        logging.getLogger("syna").exception(
+            "Could not read the auto-update setting; skipping the check"
+        )
+        return False
 
 
 def load_output_limit_chars() -> int:

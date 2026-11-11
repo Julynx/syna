@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -40,6 +40,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a9/d2/f4d173e22df740bc37b1db102b386ba719b66e95b0f0d751f556b387e6d2/anyio-4.15.1.tar.gz", hash = "sha256:9f28306018cbd6d329e64a36d58256edff76dd996fe423bc957326e578b82a94", size = 276966, upload-time = "2026-09-05T10:42:39.44Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/12/b8/4bd346e22b28902df4d651910f5242c28d84e4a5c2435ca5c3f797ed7e2e/anyio-4.15.1-py3-none-any.whl", hash = "sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101", size = 132079, upload-time = "2026-09-05T10:42:37.923Z" },
+]
+
+[[package]]
+name = "auto-self-update"
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/50/a6/fc0dd060647764b0f8bba9617e0bb97509787aa32c89a353ecd1cf7f29e2/auto_self_update-0.9.0.tar.gz", hash = "sha256:a2eb44be643f3309fe57517f2605e0743c408524014ae106b0ab8a07dd0674d8", size = 8624, upload-time = "2026-11-11T20:17:58.643Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/39/908dc101d19a5e13e234ad0d1fa33976842f6c0d1bc9b4c6a01ef4a8e231/auto_self_update-0.9.0-py3-none-any.whl", hash = "sha256:7356c8e1856324de6b40607511b401526fffd9f38eabf4011408631beb32e3ff", size = 9146, upload-time = "2026-11-11T20:17:57.519Z" },
 ]
 
 [[package]]
@@ -1229,6 +1238,7 @@ name = "syna-agent"
 version = "2.0.8"
 source = { editable = "." }
 dependencies = [
+    { name = "auto-self-update" },
     { name = "bollard" },
     { name = "camoufox", extra = ["geoip"] },
     { name = "fastapi" },
@@ -1244,6 +1254,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "auto-self-update", specifier = ">=0.9.0" },
     { name = "bollard", specifier = ">=0.2.3" },
     { name = "camoufox", extras = ["geoip"], specifier = ">=0.5.8" },
     { name = "fastapi", specifier = ">=0.115.0" },

@@ -42,6 +42,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
+import selfupdate
 from pydantic import BaseModel
 
 from . import interaction, setup
@@ -68,6 +69,8 @@ from .config import (
     get_logger,
     load_checkpoints_enabled,
     load_config,
+    AUTO_UPDATE_ENV,
+    load_auto_update_enabled,
     read_asset_text,
 )
 from .conversation.session import (
@@ -79,7 +82,6 @@ from .conversation.session import (
 from .pod_init import shared_copy_notice
 from .pod_io import pod_copy_from
 from .protocol.channel import harness_notice, unwrap_channel, wrap_channel
-from .selfupdate import NO_UPDATE_ENV, maybe_selfupdate, relaunch_argv
 from .state import (
     create_container,
     destroy_container,
@@ -1666,7 +1668,7 @@ def _restart_argv() -> list[str]:
 
     Delegates to the shared relaunch builder with the server entry point.
     """
-    return relaunch_argv(SERVER_ENTRY_POINT)
+    return selfupdate.relaunch_argv(SERVER_ENTRY_POINT)
 
 
 def _delayed_restart():
@@ -1682,7 +1684,7 @@ def _delayed_restart():
         shutdown_all_sessions()
     except Exception:
         pass
-    os.environ[NO_UPDATE_ENV] = "1"
+    os.environ[AUTO_UPDATE_ENV] = "1"
     argv = _restart_argv()
     get_logger().info("Restarting server with: %s", argv)
     print(f"Restarting server with: {' '.join(argv)}", file=sys.stderr, flush=True)
@@ -1915,7 +1917,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 
 def main():
     """Start the Syna web server."""
-    if maybe_selfupdate():
+    if selfupdate.check("syna-agent", enabled=load_auto_update_enabled()):
         return
     global AUTH_TOKEN
     AUTH_TOKEN = secrets.token_urlsafe(32)

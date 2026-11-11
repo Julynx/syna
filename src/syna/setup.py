@@ -27,6 +27,7 @@ from .config import (
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
     get_data_home,
+    load_auto_update_enabled,
     load_config,
 )
 
@@ -459,9 +460,9 @@ def sanity_check() -> dict:
 
 def main():
     """Start the web server with the setup wizard in the foreground."""
-    from .selfupdate import maybe_selfupdate
+    import selfupdate
 
-    if maybe_selfupdate():
+    if selfupdate.check("syna-agent", enabled=load_auto_update_enabled()):
         return
     import secrets
     import socket

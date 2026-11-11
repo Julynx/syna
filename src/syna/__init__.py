@@ -5,11 +5,13 @@ import sys
 
 def main() -> None:
     """Start the interactive agent loop."""
+    import selfupdate
+
+    from .config import load_auto_update_enabled
     from .conversation.ask import ask_loop
-    from .selfupdate import maybe_selfupdate
     from .state import close_docker_client
 
-    if maybe_selfupdate():
+    if selfupdate.check("syna-agent", enabled=load_auto_update_enabled()):
         return
     try:
         ask_loop()
