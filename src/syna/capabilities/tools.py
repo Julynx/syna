@@ -99,7 +99,7 @@ from .subagents import (
     spawn_subagent,
 )
 from .verification import run_verification as v_run_verification
-from .vision import describe_image as v_describe_image
+from .vision import inspect_image as v_inspect_image
 from .web_search import search
 
 SHARED_BROWSER = SharedBrowser(
@@ -296,7 +296,7 @@ def _write_into_pod(data: bytes, pod_dir: str, file_name: str) -> str:
 def _capture_screenshot(screenshot_fn, browser, args: dict) -> str:
     """Capture a viewport screenshot and copy it into the pod.
 
-    The image lands in /workspace/screenshots so describe_image can read it
+    The image lands in /workspace/screenshots so inspect_image can read it
     and share_file can deliver it to the user. Browser-side failures follow
     the same 'ERROR:' convention as the other browser commands, so the batch
     keeps running; infrastructural failures (pod copy) still propagate.
@@ -337,7 +337,7 @@ def browser(command: str, args: dict[str, Any]):
     * `scroll`: `direction` (`down`, `up`, `top`, or `bottom`), `amount` (fraction of viewport height, default 0.8). Returns the visible viewport.
     * `back`: no arguments.
     * `read`: `ref` (integer; omit for the whole page), `max_chars` (integer). Full plain text, for when a view truncated something you need. Tables come back one line per row with cells separated by ` | `.
-    * `screenshot`: no arguments. Takes a screenshot of the current viewport, saves it into the pod, and returns its path. You may inspect it with `describe_image` if you need to, and share it with `share_file` if the user wants to see it. Use it when the user asks for a screenshot or when a look at the page would help you debug a browser task.
+    * `screenshot`: no arguments. Takes a screenshot of the current viewport, saves it into the pod, and returns its path. You may inspect it with `inspect_image` if you need to, and share it with `share_file` if the user wants to see it. Use it when the user asks for a screenshot or when a look at the page would help you debug a browser task.
 
     Refs belong to the page state they came from; after navigation or large page changes, use refs from the newest output. Submitting forms that send, post, or buy something needs approval (see Protecting the user).
 
@@ -444,13 +444,12 @@ def edit_file(file_path: str, operations: list[dict]):
     return message
 
 
-def describe_image(file_path: str, question: str):
+def inspect_image(file_path: str):
     """
-    Get a text description of an image file, focused on your question. To create or edit images, call text_to_image or script the file. Useful for checking your own visual output (convert to PNG first). Descriptions can be wrong about small text and exact numbers; when you need exact values, take them from the underlying data if you can. Large images are downscaled before analysis; if you need to inspect fine detail (small text, icons, flags), pass a zoomed crop of that region instead of a full-page render.
+    Inspect an image visually. Useful for checking your own visual output (convert to PNG first), e.g. verifying layout. To create or edit images, call text_to_image or script the file. You can be wrong about small text and exact numbers; when you need exact values, take them from the underlying data if you can. Large images are downscaled before analysis; if you need to inspect fine detail (small text, icons, flags), pass a zoomed crop of that region instead of a full-page render.
     - `file_path` (string, required): absolute path to an image file in the pod.
-    - `question` (string, required): exactly what you need to know about the image.
     """
-    return v_describe_image(file_path, question)
+    return v_inspect_image(file_path)
 
 
 def speech_to_text(file_path: str, language: str | None = None):
@@ -611,7 +610,7 @@ def text_to_image(prompt: str):
     pod_path = _write_into_pod(image.content, "/workspace/images", name)
     result = f"Image saved to {pod_path} ({max(1, len(image.content) // 1024)} KB)."
     if image.media_type != "image/svg+xml":
-        result += " You may inspect it with the describe_image tool if you need to."
+        result += " You may inspect it with the inspect_image tool if you need to."
     return result + " Share it with the share_file tool."
 
 
@@ -985,7 +984,7 @@ TOOL_REGISTRY = {
     "edit_file": edit_file,
     "web_search": web_search,
     "browser": browser,
-    "describe_image": describe_image,
+    "inspect_image": inspect_image,
     "speech_to_text": speech_to_text,
     "text_to_speech": text_to_speech,
     "text_to_image": text_to_image,

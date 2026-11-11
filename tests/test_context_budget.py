@@ -210,9 +210,9 @@ def test_ensure_context_fetch_runs_once(monkeypatch):
         calls.append(1)
         started.set()
         time.sleep(0.05)
-        return {"z-ai/glm-flash-latest": 1048576}
+        return {"z-ai/glm-flash-latest": 1048576}, {}
 
-    monkeypatch.setattr(session_module, "_load_context_lengths", counting_load)
+    monkeypatch.setattr(session_module, "_load_model_facts", counting_load)
     session_module.ensure_context_fetch()
     session_module.ensure_context_fetch()
     assert started.wait(timeout=3), "the background fetch must run"

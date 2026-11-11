@@ -95,6 +95,27 @@ IMPERSONATABLE_MARKERS = (
 )
 
 
+def content_text(content) -> str:
+    """Flatten message content (string or list of content parts) into text.
+
+    Messages built by `inspect_image` carry a list of content parts
+    (a text note plus an image); consumers that only understand plain
+    string content use this to read the text half. Image parts have no
+    text and contribute nothing.
+    """
+    if not content:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return ""
+
+
 def harness_notice(text: str) -> str:
     """Wrap a harness message body in the notice tags the system prompt describes."""
     return f"{HARNESS_NOTICE_OPEN}\n{text.strip()}\n{HARNESS_NOTICE_CLOSE}"

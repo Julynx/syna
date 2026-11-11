@@ -37,6 +37,7 @@ from ..config import (
 from ..pod_init import POD_SHARED_DIR, shared_dir_entries
 from ..protocol.channel import (
     contains_sentinel,
+    content_text,
     defang_sentinels,
     format_tool_result_content,
     harness_notice,
@@ -236,21 +237,25 @@ def is_openrouter() -> bool:
 
 
 _context_lengths_cache: dict[str, int] | None = None
+_image_support_cache: dict[str, bool] | None = None
 _context_fetch_lock = threading.Lock()
 _context_fetch_started = False
 
 
-def _load_context_lengths() -> dict[str, int]:
-    """Fetch every OpenRouter model's context window via the SDK.
+def _load_model_facts() -> tuple[dict[str, int], dict[str, bool]]:
+    """Fetch every OpenRouter model's context window and image support.
 
-    Entries with a missing, non-integer, or non-positive context_length
-    are dropped - a bogus value would misplace the compaction trigger.
-    Any failure returns an empty dict: the caller caches it, so a
-    struggling endpoint is asked once per process, not on every session.
+    Returns (context lengths, image-input support) keyed by model id.
+    Length entries with a missing, non-integer, or non-positive
+    context_length are dropped - a bogus value would misplace the
+    compaction trigger. Models without an input-modalities list are
+    recorded as not accepting images. Any failure returns two empty
+    dicts: the caller caches them, so a struggling endpoint is asked
+    once per process, not on every session.
     """
     api_key = get_env().get("OPENROUTER_API_KEY")
     if not api_key:
-        return {}
+        return {}, {}
     try:
         client = OpenRouter(
             api_key=api_key, server_url=load_base_url(), timeout_ms=10000
@@ -262,19 +267,28 @@ def _load_context_lengths() -> dict[str, int]:
             " keeping the fallback context budget",
             exc_info=True,
         )
-        return {}
+        return {}, {}
     lengths = {}
+    image_support = {}
     for model in data:
         length = getattr(model, "context_length", None)
         if isinstance(length, int) and not isinstance(length, bool) and length > 0:
             lengths[model.id] = length
-    return lengths
+        architecture = getattr(model, "architecture", None)
+        modalities = getattr(architecture, "input_modalities", None)
+        image_support[model.id] = bool(modalities) and "image" in modalities
+    return lengths, image_support
+
+
+def _load_context_lengths() -> dict[str, int]:
+    """Fetch every OpenRouter model's context window via the SDK."""
+    return _load_model_facts()[0]
 
 
 def _context_fetch_worker():
     """Body of the background fetch thread; caches success and failure alike."""
-    global _context_lengths_cache
-    _context_lengths_cache = _load_context_lengths()
+    global _context_lengths_cache, _image_support_cache
+    _context_lengths_cache, _image_support_cache = _load_model_facts()
 
 
 def ensure_context_fetch():
@@ -322,6 +336,50 @@ def resolved_budget_for(model: str | None) -> int | None:
     if not context_length:
         return None
     return context_length // 2
+
+
+def model_accepts_images(model: str | None) -> bool | None:
+    """Whether the model is known to accept image input, else None.
+
+    None while the models fetch is pending, after it failed, on
+    non-OpenRouter endpoints, or for models missing from the list:
+    callers proceed optimistically in every unknown case. False is the
+    only value that blocks an image attachment. The id lookup mirrors
+    resolved_budget_for's tilde handling.
+    """
+    support = _image_support_cache
+    if support is None or not model:
+        return None
+    known = support.get(model)
+    if known is None:
+        known = support.get(model.lstrip("~"))
+    return known
+
+
+def _image_history_message(image: dict) -> dict:
+    """Build the history message carrying one image attached by a tool.
+
+    The text part is a harness notice: harness-generated content never
+    wears the user's voice. `image_tokens` (the attach step's estimate)
+    and `image_path` ride on the message for the budget estimator and
+    the compaction transcript, which must not read the base64 payload.
+    """
+    note = (
+        f"inspect_image attached '{image.get('path')}'"
+        f" ({image.get('width')}x{image.get('height')}):"
+    )
+    return {
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": wrap_channel("HARNESS_NOTICE", harness_notice(note)),
+            },
+            {"type": "image_url", "image_url": {"url": image["data_url"]}},
+        ],
+        "image_tokens": image.get("image_tokens"),
+        "image_path": image.get("path"),
+    }
 
 
 def resolve_context_budget(model: str | None) -> int:
@@ -1158,6 +1216,21 @@ class AgentSession:
                 tool_messages.append(tmsg)
                 logger.info(str(tmsg))
 
+            # inspect_image attachments become user messages with the
+            # image data; they follow the whole tool-message group so the
+            # tool answers stay contiguous (strict providers require it).
+            for entry in outcome.outputs:
+                image = entry.get("image")
+                if image is not None:
+                    self.messages.append(_image_history_message(image))
+                    logger.info(
+                        "Image attached to history: %s (%sx%s, ~%s tokens)",
+                        image.get("path"),
+                        image.get("width"),
+                        image.get("height"),
+                        image.get("image_tokens"),
+                    )
+
             never_ran = [result for result in outcome.outputs if result.get("error")]
             if len(never_ran) == len(outcome.outputs) and outcome.outputs:
                 self._pending_failed_messages.append(response_msg)
@@ -1420,7 +1493,7 @@ class AgentSession:
                 index
                 for index, message in enumerate(history)
                 if message.get("role") == "user"
-                and not is_channel_message(message.get("content") or "")
+                and not is_channel_message(content_text(message.get("content")))
             ),
             None,
         )

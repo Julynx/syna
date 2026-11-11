@@ -67,11 +67,26 @@ def estimate_tokens(text: str) -> int:
 
 
 def estimate_history_tokens(messages: list[dict]) -> int:
-    """Estimate the total token size of a message list."""
+    """Estimate the total token size of a message list.
+
+    List content (image messages from `inspect_image`) contributes its
+    text parts plus the `image_tokens` the attach step recorded: the
+    base64 characters would be counted as ordinary text otherwise,
+    overestimating a 1024x1024 image a thousandfold.
+    """
     total = 0
     for message in messages:
         content = message.get("content") or ""
-        total += estimate_tokens(content) + MESSAGE_OVERHEAD_TOKENS
+        if isinstance(content, str):
+            total += estimate_tokens(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    total += estimate_tokens(part["text"])
+        total += MESSAGE_OVERHEAD_TOKENS
+        image_tokens = message.get("image_tokens")
+        if isinstance(image_tokens, int) and not isinstance(image_tokens, bool):
+            total += image_tokens
         for tc in message.get("tool_calls") or []:
             fn = tc.get("function") or {}
             total += estimate_tokens(fn.get("name") or "")
@@ -106,7 +121,7 @@ def elide_tool_outputs(
 
     for message in messages[1:last_editable]:
         content = message.get("content") or ""
-        if ELIDED_MARKER in content:
+        if not isinstance(content, str) or ELIDED_MARKER in content:
             continue
         if not is_channel_message(content, "TOOL_RESULTS"):
             continue
@@ -146,6 +161,8 @@ def elide_archived_user_messages(
         if message.get("role") != "user":
             continue
         content = message.get("content") or ""
+        if not isinstance(content, str):
+            continue
         match = ARCHIVE_MARKER_PATTERN.search(content)
         if (
             match is None

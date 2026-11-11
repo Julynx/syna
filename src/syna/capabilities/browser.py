@@ -1772,7 +1772,7 @@ class BrowserSession:
         return text[:max_chars] + ("\n... [truncated]" if len(text) > max_chars else "")
 
     async def screenshot_bytes(self) -> bytes:
-        """PNG bytes of the current viewport for describe_image inspection."""
+        """PNG bytes of the current viewport for inspect_image inspection."""
         return await self._live_page().screenshot(type="png")
 
 

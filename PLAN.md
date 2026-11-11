@@ -341,3 +341,49 @@ All eight findings from the adversarial review were applied:
 8. New tests: failing-command survival, force-exit and its reset, EOF
    with a pending question, /undo argument rejection, and killing an
    already-finished background record.
+
+---
+
+# inspect_image replaces describe_image (2026-11-11)
+
+`describe_image(file_path, question)` ran a throwaway single-turn vision
+request and returned a second-hand description. `inspect_image(file_path)`
+instead attaches the image to the current session's history so the model
+looks at it directly. The downscaling pipeline is unchanged (PNG
+conversion, 1024x1024 box); the single-turn machinery (separate client,
+vision effort override, description prompt) is gone.
+
+Mechanism:
+
+- `vision.py` returns a dict with a `note` (the tool result text) and an
+  `image` payload (path, dimensions, data URL, token estimate).
+  `parse.py` treats `image` as a reserved key in dict tool returns: the
+  payload moves into the call entry, the note becomes the result text,
+  and the payload is stripped from the UI event stream, so base64 never
+  reaches tool output, events, or logs.
+- `session.py` appends one user message per payload after the whole
+  tool group (tool answers must stay contiguous for strict providers):
+  a HARNESS_NOTICE text part naming the path plus the image_url part.
+  The message records `image_tokens` and `image_path`; attached images
+  stay until compaction, and re-inspection always re-attaches (the file
+  may have changed under the same path).
+- Pre-flight: the models-list fetch now also captures
+  `architecture.input_modalities`; `model_accepts_images` returns
+  True/False/None and only a proven text-only model blocks the call
+  with an error dict (the turn survives). Non-OpenRouter endpoints have
+  no modality data and proceed optimistically.
+- Context accounting: `estimate_history_tokens` is list-content aware
+  and counts the recorded `image_tokens` (~750 pixels/token) instead of
+  the base64 characters; both elision passes skip non-string content;
+  `_first_user_index` flattens parts so an image message is not
+  mistaken for the pinned first user message.
+- Leak-proofing: request dumps and the reviewer's log tail redact image
+  data URLs to size placeholders (`protocol/images.py`); the compaction
+  transcript flattens image messages to their note plus an
+  `[image: path]` placeholder.
+
+Tests: `tests/test_inspect_image.py` (16 offline tests): downscale and
+token cost, non-image rejection, the pre-flight matrix, run_turn
+insertion order and contiguity, the no-base64 event guarantee, plain
+error dicts, the estimator, elision safety, first-user pinning,
+compaction placeholders, and dump redaction.

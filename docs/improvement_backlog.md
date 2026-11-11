@@ -221,23 +221,26 @@ measurement ground) before building it.
 
 An `extract_text(file_path, pages=...)` tool for scanned PDFs and
 image-dense documents, returning text with per-block confidence.
-Today's path is `describe_image`, whose own docstring warns it can be
-wrong about small text and exact numbers, or 2-3 setup calls to install
-`tesseract` + a PDF renderer per session.
+Today's path is `inspect_image`, whose own docstring warns vision can
+be wrong about small text and exact numbers, or 2-3 setup calls to
+install `tesseract` + a PDF renderer per session.
 
-Evidence: a live session (2026-11-05) tested `describe_image` against a
-PIL-rendered image with two short lines and it lost a decimal point
-(`1234.56` read as `123456`), exactly the numeric-transcription failure
-the docstring warns about, on an easy image (crisp, 400x120, high
-contrast). Scanned legal or financial documents are strictly harder.
+Evidence: a live session (2026-11-05) tested the old `describe_image`
+against a PIL-rendered image with two short lines and it lost a decimal
+point (`1234.56` read as `123456`), exactly the numeric-transcription
+failure the docstring warns about, on an easy image (crisp, 400x120,
+high contrast). Scanned legal or financial documents are strictly
+harder. `describe_image` has since become `inspect_image` (the model
+sees the image itself instead of a second-hand description); whether
+direct vision closes the numeric-transcription gap is unmeasured.
 
 Why backlog: real OCR needs `tesseract` (or similar) inside the pod,
 which means a custom image or per-session apt installs (slow, network-
 dependent, re-paid every session), and tesseract's own quality on
 tables/layouts is mediocre; the improvement over a zoomed-crop
-`describe_image` pass must be measured, not assumed. The crop guidance
-already in the `describe_image` docstring is the cheap mitigation;
-build the tool only if crop-then-describe still fails in practice.
+`inspect_image` pass must be measured, not assumed. The crop guidance
+already in the `inspect_image` docstring is the cheap mitigation;
+build the tool only if crop-then-inspect still fails in practice.
 
 ## `web_search` filters (recency, domain)
 

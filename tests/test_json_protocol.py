@@ -54,7 +54,7 @@ def test_schema_generation():
     assert "edit_file" in tool_names
     assert "web_search" in tool_names
     assert "browser" in tool_names
-    assert "describe_image" in tool_names
+    assert "inspect_image" in tool_names
     assert "share_file" in tool_names
     assert "respond" not in tool_names
 

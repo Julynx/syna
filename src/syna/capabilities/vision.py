@@ -1,4 +1,20 @@
-"""Image understanding through a dedicated single-turn vision request."""
+"""Image inspection by attaching images to the current session's history.
+
+`inspect_image` copies an image out of the pod, converts it to PNG,
+downscales it with Pillow so it fits inside a 1024x1024 box, and hands
+it to the harness, which appends it to the conversation as a message
+carrying the image data: the model looks at the image itself in its
+next reply instead of reading a second-hand description from a
+throwaway vision session. The image stays in history until compaction
+summarizes it away; re-inspecting the same path attaches a fresh copy,
+which is correct when the file changed and cheap when it did not.
+
+The tool returns a dict with a short `note` for the tool result and
+the `image` payload for the harness; `parse.py` extracts the payload
+into the call entry and `session.py` builds the history message from
+it, so the base64 data never passes through tool-result text, UI
+events, or logs.
+"""
 
 import base64
 import tempfile
@@ -7,64 +23,50 @@ from posixpath import basename
 
 from PIL import Image
 
-from ..ask_utils import ask_question
 from ..config import (
     DEFAULT_MODEL,
     get_env,
     get_logger,
-    is_openrouter_base_url,
 )
-from .imaging import fit_image_to_box
 from ..pod_io import pod_copy_from
+from ..protocol.images import image_token_cost
 from ..state import get_container
+from .imaging import fit_image_to_box
 
 
-def _load_model():
-    """Return the vision model, falling back to the default main model."""
+def _main_model() -> str | None:
+    """Return the session's main model id."""
     return get_env().get("MODEL") or DEFAULT_MODEL
 
 
-def _vision_effort() -> str | None:
-    """Return the vision request's reasoning effort.
+def inspect_image(file_path: str):
+    """Attach one image from the pod to the conversation history.
 
-    'medium' on OpenRouter only: the effort was calibrated against
-    OpenRouter's provider default there (maximum, which burns the
-    completion budget on hidden reasoning and can return no content at
-    all). The OpenRouter-style `reasoning` object is forwarded verbatim
-    to custom BASE_URLs and strict OpenAI-compatible endpoints reject it
-    as an unknown parameter, so it is omitted elsewhere.
-    """
-    if not is_openrouter_base_url(get_env().get("BASE_URL")):
-        return None
-    return "medium"
-
-
-def describe_image(file_path: str, question: str):
-    """Describe one image from the pod through a dedicated vision request.
-
-    Pipeline: the image is copied from the container to a temporary host
-    folder (same mechanism as 'read_file'/'edit_file'), converted to PNG,
-    downscaled with Pillow's 'thumbnail' so it fits inside a 1024x1024
-    box, base64-encoded and sent to the model as a separate session: a
-    fresh client and a throwaway single-turn conversation. The request
-    runs at 'medium' reasoning effort on OpenRouter (without it the
-    provider default there is maximum, which burns the completion budget
-    on hidden reasoning and can return no content at all). Other
-    endpoints omit the field entirely: the OpenRouter-style `reasoning`
-    object is forwarded verbatim to custom BASE_URLs and strict
-    OpenAI-compatible endpoints reject it as an unknown parameter.
-
-    Once the image has been described, its base64 payload is replaced in
-    the request's messages array by a compact text placeholder carrying
-    the image path and the description, so the bytes never linger in any
-    message history. The temporary folder is removed whether the call
-    succeeds or fails. Returns the description text, or an {'error': ...}
-    dict when the image cannot be read.
+    The image is downscaled to fit a 1024x1024 box (same behavior the
+    old single-turn vision request had) and base64-encoded. When the
+    models list has proven the configured model cannot accept images,
+    the call fails with an error dict before touching the pod, so the
+    turn survives; unknown support (fetch pending, failed, or a
+    non-OpenRouter endpoint) proceeds optimistically. Returns the note
+    and image payload dict, or an {'error': ...} dict when the model
+    cannot see images or the image cannot be read.
     """
     logger = get_logger()
-    model = _load_model()
+    model = _main_model()
     if not model:
-        return {"error": "MODEL is not set in the .env file; cannot describe images."}
+        return {"error": "MODEL is not set in the .env file; cannot inspect images."}
+
+    from ..conversation.session import model_accepts_images  # noqa: PLC0415
+
+    if model_accepts_images(model) is False:
+        return {
+            "error": (
+                f"The configured model '{model}' does not accept image input;"
+                " it cannot inspect images. Extract the information with text"
+                " tools instead, or tell the user a vision-capable model is"
+                " needed."
+            )
+        }
 
     with tempfile.TemporaryDirectory(prefix="syna-vision-") as temp_dir:
         temp_path = Path(temp_dir)
@@ -77,47 +79,32 @@ def describe_image(file_path: str, question: str):
         try:
             fit_image_to_box(source_path, png_path)
             with Image.open(png_path) as png:
-                pixel_count = png.width * png.height
+                width, height = png.width, png.height
         except Exception as exc:
             return {"error": f"Could not read '{file_path}' as an image: {exc}"}
 
-        logger.info(
-            "Vision request for '%s': %d pixels, %d bytes of PNG payload",
-            file_path,
-            pixel_count,
-            png_path.stat().st_size,
-        )
         encoded = base64.b64encode(png_path.read_bytes()).decode("ascii")
-        image_data = f"data:image/png;base64,{encoded}"
-        prompt = (
-            f"Describe this image in detail. Pay particular attention to: {question}"
-        )
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": image_data}},
-                ],
-            }
-        ]
 
-        from ..conversation.session import create_model_client  # noqa: PLC0415
-
-        with create_model_client() as client:
-            response_msg = ask_question(
-                client,
-                model,
-                messages,
-                delay=0,
-                response_format=None,
-                effort=_vision_effort(),
-            )
-            description = response_msg.get("content") or ""
-
+    tokens = image_token_cost(width, height)
     logger.info(
-        "Described image '%s' (%d chars of description)",
+        "Attached image '%s' to the session: %dx%d, %d bytes of PNG payload,"
+        " ~%d tokens",
         file_path,
-        len(description),
+        width,
+        height,
+        len(encoded) * 3 // 4,
+        tokens,
     )
-    return description
+    return {
+        "note": (
+            f"Image attached to the conversation ({width}x{height});"
+            " you can see it now."
+        ),
+        "image": {
+            "path": file_path,
+            "width": width,
+            "height": height,
+            "data_url": f"data:image/png;base64,{encoded}",
+            "image_tokens": tokens,
+        },
+    }

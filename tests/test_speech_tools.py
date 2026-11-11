@@ -180,7 +180,7 @@ def test_text_to_image_saves_image(monkeypatch):
     pod_path = _pod_path(result)
     assert pod_path.startswith("/workspace/images/generated-")
     assert pod_path.endswith(".png")
-    assert "describe_image" in result
+    assert "inspect_image" in result
     assert _copied_bytes(container) == b"\x89PNG-bytes"
 
 
@@ -323,13 +323,13 @@ def test_text_to_image_malformed_response_is_a_clean_error(monkeypatch):
     assert container.copied == []
 
 
-def test_svg_result_omits_describe_image_hint(monkeypatch):
+def test_svg_result_omits_inspect_image_hint(monkeypatch):
     image = GeneratedImage(content=b"<svg/>", media_type="image/svg+xml")
     _configure(FakeContainer(), monkeypatch, image=image)
 
     result = tools.text_to_image("a logo")
 
-    assert "describe_image" not in result
+    assert "inspect_image" not in result
     assert "share_file" in result
 
 
@@ -351,7 +351,7 @@ def main():
             test_speech_to_text_passes_language_through,
             test_transcribe_audio_omits_language_when_auto,
             test_text_to_image_malformed_response_is_a_clean_error,
-            test_svg_result_omits_describe_image_hint,
+            test_svg_result_omits_inspect_image_hint,
         ]
     )
 

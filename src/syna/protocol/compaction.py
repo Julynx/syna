@@ -1,6 +1,12 @@
 """Transcript rendering and request assembly for history compaction."""
 
-from .channel import harness_notice, is_channel_message, unwrap_channel, wrap_channel
+from .channel import (
+    content_text,
+    harness_notice,
+    is_channel_message,
+    unwrap_channel,
+    wrap_channel,
+)
 from ..config import read_asset_text
 
 COMPACTION_CHANNEL_KIND = "COMPACTION"
@@ -63,6 +69,13 @@ def build_transcript(messages: list[dict]) -> str:
     blocks = []
     for message in messages:
         content = message.get("content") or ""
+        if not isinstance(content, str):
+            # Image messages from inspect_image: the text part already
+            # names the pod path; the placeholder keeps the attachment
+            # visible to the summarizer without sending the image bytes.
+            content = content_text(content)
+            if message.get("image_path"):
+                content = (content + f"\n[image: {message['image_path']}]").strip()
         tool_calls = message.get("tool_calls")
         if is_summary_message(content):
             summary = extract_summary_text(content)

@@ -21,6 +21,7 @@ from ..config import (
     load_verify_log_tail_chars,
     read_asset_text,
 )
+from ..protocol.images import redact_image_data
 
 REVIEW_TOOL_NAME = "review_work"
 DEFAULT_VERIFIER_EFFORT = "high"
@@ -87,7 +88,7 @@ def build_verifier_messages(log_tail: str, summary: str) -> list[dict]:
 def run_verification(summary: str):
     """Run the isolated review request; return its text or an error dict.
 
-    Follows the describe_image convention: never raises, never stops the
+    Follows the inspect_image convention: never raises, never stops the
     tool batch: failures come back as {'error': ...} so the agent knows
     verification did not happen.
     """
@@ -118,7 +119,8 @@ def run_verification(summary: str):
 
     messages = provider()
     tail_chars = load_verify_log_tail_chars()
-    log_tail = json.dumps(messages, ensure_ascii=False)[-tail_chars:]
+    serialized = redact_image_data(json.dumps(messages, ensure_ascii=False))
+    log_tail = serialized[-tail_chars:]
     try:
         with create_model_client() as client:
             response = ask_question(

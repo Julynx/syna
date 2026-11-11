@@ -842,6 +842,15 @@ def parse_and_execute_tools(
             else:
                 status = "ok"
 
+        # A tool may attach an image to the conversation (inspect_image):
+        # the reserved `image` key leaves the result text and becomes a
+        # session message, so base64 data never passes through tool
+        # output, UI events, or logs.
+        image_payload = None
+        if isinstance(output, dict) and "image" in output:
+            image_payload = output["image"]
+            output = str(output.get("note") or "")
+
         if tool_name == "think":
             think_signatures.append(signature)
             emit(
@@ -912,6 +921,7 @@ def parse_and_execute_tools(
                 "arguments": tool_arguments,
                 **({"exit_code": exit_code} if exit_code is not None else {}),
                 **({"saved_to": saved_to} if saved_to else {}),
+                **({"image": image_payload} if image_payload else {}),
             }
         )
 

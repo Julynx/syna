@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .config import get_logger, load_config, cache_control_fields, sticky_routing_fields
+from .protocol.images import redact_image_data
 
 EMPTY_RESPONSE_MAX_ATTEMPTS = 3
 DEFAULT_MAX_OUTPUT_TOKENS = 16384
@@ -48,12 +49,18 @@ def _content_text(content) -> str:
 
 
 def _write_dump(dump_path: Path | None, payload: dict) -> None:
-    """Atomically persist 'payload' to the session dump file."""
+    """Atomically persist 'payload' to the session dump file.
+
+    Image data URLs from `inspect_image` attachments are redacted to
+    size placeholders: a megabyte of base64 per image would make the
+    dump unreadable without adding diagnostic value.
+    """
     if dump_path is None:
         return
     try:
+        serialized = redact_image_data(json.dumps(payload))
         tmp_path = dump_path.parent / (dump_path.name + ".tmp")
-        tmp_path.write_text(json.dumps(payload), encoding="utf-8")
+        tmp_path.write_text(serialized, encoding="utf-8")
         os.replace(tmp_path, dump_path)
     except Exception:
         get_logger().warning(

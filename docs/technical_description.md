@@ -526,7 +526,9 @@ Token estimation and elision for context management:
 for everything else; measured against the o200k tokenizer it tracks real
 counts within about 6% on Chinese, Japanese, and Korean samples, where a
 single global ratio would underestimate CJK-heavy text by roughly 2.5x;
-deliberately no tokenizer dependency),
+deliberately no tokenizer dependency). List content (image messages from
+`inspect_image`) contributes its text parts plus the message's recorded
+`image_tokens` estimate instead of the base64 character count,
 `elide_tool_outputs`: replaces old result
 outputs that carry a `saved_to` path with a one-line pointer to the pod
 file, leaving the system message, the most recent messages, and anything
@@ -547,7 +549,19 @@ after compaction and is additionally shown to the summarizer as the
 faithfully instead of inferring the task. Compaction summaries are wrapped
 with the `COMPACTION` sentinel channel and `<harness_notice>` tags
 (`format_compaction_message`) and detected via `is_summary_message` so
-repeated compactions merge rather than duplicate.
+repeated compactions merge rather than duplicate. Image messages from
+`inspect_image` are flattened to their text note plus an
+`[image: path]` placeholder: the summarizer reads where each image came
+from without receiving its bytes.
+
+### `src/syna/protocol/images.py`
+
+The shared pieces of `inspect_image`'s history attachments:
+`image_token_cost(width, height)` estimates an attached image's token
+cost from its dimensions (about 750 pixels per token) for context
+budgeting, and `redact_image_data(text)` replaces image data URLs in
+serialized payloads with a size placeholder, keeping session dumps and
+the reviewer's log tail small.
 
 ### `src/syna/protocol/user_messages.py`
 
@@ -585,6 +599,10 @@ Tool-call parsing and execution under native OpenRouter tool calling.
   and `"status": "error"` (or `"skipped"`). Executed entries carry `"call"`
   (position), `"tool_call_id"` (matching the provider ID), `"status"`
   (`ok` / `error` / `timeout` / `skipped`), `"exit_code"`, and `"saved_to"`.
+  A dict tool return carrying the reserved `image` key (`inspect_image`)
+  moves the payload into the entry's `"image"` field and its `note` into
+  the result text, so image bytes never pass through tool output, UI
+  events, or logs.
 - Sequential execution with stop-on-first-failure: an invalid argument,
   unregistered tool, raised exception, timeout, or non-zero command exit
   marks the rest of the batch `skipped`. Every call receives a result row so
@@ -722,6 +740,15 @@ the loop, `ask_utils.py` sends the model requests, and
   `TOOL_RESULTS` channel: containing a `<result>` element with status, exit code,
   and pod path, corrective warnings, file uploads, step-budget warnings and
   interruptions as `HARNESS_NOTICE`, and compaction summaries as `COMPACTION`.
+- **Image attachments**: when a call entry carries an `image` payload
+  (`inspect_image`), `run_turn` appends one `role: "user"` message per
+  payload after the whole tool group (tool answers must stay contiguous
+  for strict providers): a `HARNESS_NOTICE` text part naming the path
+  plus an `image_url` part with the data URL. The message records
+  `image_tokens` and `image_path` for the budget estimator and the
+  compaction transcript. Attached images stay in history until
+  compaction; re-inspecting a path attaches a fresh copy, which is
+  correct when the file changed and cheap when it did not.
 - **Two-stage context management** (`context.py`): once the history reaches
   `elide_interval_messages`, and additionally whenever estimated tokens
   exceed `context_budget_tokens`, old tool outputs (those with `saved_to`)
@@ -731,7 +758,10 @@ the loop, `ask_utils.py` sends the model requests, and
   background fetch of the models list (one daemon thread per process,
   started at session creation) overrides it with half the model's real
   context window once it lands, regardless of the config value;
-  non-OpenRouter endpoints and failed fetches keep the start value.
+  non-OpenRouter endpoints and failed fetches keep the start value. The
+  same fetch captures each model's `architecture.input_modalities`,
+  which `model_accepts_images` reads for `inspect_image`'s pre-flight
+  check (only a proven text-only model blocks an attachment).
   Archived large user messages are
   elided the same way (head excerpt plus pointer to the verbatim file).
   To keep the provider prompt cache warm,
@@ -870,7 +900,9 @@ pair of every response, including retried attempts, for session-level
 accounting. Accepts an optional `accept_reply`
 validator that raises `ReplyRejected` on channel impersonation in content or
 tool call arguments. Transient empty responses are retried up to
-`EMPTY_RESPONSE_MAX_ATTEMPTS` times.
+`EMPTY_RESPONSE_MAX_ATTEMPTS` times. Request dumps redact image data
+URLs (`protocol/images.py`) so `inspect_image` attachments do not
+balloon the diagnostic files.
 
 ### `src/syna/interaction.py`
 
@@ -946,7 +978,9 @@ hardening live in `tools.py`. The browser stack has its own chapter
 The tools exposed to the model: `think` (no-op reasoning record; produces a
 `(noted)` tool result), `execute_command` (shell or argv style inside the container),
 `read_file`, `edit_file` (both proxied into the pod through temp copies),
-`web_search`, `browser`, `describe_image`, `speech_to_text` (pod audio →
+`web_search`, `browser`, `inspect_image` (attaches a pod image to the
+conversation so the model sees it directly; see `vision.py`),
+`speech_to_text` (pod audio →
 transcript, saved to /workspace/transcripts with a preview in the result;
 optional ISO-639-1 `language` hint, auto-detect when omitted),
 `text_to_speech` (pod text → speech audio in /workspace/audio),
@@ -1057,19 +1091,17 @@ image endpoint will serve.
 
 ### `src/syna/capabilities/vision.py`
 
-`describe_image(file_path, question)`: image understanding through a
-dedicated single-turn vision request. Copies the image from the pod,
-converts it to PNG downscaled into a 1024x1024 box (via `imaging.py`),
-logs the payload size (pixels and PNG bytes, so a failing vision request
-leaves data instead of a mystery), base64-encodes it into a fresh
-single-message conversation (plain-text response, no JSON mode), and
-replaces the bytes with a text placeholder carrying the description so
-images never linger in history. The request runs at `medium` reasoning
-effort on OpenRouter: without it the provider default there is maximum,
-which burns the completion budget on hidden reasoning and can return no
-content at all. Other endpoints omit the field (same gate as
-`THINKING_EFFORT`), since the OpenRouter-style `reasoning` object is
-forwarded verbatim to custom `BASE_URL`s and strict endpoints reject it.
+`inspect_image(file_path)`: attaches an image to the current session's
+history so the model looks at it itself in its next reply (there is no
+separate vision request). Copies the image from the pod, converts it to
+PNG downscaled into a 1024x1024 box (via `imaging.py`), base64-encodes
+it, and returns a `note` for the tool result plus an `image` payload
+(path, dimensions, data URL, estimated token cost); `parse.py` extracts
+the payload and `session.py` appends it as a user message after the
+tool group. Before touching the pod, `model_accepts_images` (session.py)
+blocks the call with an `{'error': ...}` dict when the fetched models
+list proves the model is text-only; unknown support (fetch pending,
+failed, or non-OpenRouter) proceeds optimistically.
 
 ### `src/syna/capabilities/image_generation.py`
 
@@ -1100,7 +1132,7 @@ the tool call and its result. The conversation snapshot arrives through
 a thread-local provider (`set_conversation_log_provider` /
 `current_conversation_log_provider`), propagated into tool worker
 threads by `parse.py` like the container binding; failures follow the
-`describe_image` convention: an `{'error': ...}` dict, never a raise.
+`inspect_image` convention: an `{'error': ...}` dict, never a raise.
 
 ### `src/syna/capabilities/processes.py`
 
@@ -1420,7 +1452,7 @@ dispatches commands (`visit`, `click`, `type`, ...) by numeric element ref.
 `screenshot_bytes()` captures the current viewport as PNG
 (`Browser.screenshot` is its sync wrapper); `tools.py` copies the bytes into
 `/workspace/screenshots/` in the pod (unique per-call filenames) so
-`describe_image` and `share_file` can use them. Browser-side screenshot
+`inspect_image` and `share_file` can use them. Browser-side screenshot
 failures follow the same 'ERROR:' result convention as the other commands;
 pod-side copy failures propagate.
 

@@ -94,7 +94,7 @@ A deliverable is any file you share, along with the scripts and data files that 
 
 - Data in deliverables must trace back to tool output saved during this task, never to memory or to values retyped from earlier in the conversation, which introduces copy errors.
 - **Structured data** (tables, lists, datasets, charts, anything more than a handful of facts): never type the values yourself. Build mechanically: saved source file (a `saved_to` file, or a download) → script that parses it → deliverable. Page tables from `browser` (`visit`/`read`) arrive one line per row with cells separated by ` | `, so a script over the saved output can rebuild them reliably.
-- Text extraction and file checks can verify content, not appearance, so layout problems (cut-off tables, mismatched labels, overlaps) show up only when you look at the rendered result. For deliverables with a visual dimension, such as PDFs, slides, or charts, convert them to images if they aren't already, then check them with "describe_image", asking about visual inconsistencies. For multi-page documents, cover a small sample of the most complex pages or slides. If you couldn't inspect something, say so in your report rather than counting it as verified.
+- Text extraction and file checks can verify content, not appearance, so layout problems (cut-off tables, mismatched labels, overlaps) show up only when you look at the rendered result. For deliverables with a visual dimension, such as PDFs, slides, or charts, convert them to images if they aren't already, then inspect them with `inspect_image` and check for visual inconsistencies. For multi-page documents, cover a small sample of the most complex pages or slides. If you couldn't inspect something, say so in your report rather than counting it as verified.
 
 ## Environment
 
@@ -109,7 +109,7 @@ A deliverable is any file you share, along with the scripts and data files that 
 - In a pipeline, the reported exit code is the last command's; prefix with `set -o pipefail` when the failure point of the pipe matters.
 - For Python, use `python3` (there may be no `python`). If `pip install` fails with "externally-managed-environment", use a virtualenv (`python3 -m venv /workspace/.venv`).
 - You have root access and internet access. If nothing in the pod can do what a task needs, install a well-regarded, actively maintained tool or library that can do the job, from an official source. Install and use external tools responsibly (see "Protecting the user").
-  - Example: no PDF renderer is preinstalled (`pdftoppm`, LibreOffice: absent), but `pip install pymupdf` renders PDF pages to PNG with no system dependencies, which is how you feed pages to `describe_image`.
+  - Example: no PDF renderer is preinstalled (`pdftoppm`, LibreOffice: absent), but `pip install pymupdf` renders PDF pages to PNG with no system dependencies, which is how you feed pages to `inspect_image`.
 
 ## Finishing
 

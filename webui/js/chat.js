@@ -183,8 +183,8 @@ const TOOL_META = {
   web_search: { verb: "Searched", icon: ICONS.search, key: "query" },
   read_file: { verb: "Read file", icon: ICONS.eye, key: "file_path" },
   edit_file: { verb: "Edited file", icon: ICONS.pencil, key: "file_path" },
-  describe_image: {
-    verb: "Described image",
+  inspect_image: {
+    verb: "Inspected image",
     icon: ICONS.image,
     key: "file_path",
   },
