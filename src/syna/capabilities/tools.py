@@ -323,7 +323,7 @@ def _capture_screenshot(screenshot_fn, browser, args: dict) -> str:
 
 def browser(command: str, args: dict[str, Any]):
     """
-    Visit a page or control a persistent browser that runs JavaScript; the current page, cookies, and logins persist between calls. Use `visit` to open and read a page (cookie banners are dismissed and lazy-loaded content is triggered automatically); add `read`, `click`, `type`, and the other commands when a page needs interaction. Use `execute_command` (`curl`, `wget`) to download files and call APIs. The browser runs outside the pod; it does not have access to the pod's filesystem, and access to “localhost” is intentionally blocked.
+    A persistent browser that runs JavaScript; the current page, cookies, and logins persist between calls. Use `visit` to navigate to a page and read it, and the other commands when a page needs interaction. Limitations: The browser runs outside the pod: it does not have access to the pod's filesystem, and localhost is intentionally blocked. To download files and call APIs, use `execute_command` (`curl`, `wget`) instead of this tool. For localhost development, install and use a scriptable browser via `execute_command` instead of using this tool.
 
     - `command` (string, required): browser command to run; see the list below.
     - `args` (object, required): parameters for that command; see the list below.
