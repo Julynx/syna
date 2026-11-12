@@ -85,6 +85,7 @@ from .protocol.channel import harness_notice, unwrap_channel, wrap_channel
 from .state import (
     create_container,
     destroy_container,
+    friendly_engine_error,
     register_container,
     unregister_container,
 )
@@ -615,7 +616,12 @@ class SessionRecord:
         except Exception as exc:
             logger.exception("Container creation failed for session %s", self.client_id)
             self.container_starting = False
-            self.push({"type": "error", "text": f"Could not start container: {exc}"})
+            self.push(
+                {
+                    "type": "error",
+                    "text": f"Could not start container: {friendly_engine_error(exc)}",
+                }
+            )
             return
         register_container(self.container)
         registry = processes.registry_for(self.container)

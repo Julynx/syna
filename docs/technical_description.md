@@ -431,6 +431,27 @@ Global Docker client plus per-thread container registry and per-call context.
   during setup instead of at the first tool call. Only bollard's wire
   logger (`bollard.wire`) is quieted; operational bollard messages stay
   visible in the syna log.
+- Windows engine bring-up self-heals the stale forwarding sockets
+  (`containers/podman#29971`): rebooting with the Podman machine running
+  leaks its zero-byte API socket under `<temp>/podman/`, and every later
+  forwarder start dies binding it, leaving the machine running with no
+  API endpoint. Both `ensure_engine_ready()` and `init_docker_client()`
+  clear those sockets first (`_heal_stale_engine_sockets()`; the heal
+  runs outside the init lock so a slow process probe never delays a
+  concurrent bring-up), but only when no engine pipe is reachable
+  (pipe candidates are mirrored from `bollard.const`) and the
+  forwarder's PIDs can be determined. A `win-sshproxy` found with no
+  reachable pipe is an orphan holding the socket: it is stopped with
+  `taskkill` first (`_stop_zombie_forwarder()`), then the sockets are
+  removed. An undeterminable forwarder state stands the cleanup down —
+  it never deletes a socket whose owner it cannot identify.
+- `friendly_engine_error()` reorders bollard's endpoint-discovery error
+  for the user: the actionable detail (what the last bring-up attempt
+  said) leads, and the generic virtualization advice — rarely the cause
+  on WSL setups, where the machine runs but the forwarder does not — is
+  dropped. Used by the server's container-start failure push and the
+  setup wizard's sanity check; messages without bollard's shape pass
+  through unchanged.
 - `init_docker_client` is serialized with a lock: concurrent sessions wait
   for one in-flight bring-up instead of racing it, and a failed
   constructor rolls the init state back so the next call retries instead
