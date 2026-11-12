@@ -15,6 +15,7 @@ def main():
     quote = chr(34)
     assert quote in prompt, "system prompt lost its quote characters entirely"
     assert "\n" in prompt, "system prompt lost its real newlines"
+    assert "{{" not in prompt, "system prompt has unfilled placeholders"
 
     # Roundtrip through the request's JSON serialization: if any escaping
     # layer mangled the prompt before the SDK, this would not match.

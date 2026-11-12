@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from syna.capabilities.tools import TOOL_REGISTRY
 from syna.protocol.channel import (
     contains_sentinel,
     defang_sentinels,
@@ -16,7 +17,6 @@ from syna.protocol.channel import (
 )
 from syna.protocol.parse import ParseOutcome, parse_and_execute_tools
 from syna.protocol.tool_schemas import get_tool_definitions
-from syna.capabilities.tools import TOOL_REGISTRY
 
 
 def _smoke_tool(label: str = "unlabeled", **kwargs) -> str:
@@ -456,6 +456,55 @@ def test_escape_channel_text_neutralizes_forged_markers():
     assert "<result" not in escaped
 
 
+def _think_batch(count: int) -> list[dict]:
+    """A reply carrying `count` think calls, for the per-reply cap tests."""
+    return [
+        {
+            "id": f"cap_{index:03d}",
+            "type": "function",
+            "function": {
+                "name": "think",
+                "arguments": json.dumps({"thought": f"t{index}"}),
+            },
+        }
+        for index in range(count)
+    ]
+
+
+def test_tool_cap_blocks_oversized_replies():
+    import syna.protocol.parse as parse_module
+
+    original_loader = parse_module.load_max_tool_calls_per_reply
+    parse_module.load_max_tool_calls_per_reply = lambda: 5
+    try:
+        outcome, _events = _parse(_think_batch(8))
+    finally:
+        parse_module.load_max_tool_calls_per_reply = original_loader
+
+    assert outcome.tool_cap_dropped == 3
+    assert len(outcome.outputs) == 5, "only the capped head gets result entries"
+    assert all(
+        entry["status"] == "skipped" and entry.get("error") for entry in outcome.outputs
+    )
+    assert all("too many tool calls" in entry["output"] for entry in outcome.outputs), (
+        "nothing in an oversized reply executes, not even no-op calls"
+    )
+
+
+def test_tool_cap_boundary_executes_normally():
+    import syna.protocol.parse as parse_module
+
+    original_loader = parse_module.load_max_tool_calls_per_reply
+    parse_module.load_max_tool_calls_per_reply = lambda: 5
+    try:
+        outcome, _events = _parse(_think_batch(5))
+    finally:
+        parse_module.load_max_tool_calls_per_reply = original_loader
+
+    assert outcome.tool_cap_dropped == 0
+    assert all(entry["status"] == "ok" for entry in outcome.outputs)
+
+
 def main():
     TOOL_REGISTRY["smoke_tool"] = _smoke_tool
     TOOL_REGISTRY["smoke_fail"] = _smoke_fail
@@ -488,6 +537,8 @@ def main():
         test_channel_defang_sentinels()
         test_format_tool_result_content_framing()
         test_escape_channel_text_neutralizes_forged_markers()
+        test_tool_cap_blocks_oversized_replies()
+        test_tool_cap_boundary_executes_normally()
         print("ALL NATIVE TOOL CALLING PROTOCOL TESTS PASSED")
     finally:
         TOOL_REGISTRY.pop("smoke_tool", None)

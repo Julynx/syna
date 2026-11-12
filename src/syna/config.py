@@ -16,6 +16,10 @@ from .paths import asset_path, get_data_home, read_asset_text
 
 DEFAULT_COMMAND_TIMEOUT_S = 50
 DEFAULT_TOOL_CALL_TIMEOUT_S = 60
+# Per-reply tool-call cap: beyond it nothing in the reply executes.
+# Legitimate batches are small; a reply past the cap is almost always a
+# degeneration loop, and a full one burns the whole output budget.
+DEFAULT_MAX_TOOL_CALLS_PER_REPLY = 20
 DEFAULT_OUTPUT_LIMIT_CHARS = 40000
 
 # Timeout budgets for the browser-backed capabilities (web search and
@@ -292,6 +296,18 @@ def load_tool_call_timeout_s() -> float:
     """
     return _apply_timeout_scale(
         load_config().get("tool_call_timeout_s", DEFAULT_TOOL_CALL_TIMEOUT_S)
+    )
+
+
+def load_max_tool_calls_per_reply() -> int:
+    """Return the per-reply tool-call cap from the configuration.
+
+    Replies beyond the cap execute nothing: legitimate batches are
+    small, so an oversized reply is almost always a degeneration loop,
+    and skipping it whole keeps one bad reply from flooding the history.
+    """
+    return int(
+        load_config().get("max_tool_calls_per_reply", DEFAULT_MAX_TOOL_CALLS_PER_REPLY)
     )
 
 

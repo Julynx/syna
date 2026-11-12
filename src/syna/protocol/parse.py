@@ -26,15 +26,29 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+from ..capabilities.browser import browser_deadline_s
+from ..capabilities.processes import wait_for_deadline_s
+from ..capabilities.tools import (
+    COMMAND_TIMEOUT_EXIT_CODES,
+    TOOL_REGISTRY,
+    command_runtime_limit_s,
+)
+from ..capabilities.verification import (
+    REVIEW_TOOL_NAME,
+    current_conversation_log_provider,
+    pop_conversation_log_provider,
+    set_conversation_log_provider,
+)
+from ..capabilities.web_search import search_deadline_s
 from ..config import (
     get_logger,
     load_max_cancel_wait_s,
+    load_max_tool_calls_per_reply,
     load_output_limit_chars,
     load_tool_call_timeout_s,
 )
 from ..interaction import get_responder, register_responder, unregister_responder
 from ..pod_io import pod_copy_to, pod_exec
-from .output import bounded_output
 from ..state import (
     ToolCancelled,
     get_background_allegro,
@@ -53,24 +67,14 @@ from ..state import (
     set_last_exit_code,
     unregister_container,
 )
-from ..capabilities.tools import (
-    COMMAND_TIMEOUT_EXIT_CODES,
-    TOOL_REGISTRY,
-    command_runtime_limit_s,
-)
-from ..capabilities.browser import browser_deadline_s
-from ..capabilities.processes import wait_for_deadline_s
-from ..capabilities.web_search import search_deadline_s
-from ..capabilities.verification import (
-    REVIEW_TOOL_NAME,
-    current_conversation_log_provider,
-    pop_conversation_log_provider,
-    set_conversation_log_provider,
-)
+from .output import bounded_output
 
 TIMEOUT_EXIT_CODES = COMMAND_TIMEOUT_EXIT_CODES
 TOOLS_PERSISTED_IN_POD = {"execute_command"}
 SKIPPED_CALL_NOTICE = "Skipped: an earlier call in this reply failed."
+TOOL_CAP_SKIP_NOTICE = (
+    "Skipped: the reply held too many tool calls, so nothing in it ran."
+)
 
 
 @dataclass(frozen=True)
@@ -82,12 +86,15 @@ class ParseOutcome:
     skipped calls; entries for calls that failed or were skipped carry "error": True.
     'warnings' lists protocol notices surfaced to the model.
     'think_signatures' lists the signature of every think call in the batch.
+    'tool_cap_dropped' counts the calls dropped by the per-reply cap; when
+    non-zero, nothing in the reply executed.
     """
 
     structural_error: str | None
     outputs: list[dict]
     warnings: list[str]
     think_signatures: list[str] = field(default_factory=list)
+    tool_cap_dropped: int = 0
 
 
 def _tool_signatures() -> dict[str, dict]:
@@ -606,6 +613,14 @@ def parse_and_execute_tools(
     outputs: list[dict] = []
     think_signatures: list[str] = []
     failure_occurred = False
+    skip_notice = SKIPPED_CALL_NOTICE
+    cap_dropped = 0
+    call_cap = load_max_tool_calls_per_reply()
+    if len(tool_calls) > call_cap:
+        cap_dropped = len(tool_calls) - call_cap
+        tool_calls = tool_calls[:call_cap]
+        failure_occurred = True
+        skip_notice = TOOL_CAP_SKIP_NOTICE
 
     def emit(
         status, name, call_signature, output=None, raw="", arguments=None, **extra
@@ -643,7 +658,7 @@ def parse_and_execute_tools(
                 "skipped",
                 tool_name,
                 signature,
-                output=SKIPPED_CALL_NOTICE,
+                output=skip_notice,
                 raw=raw_json,
                 arguments=tool_arguments,
                 tool_call_id=call_id,
@@ -654,7 +669,7 @@ def parse_and_execute_tools(
                     "tool_call_id": call_id,
                     "name": tool_name,
                     "signature": signature,
-                    "output": SKIPPED_CALL_NOTICE,
+                    "output": skip_notice,
                     "status": "skipped",
                     "error": True,
                     "raw": raw_json[:6000],
@@ -925,7 +940,7 @@ def parse_and_execute_tools(
             }
         )
 
-    return ParseOutcome(None, outputs, [], think_signatures)
+    return ParseOutcome(None, outputs, [], think_signatures, cap_dropped)
 
 
 parse_and_execute_reply = parse_and_execute_tools

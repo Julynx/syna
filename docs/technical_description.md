@@ -183,6 +183,7 @@ from the canonical constants in `config.py`.
 | `retry`                             | Backoff strategy for model requests.                                                                                                                                                                                                                                          |
 | `max_command_output_chars`          | Character limit at which tool output is cut to its beginning and end (the system prompt's `{{OUTPUT_LIMIT}}`). The full output always remains available at the `saved_to` path.                                                                                               |
 | `tool_call_timeout_s`               | Per-tool-call deadline (default 60). At the deadline the harness asks the call to stop through its cancel event and waits `max_cancel_wait_s` for it to exit; a call that ignores the stop is detached with a hung-call notice. See `parse.py`.                                                                                                |
+| `max_tool_calls_per_reply`          | Per-reply tool-call cap (default 20, mirrored to the model in the system prompt's batching rule). A reply over the cap executes nothing: the kept calls are skipped with a corrective notice and the excess calls are dropped from history, so one degenerate reply cannot flood the context with result junk. See `parse.py` and `session.py`. |
 | `web_search_timeout_s`              | Budget for one web search's engine chain (default 60, not Allegro-scaled). Enforced cooperatively: each navigation's timeout is capped by what remains of the budget, so expiry stops the chain within that navigation.                                                                                                                       |
 | `browser_doh_uri`                   | The stealth browser's DNS-over-HTTPS resolver (default `https://dns10.quad9.net/dns-query`, Quad9's unfiltered endpoint; empty disables): encrypted DNS is immune to resolver-level poisoning, and Firefox reads HTTPS DNS records through it, so navigation upgrades to HTTP/3 where the site offers it (bypassing networks that reset TCP TLS by SNI) and ECH configs apply where published. `browser_doh_bootstrap` (default `9.9.9.10`) resolves the resolver's own hostname so a poisoning middlebox cannot redirect the DoH connection. TRR mode 2 falls back to native DNS when the resolver is unreachable. |
 | `browser_launch_timeout_s`          | Budget for waiting on a stealth browser's cold start, the search browser and the tool browser alike (default 120, not Allegro-scaled): a cold start is startup, not tool work. The constructor runs in a helper thread, so an expired budget abandons the wait, not the launch; the helper keeps starting the browser for the next call.                                                                                                                  |
@@ -239,8 +240,8 @@ example a recalibrated `max_history_messages`) must be applied by hand to
 `~/.syna/config.json` (repo root in a checkout).
 
 Static assets are bundled in `src/syna/assets/`: `prompt.md` (system prompt template
-with the `{{CURRENT_DATE}}`, `{{COMMAND_TIMEOUT}}` and `{{OUTPUT_LIMIT}}`
-placeholders filled at build time; tool documentation is not duplicated
+with the `{{CURRENT_DATE}}`, `{{COMMAND_TIMEOUT}}`, `{{OUTPUT_LIMIT}}` and
+`{{MAX_TOOL_CALLS}}` placeholders filled at build time; tool documentation is not duplicated
 into the prompt; the request's tool schemas carry it), `verifier_prompt.md` (system prompt for the isolated
 `review_work` reviewer), `compaction_prompt.md`, `chat.html` and `setup.html`
 (web UIs), and `vendor/` (markdown-it, KaTeX, fonts, icons, logo).
@@ -616,7 +617,7 @@ Tool-call parsing and execution under native OpenRouter tool calling.
   GLM Flash): it only fires on an already-failing payload, logs when it
   repairs, and unrepairable errors quote the raw arguments around the
   failure position so self-correction is one-shot.
-- `ParseOutcome(structural_error, outputs, warnings, think_signatures)`: returns
+- `ParseOutcome(structural_error, outputs, warnings, think_signatures, tool_cap_dropped)`: returns
   `outputs` carrying one entry per processed call in reply order, including
   skipped calls; entries for calls that never reached dispatch carry `"error": True`
   and `"status": "error"` (or `"skipped"`). Executed entries carry `"call"`
@@ -625,7 +626,10 @@ Tool-call parsing and execution under native OpenRouter tool calling.
   A dict tool return carrying the reserved `image` key (`inspect_image`)
   moves the payload into the entry's `"image"` field and its `note` into
   the result text, so image bytes never pass through tool output, UI
-  events, or logs.
+  events, or logs. A reply with more calls than `max_tool_calls_per_reply`
+  executes nothing: the list is truncated to the cap, every kept call is
+  skipped with the cap notice, and `tool_cap_dropped` reports how many
+  calls were cut, so the session can drop them from history.
 - Sequential execution with stop-on-first-failure: an invalid argument,
   unregistered tool, raised exception, timeout, or non-zero command exit
   marks the rest of the batch `skipped`. Every call receives a result row so
@@ -750,7 +754,16 @@ the loop, `ask_utils.py` sends the model requests, and
   The moment a subsequent reply successfully executes a tool call (or finishes),
   all preceding consecutive failed attempts and notices are spliced out of
   `self.messages`, preventing the model from replicating its mistakes without
-  leaving dangling tool call IDs.
+  leaving dangling tool call IDs. Compaction never summarizes this pending
+  junk: `_select_compactable` excludes it by identity, so a failure flood
+  that trips the message-count trigger is dropped from history without
+  reaching the summarizer, and the purge list survives compaction.
+- **Per-reply tool-call cap**: a reply with more calls than
+  `max_tool_calls_per_reply` executes nothing (parse.py truncates and
+  skip-marks the kept calls); run_turn then drops the excess calls from
+  the history copy of the reply and sends a cap-specific corrective
+  notice, with an extra line when the reply was cut off at the output
+  token cap (the `_capped` flag from ask_utils).
 - **Closed tool-call groups**: providers reject requests containing assistant
   tool_calls without matching results, so `_close_tool_call_group` answers
   any call left hanging by an abnormal exit: user interruption mid-batch,
@@ -912,7 +925,12 @@ carries `max_tokens` from the `max_output_tokens` config value (default
 16384), so reasoning models cannot starve the visible reply of the
 provider's default completion budget; `finish_reason` and the
 prompt/completion/reasoning/cached token split are logged for every
-response. When a `session_id` is given, the request-body routing fields
+response. A reply that hit the output cap (`finish_reason` = "length",
+or completion tokens at `max_tokens`: providers do not reliably report
+"length" for truncated tool-call batches) is marked with an internal
+`_capped` flag so the session can warn the model explicitly; the
+request-message allowlist keeps the flag off the wire.
+When a `session_id` is given, the request-body routing fields
 are chosen per endpoint family by `sticky_routing_fields` (session_id on
 OpenRouter, prompt_cache_key on OpenAI, nothing on other custom
 endpoints), so provider-side prompt caches stay warm where the endpoint

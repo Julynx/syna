@@ -7,14 +7,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from syna.capabilities.tools import TOOL_REGISTRY
+from syna.conversation.session import AgentSession
 from syna.protocol.channel import is_channel_message, unwrap_channel
 from syna.protocol.compaction import (
     extract_summary_text,
     format_compaction_message,
     is_summary_message,
 )
-from syna.conversation.session import AgentSession
-from syna.capabilities.tools import TOOL_REGISTRY
 
 
 class FakeMessage:
@@ -88,6 +88,26 @@ REPLY_BAD_SHAPE = FakeMessage(
         }
     ]
 )
+
+
+def _make_oversized_reply(count: int) -> FakeMessage:
+    """A reply carrying `count` think calls, for the per-reply cap tests."""
+    return FakeMessage(
+        content=None,
+        tool_calls=[
+            {
+                "id": f"cap_{index:03d}",
+                "type": "function",
+                "function": {
+                    "name": "think",
+                    "arguments": json.dumps({"thought": f"t{index}"}),
+                },
+            }
+            for index in range(count)
+        ],
+    )
+
+
 REPLY_UNREGISTERED_TOOL = _make_tool_call("unregistered_tool", {"arg": "val"})
 REPLY_MISSING_ARG = _make_tool_call("web_search", {})
 REPLY_FAILING_TOOL = _make_tool_call("smoke_fail", {})
@@ -401,6 +421,91 @@ def test_compaction_notice_wording_and_extraction():
     assert "kept in full" in notice
     assert extract_summary_text(notice) == "SUMMARY TEXT"
     print("PASS compaction notice wording stays extractable")
+
+
+def test_tool_cap_reply_executes_nothing_and_is_wiped():
+    import syna.protocol.parse as parse_module
+
+    original_loader = parse_module.load_max_tool_calls_per_reply
+    parse_module.load_max_tool_calls_per_reply = lambda: 3
+    try:
+        session = _make_session()
+        session.client = FakeChat([_make_oversized_reply(6), REPLY_VALID, REPLY_FINAL])
+        session.run_turn("probe")
+    finally:
+        parse_module.load_max_tool_calls_per_reply = original_loader
+
+    assert not any("cap_" in str(m.get("tool_calls", "")) for m in session.messages), (
+        "the oversized reply is wiped from history after recovery"
+    )
+    assert not any(
+        "too many tool calls" in str(m.get("content", "")) for m in session.messages
+    ), "the corrective notice is wiped with it"
+    roles = [m["role"] for m in session.messages]
+    assert roles == ["system", "user", "assistant", "tool", "assistant"]
+
+    second_request = session.client.requests[1]
+    oversized = [
+        m
+        for m in second_request["messages"]
+        if m.get("role") == "assistant"
+        and m.get("tool_calls")
+        and str(m["tool_calls"][0].get("id", "")).startswith("cap_")
+    ]
+    assert len(oversized) == 1 and len(oversized[0]["tool_calls"]) == 3, (
+        "the excess calls are dropped from history, not just from execution"
+    )
+    print("PASS oversized replies execute nothing and are wiped on recovery")
+
+
+def test_compaction_excludes_pending_failures():
+    session = _make_session()
+    session.compaction_enabled = True
+    session.max_history_messages = 4
+
+    failed_assistant = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "junk1",
+                "type": "function",
+                "function": {"name": "edit_file", "arguments": "{JUNK_MARKER}"},
+            }
+        ],
+    }
+    failed_tool = {
+        "role": "tool",
+        "tool_call_id": "junk1",
+        "content": 'SYNA:TOOL_RESULTS\n<result status="skipped">JUNK_SKIP</result>',
+    }
+    notice = {
+        "role": "user",
+        "content": "SYNA:HARNESS_NOTICE\n<harness_notice>corrective</harness_notice>",
+    }
+    session.messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "user request"},
+        {"role": "assistant", "content": "earlier good work"},
+        failed_assistant,
+        failed_tool,
+        notice,
+    ]
+    session._pending_failed_messages.extend([failed_assistant, failed_tool, notice])
+
+    session.client = FakeChat(["summary of the good work"])
+    session._compact_history_if_needed()
+
+    compaction_request = session.client.requests[0]["messages"][1]["content"]
+    assert "JUNK_MARKER" not in compaction_request
+    assert "JUNK_SKIP" not in compaction_request
+    assert "earlier good work" in compaction_request
+    assert session._pending_failed_messages, "compaction must not orphan the purge list"
+    session._purge_pending_failures()
+    assert not any(
+        "corrective" in str(m.get("content", "")) for m in session.messages
+    ), "the surviving notice is still purgeable after compaction"
+    print("PASS compaction leaves pending failures out of the summary input")
 
 
 def test_web_signature_violation_becomes_failed_row():
@@ -770,6 +875,8 @@ def main():
         test_compaction_pins_first_non_channel_user_message()
         test_tail_atomic_slice_shapes()
         test_compaction_notice_wording_and_extraction()
+        test_tool_cap_reply_executes_nothing_and_is_wiped()
+        test_compaction_excludes_pending_failures()
         test_web_signature_violation_becomes_failed_row()
         test_web_events_carry_raw_and_arguments()
         test_session_tool_results_use_protocol_markers()

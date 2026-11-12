@@ -226,6 +226,20 @@ def ask_question(
                 }
                 if formatted_tool_calls:
                     msg["tool_calls"] = formatted_tool_calls
+                finish_reason = response.choices[0].finish_reason
+                completion_tokens = getattr(
+                    getattr(response, "usage", None), "completion_tokens", None
+                )
+                if finish_reason == "length" or (
+                    isinstance(completion_tokens, int)
+                    and completion_tokens >= request["max_tokens"]
+                ):
+                    # Harness bookkeeping: the reply was cut off mid-stream.
+                    # Providers do not reliably report finish_reason="length"
+                    # for truncated tool-call batches (OpenRouter still says
+                    # "tool_calls"), so the token count is the fallback signal.
+                    # The wire allowlist keeps this key off the provider.
+                    msg["_capped"] = True
 
                 messages.append(msg)
                 # Keep the wire copy in step so the post-response dump

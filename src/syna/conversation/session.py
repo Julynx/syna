@@ -27,6 +27,7 @@ from ..config import (
     load_elide_keep_chars,
     load_elide_min_chars,
     load_elide_user_message_head_chars,
+    load_max_tool_calls_per_reply,
     load_output_limit_chars,
     load_user_message_archive_min_chars,
     normalize_base_url,
@@ -161,6 +162,23 @@ def build_unparsed_tool_warning(reasons: list[str] | None = None) -> str:
     return warning
 
 
+def build_tool_cap_warning(total: int, cap: int) -> str:
+    """Compose the corrective warning for a reply over the tool-call cap."""
+    return (
+        f"Your reply contained {total} tool calls; at most {cap} may run"
+        " per reply, so nothing was executed. Split the work into smaller"
+        " batches, one reply at a time."
+    )
+
+
+def build_capped_reply_notice() -> str:
+    """The corrective line for a reply cut off by the output-token limit."""
+    return (
+        "Your previous reply reached the output-token limit and was cut off."
+        " Send fewer or smaller tool calls per reply."
+    )
+
+
 def build_sentinel_violation_warning() -> str:
     """Compose the corrective warning for channel impersonation attempts."""
     return (
@@ -206,6 +224,7 @@ def build_prompt(allegro: bool = False):
     prompt = prompt.replace("{{CURRENT_DATE}}", date.today().isoformat())
     prompt = prompt.replace("{{COMMAND_TIMEOUT}}", str(command_timeout_s))
     prompt = prompt.replace("{{OUTPUT_LIMIT}}", str(load_output_limit_chars()))
+    prompt = prompt.replace("{{MAX_TOOL_CALLS}}", str(load_max_tool_calls_per_reply()))
     if shared_dir_entries():
         prompt = prompt.replace("{{POD_SHARED_PATH}}", POD_SHARED_DIR)
     else:
@@ -1005,17 +1024,23 @@ class AgentSession:
         return None
 
     def _purge_pending_failures(self):
-        """Splice out consecutive failed attempts and their notices from history."""
+        """Splice out consecutive failed attempts and their notices from history.
+
+        Messages compaction already removed are no-ops: the splice filters
+        by identity, so only members still present are counted and cut.
+        """
         if not self._pending_failed_messages:
             return
-        purged_count = len(self._pending_failed_messages)
         failed_ids = {id(msg) for msg in self._pending_failed_messages}
+        before = len(self.messages)
         self.messages[:] = [msg for msg in self.messages if id(msg) not in failed_ids]
+        purged_count = before - len(self.messages)
         self._pending_failed_messages.clear()
-        get_logger().info(
-            "Purged %d malformed attempt messages from history after successful tool call",
-            purged_count,
-        )
+        if purged_count:
+            get_logger().info(
+                "Purged %d malformed attempt messages from history after successful tool call",
+                purged_count,
+            )
 
     CANCELLED_CALL_NOTICE = (
         "Skipped: the user interrupted the task before this call ran."
@@ -1172,6 +1197,10 @@ class AgentSession:
                 return
 
             tool_calls = response_msg.get("tool_calls")
+            if response_msg.get("_capped"):
+                logger.warning(
+                    "Reply reached the output-token cap; it was cut off mid-stream"
+                )
             if not tool_calls:
                 content = response_msg.get("content") or ""
                 self._purge_pending_failures()
@@ -1202,6 +1231,15 @@ class AgentSession:
                 return
             finally:
                 pop_conversation_log_provider()
+
+            if outcome.tool_cap_dropped:
+                del response_msg["tool_calls"][len(outcome.outputs) :]
+                logger.warning(
+                    "Reply carried %d tool calls; the cap is %d, so nothing ran"
+                    " and the excess was dropped from history",
+                    len(outcome.outputs) + outcome.tool_cap_dropped,
+                    load_max_tool_calls_per_reply(),
+                )
 
             tool_messages: list[dict] = []
             for entry in outcome.outputs:
@@ -1243,11 +1281,20 @@ class AgentSession:
                 if no_tool_streak >= MAX_NO_TOOL_RETRIES:
                     self._abort_turn(logger)
                     return
+                if outcome.tool_cap_dropped:
+                    warning = build_tool_cap_warning(
+                        len(outcome.outputs) + outcome.tool_cap_dropped,
+                        load_max_tool_calls_per_reply(),
+                    )
+                else:
+                    warning = build_unparsed_tool_warning(
+                        [result["output"] for result in never_ran]
+                    )
+                if response_msg.get("_capped"):
+                    warning += "\n\n" + build_capped_reply_notice()
                 self._append_corrective_warning(
                     json.dumps(tool_calls),
-                    build_unparsed_tool_warning(
-                        [result["output"] for result in never_ran]
-                    ),
+                    warning,
                     "No executable tool call detected, retrying...",
                 )
                 continue
@@ -1469,7 +1516,6 @@ class AgentSession:
             summary_message,
             *tail_group,
         ]
-        self._pending_failed_messages.clear()
         self._mark_compacted_rewind_points()
         self._emit({"type": "compaction", "summary": summary})
         logger.info(
@@ -1479,14 +1525,22 @@ class AgentSession:
         )
 
     def _select_compactable(self, history: list[dict]) -> list[dict]:
-        """Return the history slice eligible for compaction."""
+        """Return the history slice eligible for compaction.
+
+        Messages awaiting the failure purge (a rejected batch and its
+        notices) are excluded: they carry no information worth
+        summarizing, and the retry that follows still needs them verbatim
+        until the purge splices them out. The corrective notice itself
+        survives in the kept tail group.
+        """
         first_user_idx = self._first_user_index(history)
         tail_group = self._tail_atomic_slice(history)
         cutoff = len(history) - len(tail_group)
+        pending_ids = {id(message) for message in self._pending_failed_messages}
         return [
             message
             for index, message in enumerate(history[:cutoff])
-            if index != first_user_idx
+            if index != first_user_idx and id(message) not in pending_ids
         ]
 
     @staticmethod
