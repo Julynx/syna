@@ -160,7 +160,7 @@ def _command_timeout_notice(exit_code: int, timeout_s: int) -> str:
 
 def think(thought: str):
     """
-    Record reasoning in the conversation. It does not affect the pod.
+    Record reasoning in the conversation.
 
     Your private reasoning may not carry over between turns, but `think` entries stay visible for the rest of the task. Use it for things you will need later: a plan for multi-step work, a conclusion from a surprising or failed result, or a check of your claims against the evidence before your final answer.
 
@@ -177,9 +177,8 @@ def execute_command(command: str, arguments: list[str] | None = None):
     - `command` (string, required): a full bash command line. Pipes, redirection, `&&`, and quoting work.
     - `arguments` (list of strings, optional): if present, `command` must be a bare executable name, and these are its arguments, passed without shell processing. Useful when quoting gets awkward.
 
-    One call's runtime is capped (a killed call reports the exact limit); a failed or timed-out call skips the remaining calls of the same reply, so run calls that may approach the cap alone.
-
     To create a file, use a quoted heredoc so the shell expands nothing: `cat > /workspace/report/build.py <<'EOF'` … `EOF`.
+    Limitations: The call blocks until the command completes or times out. Long-running commands get killed; prefer the `process` tool for those cases.
 
     Example: execute_command(command="cd /workspace/app && python3 -m pytest -q 2>&1 | tail -n 30")
     """
@@ -262,7 +261,7 @@ def _reader_script(output_path: str, exit_path: str) -> str:
 
 def web_search(query: str):
     """
-    Search the web. Returns the top 10 results with title, description, and URL. Snippets can be outdated or out of context: visit the page before relying on a claim. To open a page, use the `browser` tool with command `visit`.
+    Search the web. Returns the top 10 results with title, description, and URL. Snippets can be outdated or out of context: visit the page before relying on a claim. To open a page, use the `browser` tool with the `visit` command.
 
     - `query` (string, required): what to search for.
 
@@ -417,15 +416,15 @@ def read_file(file_path: str, start: int = 1, limit: int = 200):
 
 def edit_file(file_path: str, operations: list[dict]):
     """
-    Edit a text file by line number or by exact string match. Prefer this to `sed` or rewriting the whole file.
+    Edit a text file by line number or by exact string match. Prefer this to `sed` and to rewriting the whole file.
     - `file_path` (string, required): absolute path.
-    - `operations` (list, required): one or more of
-      - `{"insert_above": {"line_num": 3, "insert_lines": ["..."]}}`
-      - `{"replace": {"line_num_or_range": [45, 47], "replace_with_lines": ["..."]}}`
+    - `operations` (list, required): one or more of:
+      - `{"insert_above": {"line_num": 3, "insert_lines": ["...", "..."]}}`
+      - `{"replace": {"line_num_or_range": [45, 47], "replace_with_lines": ["...", "..."]}}`
       - `{"delete": {"line_num_or_range": [45, 47]}}`
       - `{"replace_string": {"old_string": "...", "new_string": "..."}}`: replaces the one exact occurrence of old_string; fails unless it matches exactly once. Prefer this for small edits: it cannot hit the wrong line.
 
-    Ranges are inclusive. Every line number in a call refers to the file as it was before that call, so several operations can be combined without recalculating; line numbers count lines exactly like `grep -n`. The result includes a unified diff of what changed, so you can confirm the edit landed as intended without re-reading. Afterwards, numbering has shifted: re-read the affected lines before the next edit. Write each line with its full indentation.
+    Ranges are inclusive. Line numbers refer to the file as it was before that call, so multiple operations can be combined without recalculating. Line numbers count lines exactly like `read_file` or `grep -n`. Returns a diff, allowing you to confirm the edit landed as intended without re-reading. Afterwards, numbering has shifted: re-read the affected lines before your next edit. Write each line with its full indentation.
 
     Example: edit_file(file_path="/workspace/app/config.py", operations=[{"replace_string": {"old_string": "TIMEOUT_SECONDS = 10", "new_string": "TIMEOUT_SECONDS = 30"}}])
     """
@@ -458,7 +457,7 @@ def speech_to_text(file_path: str, language: str | None = None):
     - `file_path` (string, required): absolute path to an audio file in the pod; supported formats are wav, mp3, m4a, ogg, opus, flac, aac, and webm.
     - `language` (string, optional): ISO-639-1 code of the audio's language, e.g. `en` or `de`. Omit it to let the model detect the language; auto-detection is not always supported and can hurt accuracy.
 
-    The full transcript is saved as a text file in /workspace/transcripts and its text is returned. Transcription quality drops with heavy background noise; the transcript may mishear names and numbers.
+    The full transcript is saved as a text file in /workspace/transcripts and its text is returned. Limitations: Transcription quality drops with heavy background noise; the transcript may mishear names and numbers.
     """
     settings = load_speech_settings()
     if not voice_enabled():
@@ -517,7 +516,7 @@ def text_to_speech(file_path: str):
     Synthesize spoken audio from a text file. Call it when the user wants an audio version of a document.
     - `file_path` (string, required): absolute path to a text file in the pod.
 
-    The audio is saved into /workspace/audio; deliver it to the user with `share_file`. A request may hold at most 4000 characters; split longer files into parts of at most 4000 characters and synthesize each part, then share all the audio files. The audio is for listening, not for lossless transport: a round-trip through speech_to_text can drop words.
+    The audio is saved into /workspace/audio; deliver it to the user with `share_file`. Limitations: A request may hold at most 4000 characters; split longer files into parts of at most 4000 characters and synthesize each part, then share all the audio files. The audio is for listening, not for lossless transport: a round-trip through speech_to_text can drop words.
     """
     settings = load_speech_settings()
     if not voice_enabled():
@@ -616,7 +615,7 @@ def text_to_image(prompt: str):
 
 def share_file(file_path: str):
     """
-    Make a file or directory available to the user; directories are sent as one zip. Files you don't share are invisible to the user. Share each deliverable before finishing your turn. Don't share bulky or irrelevant content (virtualenvs, `node_modules`, caches); copy deliverables into a clean folder first if needed.
+    Make a file or directory available to the user; directories are sent as one zip. Share each deliverable before finishing your turn. Don't share bulky or irrelevant content (virtualenvs, `node_modules`, caches); copy deliverables into a clean folder first if needed.
     - `file_path` (string, required): absolute path to an existing file or directory.
     """
     container = get_container()
@@ -780,7 +779,7 @@ def _check_process(process_id: str) -> str:
 
 def subagent(action: str, args: dict):
     """
-    Delegate a task to a subagent. The spawn call returns immediately with a subagent name, while the task keeps running in the background. Spawning a subagent allows you to keep working while it performs its task, or wait for it by name using the `wait_for` tool. You will be notified with a message when a subagent you spawn finishes. Subagents share the same pod, only use them for parallel-safe tasks, and plan ahead to avoid race conditions. Subagents cannot ask questions to the user, you must handle that yourself.
+    Delegate a task to a subagent. The spawn call returns immediately with a subagent name, while the task keeps running in the background. Spawning a subagent allows you to keep working while it performs its task, or wait for it by name using the `wait_for` tool. You will be notified with a message when a subagent you spawn finishes. Subagents share the same pod, only use them for parallel-safe tasks, and plan ahead to avoid race conditions. Limitations: Subagents cannot ask questions to the user, you must handle that yourself.
 
     - `action` (string, required): must be either `spawn`, `check`, or `kill`.
     - `args` (object, required): the arguments for that action; see the list below.
@@ -833,7 +832,7 @@ def subagent(action: str, args: dict):
 
 def wait_for(name: str, max_wait_s: int | None = None):
     """
-    Sleep until the named process or subagent finishes. If you can, you should keep working while a process or a subagent runs; you will be notified with a message when work you spawned finishes. Only call this tool if you have nothing to do until the named process or subagent finishes. The wait lasts until the work actually ends: for a subagent whose stop was already requested, that means until it has fully stopped.
+    Sleep until the named process or subagent finishes. If you can, you should keep working while a process or a subagent runs; you will be notified with a message when work you spawned finishes. Only call this tool if you have nothing to do until the named process or subagent finishes.
     - `name` (string, required): the process or subagent name.
     - `max_wait_s` (integer, optional): seconds to wait at most; default 120.
     """
