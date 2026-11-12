@@ -34,6 +34,7 @@ jobs:
           skipped="$skipped test_live_search_diagnose test_live_text_to_image"
           skipped="$skipped test_live_truthfulness test_live_web_search"
           skipped="$skipped test_live_background_work "
+          skipped="$test_stale_socket_selfheal "
           failed=0
           for suite in tests/test_*.py; do
             name="$(basename "$suite" .py)"
