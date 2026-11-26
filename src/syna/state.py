@@ -8,11 +8,16 @@ passes its deadline. Tools set these cooperatively so `parse.py` can build
 the `<result>` blocks without coupling every tool to the result protocol.
 """
 
+import csv
 import itertools
 import logging
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 from contextlib import ExitStack
+from pathlib import Path
 
 from bollard import Container, DockerClient
 
@@ -21,6 +26,20 @@ from .capabilities.rewind import forget_pod as _forget_rewind_pod
 from .capabilities.rewind import snapshot as _rewind_snapshot
 from .config import get_logger, load_config
 from .pod_io import pod_call
+
+try:
+    # Bollard owns the candidate list; mirror it so discovery and the
+    # self-heal always agree on what "an engine is serving" means.
+    from bollard.const import WINDOWS_PIPE_CANDIDATES as _WINDOWS_ENGINE_PIPES
+except ImportError:
+    _WINDOWS_ENGINE_PIPES = (
+        "\\\\.\\pipe\\docker_engine",
+        "\\\\.\\pipe\\podman-machine-default",
+        "\\\\.\\pipe\\podman-machine",
+        "\\\\.\\pipe\\docker_cli",
+    )
+
+_IS_WINDOWS = sys.platform == "win32"
 
 CONTAINER_IMAGE = "python:3.14-trixie"
 
@@ -320,17 +339,178 @@ def reset_shared_container() -> None:
         _global_container = None
 
 
+def _pipe_reachable(pipe: str) -> bool:
+    """Whether a Windows named pipe currently accepts a connection.
+
+    Duplicates bollard's private `_check_pipe` on purpose: that helper
+    is not public API, and this probe must stay stable across bollard
+    upgrades.
+    """
+    try:
+        with open(pipe, "r+b", buffering=0):
+            return True
+    except OSError:
+        return False
+
+
+def _forwarder_pids() -> list[int] | None:
+    """The PIDs of live win-sshproxy processes, or None when unknown.
+
+    An unknown state (tasklist missing, timing out) is deliberately not
+    an empty list: the caller must stand down rather than delete a
+    socket whose owner it cannot identify.
+    """
+    try:
+        probe = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq win-sshproxy.exe", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    pids = []
+    for row in csv.reader(probe.stdout.splitlines()):
+        if len(row) >= 2 and row[0].strip().lower() == "win-sshproxy.exe":
+            try:
+                pids.append(int(row[1]))
+            except ValueError:
+                return None
+    return pids
+
+
+def _stop_zombie_forwarder(pids: list[int]) -> None:
+    """Force-stop forwarder processes that serve no engine pipe.
+
+    A live forwarder always serves its pipes, so one found with no
+    reachable pipe is an orphan from a crashed machine: left alone it
+    keeps holding the API socket, and the next machine start's
+    forwarder dies on the same bind. Kill failures are logged and left
+    to the per-file guard below.
+    """
+    log = get_logger()
+    for pid in pids:
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(pid)],
+                capture_output=True,
+                timeout=10.0,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log.warning(
+                "Could not stop the orphaned Podman forwarder (pid %s): %s", pid, exc
+            )
+            continue
+        log.warning(
+            "Stopped the orphaned Podman forwarder (pid %s): it held the"
+            " engine's API socket without serving any pipe.",
+            pid,
+        )
+
+
+def _clear_stale_api_sockets() -> int:
+    """Delete Podman API forwarding sockets leaked on Windows; return count.
+
+    Podman's Windows forwarder (win-sshproxy) exposes the machine's API
+    through named pipes backed by a unix socket under
+    `<temp>/podman/<machine>-api.sock`. A non-clean host shutdown —
+    rebooting with the machine running — leaks that zero-byte file, and
+    every later forwarder start dies binding it ("Only one usage of each
+    socket address"), leaving the machine running but without an API
+    endpoint (containers/podman#29971).
+
+    Stands down whenever an engine pipe is reachable, or when the
+    forwarder's PIDs cannot be determined. A forwarder found with no
+    reachable pipe is an orphan: it is stopped first so its socket can
+    be removed. A forwarder starting concurrently between the PID probe
+    and the unlink either keeps its socket (the delete fails and is
+    logged) or loses it and is restarted by the caller's own bring-up —
+    both outcomes are the pre-heal status quo, never corruption.
+    """
+    if not _IS_WINDOWS:
+        return 0
+    if any(_pipe_reachable(pipe) for pipe in _WINDOWS_ENGINE_PIPES):
+        return 0
+    pids = _forwarder_pids()
+    if pids is None:
+        get_logger().info(
+            "Could not list the Podman forwarder processes; leaving the"
+            " engine sockets untouched."
+        )
+        return 0
+    if pids:
+        _stop_zombie_forwarder(pids)
+    socket_dir = Path(tempfile.gettempdir()) / "podman"
+    removed = 0
+    try:
+        candidates = list(socket_dir.glob("*.sock"))
+    except OSError:
+        return 0
+    for socket_file in candidates:
+        try:
+            if socket_file.is_file():
+                socket_file.unlink()
+                removed += 1
+        except OSError:
+            get_logger().warning(
+                "Could not remove the stale engine socket %s.", socket_file
+            )
+    return removed
+
+
+def _heal_stale_engine_sockets() -> None:
+    """Clear leaked forwarder sockets, logging what was healed."""
+    cleared = _clear_stale_api_sockets()
+    if cleared:
+        get_logger().warning(
+            "Removed %d stale Podman API socket(s) leaked by a prior"
+            " unclean shutdown; the engine's forwarder can bind again.",
+            cleared,
+        )
+
+
+def friendly_engine_error(exc: Exception) -> str:
+    """Reorder bollard's endpoint error so the cause leads.
+
+    Bollard's discovery error buries the actionable part (what the last
+    bring-up attempt said) between a generic preamble and virtualization
+    advice that rarely applies on WSL setups, where the machine runs
+    fine but its Windows forwarder does not. Messages without that
+    shape pass through unchanged.
+    """
+    text = f"{exc}"
+    marker = "The last attempt said: "
+    start = text.find(marker)
+    if start == -1:
+        return text
+    detail = text[start + len(marker) :]
+    end = detail.find(" Check that virtualization")
+    if end != -1:
+        detail = detail[:end]
+    detail = detail.rstrip(" .")
+    return (
+        "The container engine is not reachable."
+        f" The last attempt said: {detail}."
+        " Run `podman machine start` in a terminal for details,"
+        " or check the syna log."
+    )
+
+
 def ensure_engine_ready() -> None:
     """Verify a container engine endpoint is reachable, bringing it up.
 
     Delegates to bollard's endpoint discovery, which starts (and
     initializes, when it does not exist yet) the Podman machine when no
-    Docker/Podman pipe or socket is available. Raises an exception with
+    Docker/Podman pipe or socket is available. Before delegating, stale
+    Windows forwarding sockets from an unclean shutdown are cleared so
+    the machine's forwarder can bind again. Raises an exception with
     an actionable message when no endpoint can be reached.
     """
     log = get_logger()
     log.info("Checking the container engine endpoint...")
     started = time.monotonic()
+    _heal_stale_engine_sockets()
     DockerClient().close()
     log.info("Container engine endpoint ready in %.1fs.", time.monotonic() - started)
 
@@ -348,6 +528,13 @@ def init_docker_client(*args, **kwargs):
     keeping.
     """
     global _exit_stack, client
+
+    if client is None:
+        # The heal probes pipes and lists processes; keeping it outside
+        # the lock means a slow tasklist never delays a concurrent
+        # caller waiting for the in-flight bring-up. It is idempotent
+        # and only ever deletes dead artifacts.
+        _heal_stale_engine_sockets()
 
     with _init_lock:
         if _exit_stack is not None:
