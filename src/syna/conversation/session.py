@@ -179,6 +179,14 @@ def build_capped_reply_notice() -> str:
     )
 
 
+def build_capped_continuation_notice() -> str:
+    """The corrective notice for a final answer cut off by the output limit."""
+    return (
+        "Your reply reached the output-token limit and was cut off."
+        " Continue your answer in a short follow-up reply."
+    )
+
+
 def build_sentinel_violation_warning() -> str:
     """Compose the corrective warning for channel impersonation attempts."""
     return (
@@ -1023,6 +1031,22 @@ class AgentSession:
             )
         return None
 
+    def _drop_excess_tool_calls(self, response_msg: dict, cap: int) -> int:
+        """Drop tool calls beyond `cap` from the history copy of a reply.
+
+        The parser skip-marks the kept calls; the excess must vanish from
+        history so it neither floods the context nor gets answered by
+        `_close_tool_call_group` on an abnormal exit. On the normal path
+        the cap is the parser's own kept count, so the history copy stays
+        exactly in sync with the produced tool results. Returns the
+        number of dropped calls.
+        """
+        tool_calls = response_msg.get("tool_calls") or []
+        dropped = len(tool_calls) - cap
+        if dropped > 0:
+            del tool_calls[cap:]
+        return max(dropped, 0)
+
     def _purge_pending_failures(self):
         """Splice out consecutive failed attempts and their notices from history.
 
@@ -1203,8 +1227,14 @@ class AgentSession:
                 )
             if not tool_calls:
                 content = response_msg.get("content") or ""
-                self._purge_pending_failures()
                 self._emit({"type": "model_message", "content": content})
+                if response_msg.get("_capped"):
+                    self._append_harness_notice(
+                        build_capped_continuation_notice(),
+                        "Reply hit the output limit; awaiting continuation.",
+                    )
+                    continue
+                self._purge_pending_failures()
                 return
 
             set_conversation_log_provider(self._reviewer_log)
@@ -1221,6 +1251,9 @@ class AgentSession:
                 return
             except Exception as exc:
                 logger.exception("Tool batch execution failed")
+                self._drop_excess_tool_calls(
+                    response_msg, load_max_tool_calls_per_reply()
+                )
                 self._close_tool_call_group(response_msg, self.INTERNAL_CALL_NOTICE)
                 self._emit(
                     {
@@ -1233,7 +1266,7 @@ class AgentSession:
                 pop_conversation_log_provider()
 
             if outcome.tool_cap_dropped:
-                del response_msg["tool_calls"][len(outcome.outputs) :]
+                self._drop_excess_tool_calls(response_msg, len(outcome.outputs))
                 logger.warning(
                     "Reply carried %d tool calls; the cap is %d, so nothing ran"
                     " and the excess was dropped from history",
@@ -1528,10 +1561,10 @@ class AgentSession:
         """Return the history slice eligible for compaction.
 
         Messages awaiting the failure purge (a rejected batch and its
-        notices) are excluded: they carry no information worth
-        summarizing, and the retry that follows still needs them verbatim
-        until the purge splices them out. The corrective notice itself
-        survives in the kept tail group.
+        notices) never reach the summarizer: they carry no information
+        worth summarizing. The history splice drops them physically, the
+        pending list keeps the later purge consistent, and the corrective
+        notice itself survives in the kept tail group.
         """
         first_user_idx = self._first_user_index(history)
         tail_group = self._tail_atomic_slice(history)

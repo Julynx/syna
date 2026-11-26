@@ -763,7 +763,12 @@ the loop, `ask_utils.py` sends the model requests, and
   skip-marks the kept calls); run_turn then drops the excess calls from
   the history copy of the reply and sends a cap-specific corrective
   notice, with an extra line when the reply was cut off at the output
-  token cap (the `_capped` flag from ask_utils).
+  token cap (the `_capped` flag from ask_utils). The same drop runs on
+  the internal-batch-error path, so an abnormal exit cannot leave the
+  full oversized call list behind for `_close_tool_call_group` to
+  answer. A plain-text reply cut off at the cap is delivered and
+  followed by a continuation notice: the turn continues instead of
+  ending mid-sentence.
 - **Closed tool-call groups**: providers reject requests containing assistant
   tool_calls without matching results, so `_close_tool_call_group` answers
   any call left hanging by an abnormal exit: user interruption mid-batch,
@@ -925,9 +930,10 @@ carries `max_tokens` from the `max_output_tokens` config value (default
 16384), so reasoning models cannot starve the visible reply of the
 provider's default completion budget; `finish_reason` and the
 prompt/completion/reasoning/cached token split are logged for every
-response. A reply that hit the output cap (`finish_reason` = "length",
-or completion tokens at `max_tokens`: providers do not reliably report
-"length" for truncated tool-call batches) is marked with an internal
+response. A reply that hit the output cap (`finish_reason` "length" or
+"max_tokens", or completion tokens at `max_tokens`: providers neither
+agree on the reason nor reliably report one for truncated tool-call
+batches) is marked with an internal
 `_capped` flag so the session can warn the model explicitly; the
 request-message allowlist keeps the flag off the wire.
 When a `session_id` is given, the request-body routing fields

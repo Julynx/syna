@@ -58,6 +58,14 @@ def test_capped_marker_on_token_count_despite_tool_calls_reason(monkeypatch):
     )
 
 
+def test_capped_marker_on_max_tokens_finish_reason(monkeypatch):
+    client, _captured = _fake_client(finish_reason="max_tokens", completion_tokens=10)
+    reply = _ask(monkeypatch, client)
+    assert reply.get("_capped") is True, (
+        "Anthropic-native endpoints spell the truncation reason 'max_tokens'"
+    )
+
+
 def test_no_marker_under_the_cap(monkeypatch):
     client, _captured = _fake_client(finish_reason="stop", completion_tokens=99)
     reply = _ask(monkeypatch, client)
@@ -85,6 +93,7 @@ def main():
         [
             test_capped_marker_on_length_finish_reason,
             test_capped_marker_on_token_count_despite_tool_calls_reason,
+            test_capped_marker_on_max_tokens_finish_reason,
             test_no_marker_under_the_cap,
             test_request_messages_strip_internal_keys,
         ]

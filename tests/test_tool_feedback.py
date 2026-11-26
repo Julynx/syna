@@ -18,16 +18,17 @@ from syna.protocol.compaction import (
 
 
 class FakeMessage:
-    def __init__(self, content=None, tool_calls=None):
+    def __init__(self, content=None, tool_calls=None, finish_reason=None):
         self.content = content
         self.tool_calls = tool_calls
         self.refusal = None
+        self.finish_reason = finish_reason
 
 
 class FakeChoice:
     def __init__(self, message):
         self.message = message
-        self.finish_reason = (
+        self.finish_reason = getattr(message, "finish_reason", None) or (
             "stop" if not getattr(message, "tool_calls", None) else "tool_calls"
         )
 
@@ -458,6 +459,57 @@ def test_tool_cap_reply_executes_nothing_and_is_wiped():
     print("PASS oversized replies execute nothing and are wiped on recovery")
 
 
+def test_capped_final_answer_gets_a_continuation_notice():
+    session = _make_session()
+    session.client = FakeChat(
+        [
+            FakeMessage(content="partial answer", finish_reason="length"),
+            FakeMessage(content="rest of answer"),
+        ]
+    )
+    events = []
+    session.on_event = events.append
+    session.run_turn("probe")
+
+    delivered = [e["content"] for e in events if e["type"] == "model_message"]
+    assert delivered == ["partial answer", "rest of answer"], (
+        "a truncated final answer is delivered, then the model continues"
+    )
+    assert len(session.client.requests) == 2, (
+        "the turn continues after a capped final answer instead of ending"
+    )
+    roles = [m["role"] for m in session.messages]
+    assert roles == ["system", "user", "assistant", "user", "assistant"]
+    notice = session.messages[3]["content"]
+    assert is_channel_message(notice, "HARNESS_NOTICE")
+    assert "output-token limit" in notice
+
+
+def test_internal_batch_error_still_drops_excess_calls(monkeypatch):
+    import syna.conversation.session as session_module
+
+    monkeypatch.setattr(session_module, "load_max_tool_calls_per_reply", lambda: 3)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("batch blew up")
+
+    monkeypatch.setattr(session_module, "parse_and_execute_tools", boom)
+
+    session = _make_session()
+    session.client = FakeChat([_make_oversized_reply(6), REPLY_FINAL])
+    session.run_turn("probe")
+
+    assistants = [m for m in session.messages if m.get("tool_calls")]
+    assert len(assistants) == 1 and len(assistants[0]["tool_calls"]) == 3, (
+        "the internal-error path also drops the excess calls from history"
+    )
+    assert "cap_003" not in json.dumps(session.messages), (
+        "no dropped call id survives anywhere in history"
+    )
+    tool_messages = [m for m in session.messages if m["role"] == "tool"]
+    assert len(tool_messages) == 3, "only the kept calls get answered"
+
+
 def test_compaction_excludes_pending_failures():
     session = _make_session()
     session.compaction_enabled = True
@@ -876,6 +928,14 @@ def main():
         test_tail_atomic_slice_shapes()
         test_compaction_notice_wording_and_extraction()
         test_tool_cap_reply_executes_nothing_and_is_wiped()
+        test_capped_final_answer_gets_a_continuation_notice()
+        from _runner import MonkeyPatch
+
+        patch = MonkeyPatch()
+        try:
+            test_internal_batch_error_still_drops_excess_calls(patch)
+        finally:
+            patch.undo()
         test_compaction_excludes_pending_failures()
         test_web_signature_violation_becomes_failed_row()
         test_web_events_carry_raw_and_arguments()
