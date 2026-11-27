@@ -74,7 +74,9 @@
    > Windows). If nothing happens, you probably have text selected in the
    > terminal window — on Windows Terminal, `Ctrl+C` copies instead of
    > interrupting while anything is highlighted. Press `Esc` to clear the
-   > selection and try again. The same applies to `syna-cli`.
+   > selection and try again. The same applies to `syna-cli`. You can also
+   > stop the server from the web UI: the power button in the top bar
+   > (press twice) shuts Syna down cleanly and tears down the pod.
 
 ---
 
