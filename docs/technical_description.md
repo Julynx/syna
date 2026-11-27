@@ -229,6 +229,7 @@ from the canonical constants in `config.py`.
 | `session_dump_file`                 | Per-session message dump file name template.                                                                                                                                                                                                                                  |
 | `server_host`, `server_port`        | Web server binding.                                                                                                                                                                                                                                                           |
 | `session_idle_timeout_min`          | Idle web sessions are reaped after this.                                                                                                                                                                                                                                      |
+| `shutdown_graceful_timeout_s`       | Seconds the server waits for open connections on Ctrl+C before force-cancelling tasks and exiting (default 10). A lingering browser WebSocket can no longer make shutdown hang.                                                                                               |
 | `upload_dest`                       | Default upload destination inside the pod.                                                                                                                                                                                                                                    |
 | `voice.silence_timeout_ms`          | Mic silence that ends a voice recording.                                                                                                                                                                                                                                      |
 | `voice.silence_threshold_dbfs`      | Loudness level treated as silence.                                                                                                                                                                                                                                            |
@@ -1804,8 +1805,21 @@ the configured initial voice-mode state, and the per-process `auth_token`;
 `</` is escaped so no value can close the script tag early). Speech
 endpoints: `POST /api/speech/transcribe` (multipart clip to text) and
 `POST /api/speech/synthesize` (JSON text to audio in the configured format;
-'pcm' replies are wrapped in a WAV container server-side). `main()` runs
-uvicorn.
+'pcm' replies are wrapped in a WAV container server-side). `main()` starts
+the server through `run_server()`: the uvicorn subclass
+`_ShutdownAwareServer` announces the signal itself — to the syna log
+file and to uvicorn's console logger, so the terminal shows
+`Shutdown signal received ...` before uvicorn's own "Shutting down"
+line, and a second press (uvicorn's force quit: running tasks are
+cancelled and the lifespan cleanup is skipped) logs
+`... forcing exit ...` — and `timeout_graceful_shutdown`
+(`shutdown_graceful_timeout_s`, default 10) bounds the wait on
+lingering connections to ten seconds, so an unclosed browser WebSocket
+cannot make Ctrl+C look ineffective. On Windows this matters: Windows
+Terminal treats Ctrl+C as copy whenever text is selected in the pane,
+so a server that "ignores" Ctrl+C is usually one with a selection
+hanging around — press Esc to clear it, or use Ctrl+Break, which
+uvicorn also handles.
 
 Background work surfaces: after the pod starts, the session record
 registers the registry's `event_sink` (subagent streaming as

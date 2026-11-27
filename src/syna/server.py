@@ -4,6 +4,7 @@ import asyncio
 import importlib.metadata
 import ipaddress
 import json
+import logging
 import os
 import queue
 import re
@@ -19,6 +20,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from posixpath import basename, normpath
+from types import FrameType
 from typing import Any
 from urllib.parse import quote
 
@@ -97,6 +99,7 @@ CONTAINER_STARTING_TEXT = "Starting the container engine, please wait..."
 NEW_CHAT_STOP_TIMEOUT_S = 20
 IMAGE_CACHE_LIMIT = 32
 SERVER_ENTRY_POINT = "syna-server"
+DEFAULT_SHUTDOWN_GRACE_SECONDS = 10
 
 # Web slash commands the server accepts. The web UI's own registry
 # (including its local /help) mirrors this list; here is the boundary.
@@ -1989,6 +1992,58 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         record.touch()
 
 
+_shutdown_console_logger = logging.getLogger("uvicorn.error")
+
+
+class _ShutdownAwareServer(uvicorn.Server):
+    """Uvicorn server that logs the shutdown signal before the graceful stop.
+
+    Uvicorn prints "Shutting down" only once the signal has been
+    received, so a syna-level line — sent to both the syna log file and
+    uvicorn's console logger — separates "the signal arrived and
+    shutdown is running" from "the terminal never delivered it"; on
+    Windows, Ctrl+C copies instead of interrupting whenever text is
+    selected in the window, which otherwise looks exactly like a dead
+    server. The second SIGINT is uvicorn's force quit: it cancels
+    running tasks and skips the lifespan cleanup, so it is announced
+    differently.
+    """
+
+    def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+        if self.should_exit:
+            message = "Second shutdown signal received, forcing exit..."
+        else:
+            message = f"Shutdown signal received (signal {sig}), stopping server..."
+        logger.info(message)
+        _shutdown_console_logger.info(message)
+        super().handle_exit(sig, frame)
+
+
+def build_server_config(host: str, port: int) -> uvicorn.Config:
+    """Build the server's uvicorn config with a bounded graceful shutdown.
+
+    The grace limit (`shutdown_graceful_timeout_s`, default
+    DEFAULT_SHUTDOWN_GRACE_SECONDS) stops shutdown from waiting forever
+    on a lingering connection — an open WebSocket the browser refuses
+    to close — which made Ctrl+C look ineffective on long-running
+    servers.
+    """
+    return uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+        timeout_graceful_shutdown=int(
+            config.get("shutdown_graceful_timeout_s", DEFAULT_SHUTDOWN_GRACE_SECONDS)
+        ),
+    )
+
+
+def run_server(host: str, port: int) -> None:
+    """Run the FastAPI app on the shutdown-aware uvicorn server."""
+    _ShutdownAwareServer(build_server_config(host, port)).run()
+
+
 def main():
     """Start the Syna web server."""
     if selfupdate.check("syna-agent", enabled=load_auto_update_enabled()):
@@ -2009,12 +2064,7 @@ def main():
         threading.Thread(target=open_browser, daemon=True).start()
 
     try:
-        uvicorn.run(
-            app,
-            host=host,
-            port=port,
-            log_level="info",
-        )
+        run_server(host=host, port=port)
     except KeyboardInterrupt:
         pass
     finally:

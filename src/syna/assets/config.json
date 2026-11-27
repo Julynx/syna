@@ -55,6 +55,7 @@
   "wait_for_timeout": 120,
   "check_tail_chars": 4000,
   "session_idle_timeout_min": 15,
+  "shutdown_graceful_timeout_s": 10,
   "upload_dest": "/home/user/uploads",
   "voice": {
     "voice_mode_on": false,

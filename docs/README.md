@@ -70,6 +70,12 @@
 
    Then, open your browser and go to the following url: `http://127.0.0.1:8000`
 
+   > **Stopping the server.** Press `Ctrl+C` in the terminal (or `Ctrl+Break` on
+   > Windows). If nothing happens, you probably have text selected in the
+   > terminal window — on Windows Terminal, `Ctrl+C` copies instead of
+   > interrupting while anything is highlighted. Press `Esc` to clear the
+   > selection and try again. The same applies to `syna-cli`.
+
 ---
 
 ### Using Syna (CLI)

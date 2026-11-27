@@ -470,8 +470,6 @@ def main():
     import time
     import webbrowser
 
-    import uvicorn
-
     from . import server
 
     server.AUTH_TOKEN = secrets.token_urlsafe(32)
@@ -498,6 +496,6 @@ def main():
 
     threading.Thread(target=open_browser, daemon=True).start()
     try:
-        uvicorn.run(server.app, host=config.get("server_host", "127.0.0.1"), port=port)
+        server.run_server(host=config.get("server_host", "127.0.0.1"), port=port)
     except KeyboardInterrupt:
         pass
