@@ -253,6 +253,13 @@ def get_logger() -> logging.Logger:
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
         logger.setLevel(logging.INFO)
+        # Bollard logs its operational messages (machine bring-up, the
+        # engine self-heal) through its own logger tree; sharing the
+        # file handler keeps them in the syna log instead of leaving
+        # them console-only.
+        bollard_logger = logging.getLogger("bollard")
+        bollard_logger.addHandler(file_handler)
+        bollard_logger.setLevel(logging.INFO)
 
     return logger
 

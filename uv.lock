@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -66,11 +66,11 @@ wheels = [
 
 [[package]]
 name = "bollard"
-version = "0.2.3"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/92/ee/ad10d1cd808ade3c4b7cfb0a1ae6b02b86e16734b3368e422192785d79e9/bollard-0.2.3.tar.gz", hash = "sha256:e57a865bfbad47a06c0a96bfcaf2e43f3bab5a33a4941ab70d8bdd322b3da7c5", size = 57113, upload-time = "2026-10-25T16:30:41.344Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4e/d6/75b288358bb84df95a5da93f669ec61e5574a80cd13563f7c8a7ad4ace5e/bollard-0.3.0.tar.gz", hash = "sha256:4b9fcb340e71f8f71f675c5e6be35ce18b0bfc7be5c8257a041fb5cc02fe5450", size = 63451, upload-time = "2026-11-27T00:14:11.948Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f8/1f/c841f44c77d34b90a9e8bec10c7800bdc29faab26cc1f569f5b1e5afd7ff/bollard-0.2.3-py3-none-any.whl", hash = "sha256:c364e4b2d8c550bed60cfd5a3bb61bc21edb70068c6d244e304f5826c2f823b9", size = 26732, upload-time = "2026-10-25T16:30:40.293Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/91/89b8d71110b415d34ba1e1cab75128d717fb35b735d9458c9070601fb55d/bollard-0.3.0-py3-none-any.whl", hash = "sha256:9aa67f3aee91d1df0909d57f76fddf3a15a2e4124457c1188acec6e9edc8ea71", size = 30216, upload-time = "2026-11-27T00:14:10.873Z" },
 ]
 
 [[package]]
@@ -1255,7 +1255,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "auto-self-update", specifier = ">=0.9.0" },
-    { name = "bollard", specifier = ">=0.2.3" },
+    { name = "bollard", specifier = ">=0.3.0" },
     { name = "camoufox", extras = ["geoip"], specifier = ">=0.5.8" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.27" },

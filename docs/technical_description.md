@@ -89,7 +89,10 @@ workflows keep working unchanged.
 - `openrouter`: model client with configurable timeout/retry.
 - `python-dotenv`: loads `OPENROUTER_API_KEY` and model settings from `.env`.
 - `httpx`: OpenRouter audio endpoints (speech transcription and synthesis).
-- `bollard`: Docker/Podman container client used for the sandbox.
+- `bollard` (>= 0.3.0): Docker/Podman container client used for the sandbox.
+  Engine bring-up is bollard's domain: endpoint discovery, the Windows
+  stale-socket self-heal, and the structured `EndpointDiscoveryError` all
+  live there; the bollard project's own `docs/ARCHITECTURE.md` documents them.
 - `playwright`, `camoufox`: browser-based web search and the persistent
   stealth browser session.
 - `pillow`: image downscaling for the vision pipeline.
@@ -429,30 +432,30 @@ Global Docker client plus per-thread container registry and per-call context.
   restarting a registered machine whose endpoint never came up) whenever
   no pipe/socket is reachable. The wizard's sanity check uses it, so a
   machine that was installed but never initialized fails (and self-heals)
-  during setup instead of at the first tool call. Only bollard's wire
-  logger (`bollard.wire`) is quieted; operational bollard messages stay
-  visible in the syna log.
+  during setup instead of at the first tool call. Bollard 0.3.0 keeps its
+  wire logger (`bollard.wire`) quiet by default, while its operational
+  messages stay visible in the syna log.
 - Windows engine bring-up self-heals the stale forwarding sockets
-  (`containers/podman#29971`): rebooting with the Podman machine running
-  leaks its zero-byte API socket under `<temp>/podman/`, and every later
-  forwarder start dies binding it, leaving the machine running with no
-  API endpoint. Both `ensure_engine_ready()` and `init_docker_client()`
-  clear those sockets first (`_heal_stale_engine_sockets()`; the heal
-  runs outside the init lock so a slow process probe never delays a
-  concurrent bring-up), but only when no engine pipe is reachable
-  (pipe candidates are mirrored from `bollard.const`) and the
-  forwarder's PIDs can be determined. A `win-sshproxy` found with no
-  reachable pipe is an orphan holding the socket: it is stopped with
-  `taskkill` first (`_stop_zombie_forwarder()`), then the sockets are
-  removed. An undeterminable forwarder state stands the cleanup down —
-  it never deletes a socket whose owner it cannot identify.
-- `friendly_engine_error()` reorders bollard's endpoint-discovery error
-  for the user: the actionable detail (what the last bring-up attempt
-  said) leads, and the generic virtualization advice — rarely the cause
-  on WSL setups, where the machine runs but the forwarder does not — is
-  dropped. Used by the server's container-start failure push and the
-  setup wizard's sanity check; messages without bollard's shape pass
-  through unchanged.
+  (`containers/podman#29971`) inside bollard's machine bring-up
+  (`bollard.engine.heal_stale_engine_sockets()`, run at the start of
+  every `_bring_up_podman_machine()` attempt): rebooting with the
+  Podman machine running leaks its zero-byte API socket under
+  `<temp>/podman/`, and every later forwarder start dies binding it,
+  leaving the machine running with no API endpoint. Running the heal
+  there — serialized with the bring-up it protects, and never on
+  constructions that find a live endpoint — stands down whenever an
+  engine endpoint is reachable (including a live
+  `DOCKER_HOST`/`DOCKER_SOCK`) or the forwarder's PIDs cannot be
+  determined; an orphaned `win-sshproxy` found with no reachable pipe
+  is stopped with `taskkill` first, then the sockets are removed. It
+  never deletes a socket whose owner it cannot identify.
+- `engine_error_text()` shapes bollard's structured
+  `EndpointDiscoveryError` for the user: the actionable detail
+  (`last_failure`, what the last bring-up attempt said) leads, and the
+  generic virtualization advice — rarely the cause on WSL setups,
+  where the machine runs but the forwarder does not — is dropped.
+  Used by the server's container-start failure push and the setup
+  wizard's sanity check; other exceptions pass through unchanged.
 - `init_docker_client` is serialized with a lock: concurrent sessions wait
   for one in-flight bring-up instead of racing it, and a failed
   constructor rolls the init state back so the next call retries instead

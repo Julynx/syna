@@ -423,13 +423,13 @@ def sanity_check() -> dict:
         results["endpoint"]["detail"] = "Skipped: no container engine."
         return results
     try:
-        from .state import ensure_engine_ready, friendly_engine_error  # noqa: PLC0415
+        from .state import ensure_engine_ready, engine_error_text  # noqa: PLC0415
 
         ensure_engine_ready()
     except Exception as exc:
         results["engine"] = {
             "ok": False,
-            "detail": friendly_engine_error(exc),
+            "detail": engine_error_text(exc),
         }
         results["endpoint"]["detail"] = "Skipped: the engine is not reachable."
         return results

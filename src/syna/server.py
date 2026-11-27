@@ -85,7 +85,7 @@ from .protocol.channel import harness_notice, unwrap_channel, wrap_channel
 from .state import (
     create_container,
     destroy_container,
-    friendly_engine_error,
+    engine_error_text,
     register_container,
     unregister_container,
 )
@@ -619,7 +619,7 @@ class SessionRecord:
             self.push(
                 {
                     "type": "error",
-                    "text": f"Could not start container: {friendly_engine_error(exc)}",
+                    "text": f"Could not start container: {engine_error_text(exc)}",
                 }
             )
             return
