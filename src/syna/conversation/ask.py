@@ -47,6 +47,36 @@ def _print_status(text: str):
     print(f"  + ({text})")
 
 
+def _format_tokens(value: int) -> str:
+    """Compact token notation: 7000 → '7k', 1000000 → '1M'."""
+    if value >= 1_000_000:
+        millions = value / 1_000_000
+        if millions.is_integer():
+            return f"{int(millions)}M"
+        return f"{millions:.1f}M"
+    if value >= 1000:
+        return f"{value // 1000}k"
+    return str(value)
+
+
+def _format_usage(event) -> str:
+    """Render one usage event as '7k/1M ctx · $0.0003'; '' when empty."""
+    parts = []
+    context_tokens = event.get("context_tokens")
+    if isinstance(context_tokens, int) and context_tokens >= 0:
+        context_window = event.get("context_window")
+        if isinstance(context_window, int) and context_window > context_tokens:
+            parts.append(
+                f"{_format_tokens(context_tokens)}/{_format_tokens(context_window)} ctx"
+            )
+        else:
+            parts.append(f"{_format_tokens(context_tokens)} ctx")
+    cost = event.get("cost")
+    if isinstance(cost, (int, float)):
+        parts.append(f"${cost:.2f}" if cost >= 0.01 else f"${cost:.4f}")
+    return " · ".join(parts)
+
+
 def _print_tool_call(event):
     """Render one tool_call event: started, finished, failed, or skipped."""
     status = event.get("status")
@@ -87,6 +117,10 @@ def _print_event(event):
         print(f"\n[Syna]: {event['content']}\n")
     elif kind == "compaction":
         print(f"\n----- Compaction -----\n{event['summary']}\n")
+    elif kind == "usage":
+        line = _format_usage(event)
+        if line:
+            print(f"  + · {line}")
     elif kind == "background_done":
         summary = str(event.get("summary", "")).strip()
         kind_name = str(event.get("kind", "work"))

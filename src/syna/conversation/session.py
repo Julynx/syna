@@ -369,6 +369,21 @@ def resolved_budget_for(model: str | None) -> int | None:
     return context_length // 2
 
 
+def resolved_context_window_for(model: str | None) -> int | None:
+    """The model's full context window once the fetch has landed, else None.
+
+    Same lookup as resolved_budget_for without the halving: the usage
+    chip shows the conversation's share of the model's real window.
+    Unknown models, a pending fetch, or a failed one yield None.
+    """
+    lengths = peek_context_lengths()
+    if lengths is None:
+        return None
+    model_id = model or ""
+    context_length = lengths.get(model_id) or lengths.get(model_id.lstrip("~"))
+    return context_length or None
+
+
 def model_accepts_images(model: str | None) -> bool | None:
     """Whether the model is known to accept image input, else None.
 
@@ -602,7 +617,12 @@ class AgentSession:
         self._tool_errored = False
         self._row_open = False
         self._requests_since_elide = 0
-        self._usage_totals = {"requests": 0, "prompt_tokens": 0, "cached_tokens": 0}
+        self._usage_totals = {
+            "requests": 0,
+            "prompt_tokens": 0,
+            "cached_tokens": 0,
+            "cost": 0.0,
+        }
         self.thinking_effort = load_thinking_effort()
         self.client = create_model_client()
         self.model = self._require_model()
@@ -911,13 +931,43 @@ class AgentSession:
         self._log_cache_summary()
         self.client.__exit__(None, None, None)
 
-    def _record_usage(self, prompt_tokens: int | None, cached_tokens: int | None):
+    def _record_usage(
+        self,
+        prompt_tokens: int | None,
+        cached_tokens: int | None,
+        cost: float | None = None,
+    ):
         """Accumulate per-response usage for the end-of-session summary."""
         self._usage_totals["requests"] += 1
         if prompt_tokens:
             self._usage_totals["prompt_tokens"] += prompt_tokens
         if cached_tokens:
             self._usage_totals["cached_tokens"] += cached_tokens
+        if cost is not None:
+            self._usage_totals["cost"] += cost
+
+    def _record_main_usage(
+        self,
+        prompt_tokens: int | None,
+        cached_tokens: int | None,
+        cost: float | None = None,
+    ):
+        """Record a main-loop request's usage and report it to the front-ends.
+
+        Only main turn-loop requests report: the summarizer's and
+        subagents' prompt sizes are not the conversation's context, so
+        flashing them would misstate the context use. Their cost still
+        accumulates silently into the session total.
+        """
+        self._record_usage(prompt_tokens, cached_tokens, cost)
+        self._emit(
+            {
+                "type": "usage",
+                "context_tokens": prompt_tokens,
+                "context_window": resolved_context_window_for(self.model),
+                "cost": self._usage_totals["cost"],
+            }
+        )
 
     def _log_cache_summary(self):
         """Log the session's aggregate prompt-cache hit ratio.
@@ -934,13 +984,19 @@ class AgentSession:
         ratio = f"{totals['cached_tokens'] / prompt:.0%}" if prompt else "n/a"
         get_logger().info(
             "Session cache summary: requests=%d, prompt_tokens=%d,"
-            " cached_tokens=%d, hit_ratio=%s",
+            " cached_tokens=%d, hit_ratio=%s, cost=$%.4f",
             totals["requests"],
             prompt,
             totals["cached_tokens"],
             ratio,
+            totals["cost"],
         )
-        self._usage_totals = {"requests": 0, "prompt_tokens": 0, "cached_tokens": 0}
+        self._usage_totals = {
+            "requests": 0,
+            "prompt_tokens": 0,
+            "cached_tokens": 0,
+            "cost": 0.0,
+        }
 
     def notify_file_upload(self, file_name: str, pod_path: str):
         """Record a user file upload in the conversation history."""
@@ -1193,7 +1249,7 @@ class AgentSession:
                     session_id=self.session_id,
                     tools=self.tool_definitions,
                     tool_choice="auto",
-                    usage_callback=self._record_usage,
+                    usage_callback=self._record_main_usage,
                 )
             except ReplyRejected as exc:
                 defanged = defang_sentinels(exc.raw_content)
@@ -1496,9 +1552,37 @@ class AgentSession:
             and total_tokens <= self._current_budget()
         ):
             return
+        self._summarize_history(history, logger)
+
+    def compact_now(self):
+        """Summarize older history at the user's explicit request.
+
+        The manual command ignores `enable_compaction` (that switch
+        governs the automatic triggers) and the budget/count gates:
+        old outputs are elided first — lossless — then anything still
+        compactable is summarized. When nothing is compactable the user
+        is told so instead of being shown an empty compaction.
+        """
+        logger = get_logger()
+        self._elide_old_outputs(
+            self.messages[1:], estimate_history_tokens(self.messages), logger
+        )
+        history = self.messages[1:]
+        if not self._select_compactable(history):
+            self._emit({"type": "info", "text": "Nothing to compact yet."})
+            return
+        self._summarize_history(history, logger)
+
+    def _summarize_history(self, history, logger) -> bool:
+        """Run one lossy compaction pass.
+
+        True when a summary was spliced into history; False when
+        nothing was compactable or the summarizer request failed (the
+        failure self-reports through its own error event).
+        """
         compactable = self._select_compactable(history)
         if not compactable:
-            return
+            return False
         pinned_index = self._first_user_index(history)
         pinned_content = (
             history[pinned_index].get("content") if pinned_index is not None else None
@@ -1534,7 +1618,7 @@ class AgentSession:
                     ),
                 }
             )
-            return
+            return False
         summary_message = {
             "role": "user",
             "content": format_compaction_message(summary),
@@ -1556,6 +1640,7 @@ class AgentSession:
             len(compactable),
             self.max_history_messages,
         )
+        return True
 
     def _select_compactable(self, history: list[dict]) -> list[dict]:
         """Return the history slice eligible for compaction.

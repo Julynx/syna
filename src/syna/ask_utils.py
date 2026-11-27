@@ -83,6 +83,18 @@ def _write_dump(dump_path: Path | None, payload: dict) -> None:
         )
 
 
+def _usage_cost(usage) -> float | None:
+    """Extract a response's cost when the endpoint reports one.
+
+    OpenRouter reports `usage.cost` per response; other endpoints leave
+    it unset. The Speakeasy client models absent fields with an UNSET
+    sentinel rather than None, so anything that is not a real number
+    becomes None.
+    """
+    cost = getattr(usage, "cost", None)
+    return cost if isinstance(cost, (int, float)) else None
+
+
 def _log_response_meta(logger, response, attempt: int) -> None:
     """Log finish reason and the reasoning/completion token split of a reply."""
     choice = response.choices[0]
@@ -136,8 +148,9 @@ def ask_question(
         tools: Optional list of tool schema dictionaries.
         tool_choice: Optional tool choice setting ('auto', 'none', or specific tool).
         usage_callback: Optional callable receiving (prompt_tokens,
-            cached_tokens) of every response, including retried attempts,
-            for session-level usage accounting.
+            cached_tokens, cost) of every response, including retried
+            attempts, for session-level usage accounting. Cost is None
+            when the endpoint does not report one.
 
     Returns:
         The assistant message dictionary appended to history.
@@ -176,6 +189,7 @@ def ask_question(
                             "cached_tokens",
                             None,
                         ),
+                        _usage_cost(usage),
                     )
             message = response.choices[0].message
             if message.refusal:

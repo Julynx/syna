@@ -87,6 +87,67 @@ def test_request_messages_strip_internal_keys():
     assert all(set(message) <= {"role", "content"} for message in stripped)
 
 
+def _usage_client(usage):
+    """A fake client returning one response with the given usage object."""
+
+    class FakeChat:
+        def send(self, **request):
+            message = SimpleNamespace(content="done", refusal=None, tool_calls=None)
+            choice = SimpleNamespace(finish_reason="stop", message=message)
+            return SimpleNamespace(choices=[choice], usage=usage)
+
+    return SimpleNamespace(chat=FakeChat())
+
+
+def _ask_with_usage(monkeypatch, client, usage_callback):
+    monkeypatch.setattr(ask_utils, "load_config", lambda: {"max_output_tokens": 100})
+    ask_utils.ask_question(
+        client,
+        "test/model",
+        [{"role": "user", "content": "hi"}],
+        delay=0,
+        usage_callback=usage_callback,
+    )
+
+
+def test_usage_callback_receives_tokens_and_cost(monkeypatch):
+    details = SimpleNamespace(cached_tokens=40)
+    usage = SimpleNamespace(
+        prompt_tokens=100, prompt_tokens_details=details, cost=0.0035
+    )
+    received = []
+    _ask_with_usage(
+        monkeypatch, _usage_client(usage), lambda *args: received.append(args)
+    )
+    assert received == [(100, 40, 0.0035)], received
+
+
+def test_usage_callback_reports_none_for_unset_cost(monkeypatch):
+    """An UNSET sentinel (not None) still reaches the callback as None."""
+    sentinel = object()
+    details = SimpleNamespace(cached_tokens=40)
+    usage = SimpleNamespace(
+        prompt_tokens=100, prompt_tokens_details=details, cost=sentinel
+    )
+    received = []
+    _ask_with_usage(
+        monkeypatch, _usage_client(usage), lambda *args: received.append(args)
+    )
+    assert received == [(100, 40, None)], received
+
+
+def test_usage_callback_reports_none_without_cost_field(monkeypatch):
+    usage = SimpleNamespace(
+        prompt_tokens=100,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=0),
+    )
+    received = []
+    _ask_with_usage(
+        monkeypatch, _usage_client(usage), lambda *args: received.append(args)
+    )
+    assert received == [(100, 0, None)], received
+
+
 def main():
     """Run every ask_utils test and report a summary."""
     run_suite(
@@ -96,6 +157,9 @@ def main():
             test_capped_marker_on_max_tokens_finish_reason,
             test_no_marker_under_the_cap,
             test_request_messages_strip_internal_keys,
+            test_usage_callback_receives_tokens_and_cost,
+            test_usage_callback_reports_none_for_unset_cost,
+            test_usage_callback_reports_none_without_cost_field,
         ]
     )
 

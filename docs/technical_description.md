@@ -861,10 +861,19 @@ the loop, `ask_utils.py` sends the model requests, and
   `REPEATED_CALL_LIMIT` (3) times within one turn trigger a one-time
   "change approach" harness notice; the same guard covers identical think
   notes (lone or batched).
-- **Session cache accounting**: every response's (prompt, cached) token
-  pair accumulates through `ask_question`'s `usage_callback`; on `close()`
+- **Session cache accounting**: every response's (prompt, cached, cost)
+  triple accumulates through `ask_question`'s `usage_callback` (cost is
+  `None` when the endpoint does not report one — OpenRouter reports
+  `usage.cost` per response, other endpoints leave it unset); on `close()`
   the session logs one aggregate line (requests, prompt tokens, cached
-  tokens, hit ratio) as the health check for prompt-cache behavior.
+  tokens, hit ratio, cost) as the health check for prompt-cache behavior.
+  Main turn-loop requests additionally emit a `usage` event carrying the
+  last request's `context_tokens` (the conversation's context size), the
+  model's resolved `context_window` (OpenRouter's models list; `None`
+  while it is unknown), and
+  the session's cumulative cost; the compaction summarizer's and
+  subagents' requests accumulate silently, so the front-end chip never
+  flashes a non-conversational number.
 - **Lone-think acceptance**: a reply containing only `think` calls is
   accepted rather than bounced; the reply persists in history, pending
   corrective notices from earlier malformed attempts are purged, the no-tool
@@ -879,9 +888,14 @@ the loop, `ask_utils.py` sends the model requests, and
   group. The first real user message is also included in the summarizer's
   transcript as a labeled `[pinned user request]` block, so the summary
   reflects the user's actual request; the summary notice states which parts
-  were kept verbatim.
+  were kept verbatim. `compact_now()` is the manual trigger behind the
+  `/compact` command: it ignores `enable_compaction` (that switch governs
+  the automatic triggers) and the budget/count gates, elides old outputs
+  first — lossless — then summarizes whatever is still compactable, or
+  reports "Nothing to compact yet." when there is nothing.
 - Emits JSON events (`status`, `tool_call`, `model_message`, `compaction`,
-  `error`) with quiet corrective statuses and full `raw`/`arguments` details.
+  `usage`, `error`) with quiet corrective statuses and full `raw`/`arguments`
+  details.
   When a tool's raw return value is a dict it also travels as
   `structured_output` on the finished event, so consumers (the web server,
   the Worlds benchmark harvest) get the structured share_file metadata the
@@ -1013,14 +1027,20 @@ while busy is parked in `pending_rewind` and runs right after the stop takes
 effect. `TerminalChat` is the prompt loop: lifecycle commands (`/stop`,
 `/newchat`, `/exit`), background-work commands (`/jobs`, `/jobs <id>`,
 `/kill <id>` — the kill runs off the prompt thread), rewind commands
-(`/undo`, `/rewind [n]` with a numbered mode prompt), delegation of pod
+(`/undo`, `/rewind [n]` with a numbered mode prompt), the history command
+(`/compact` — refused while busy, `session.compact_now()` otherwise),
+delegation of pod
 transfer commands to `commands.py`, the Ctrl+C matrix (busy → stop,
 double-Ctrl+C within the force-exit window → hard exit of a wedged
 session, question → release, idle → exit), and EOF semantics (a running
 task finishes before exit). Every command handler runs under a guard, so
 a failing pod call reports an error instead of killing the loop. Worker
 output flows through an injected printer,
-keeping the state machine testable without a console.
+keeping the state machine testable without a console. `ask.py` renders
+each `usage` event as a dim `  + · 7k/1M ctx · $0.0003` line (just
+`7k ctx` while the models fetch is unknown), giving the
+terminal the same per-response context and session-cost feedback the
+web UI's top-bar chip shows.
 
 ### `src/syna/conversation/commands.py`
 
@@ -1756,7 +1776,17 @@ turn (the message's Allegro flag and client id are captured at enqueue time in
 client's queue pill, and the worker re-pushes the message without the flag
 when it dequeues a queued item, turning the pill into a chat bubble;
 injected messages are announced by the session itself at the moment they
-enter history). After every turn the worker re-enqueues undelivered
+enter history). `command` messages route through `_handle_web_command`:
+the `WEB_COMMANDS` whitelist is the authoritative gate for what the web
+UI's client-side registry may send — a whitelisted command enqueues an
+inbox item the worker runs strictly between turns (`compact` calls
+`session.compact_now()`), while unknown names and submissions during a
+pending question are refused with an error event. Session `usage`
+events keep exactly one replace-in-place entry in the replayed log
+(`push_usage`): the top-bar chip restores the session's latest numbers
+on a reloaded page, a new chat starts from an empty log, and the
+per-request events never flood the replay cap or evict real chat rows.
+After every turn the worker re-enqueues undelivered
 injections. `stop`,
 `new-chat`, and teardown release the pending question so
 the blocked tool unwinds as a failed call. `GET /api/image/{client_id}`
@@ -2013,6 +2043,30 @@ drops are ignored.
 - The composer area ends with a small centered cursive disclaimer:
   "Syna is an AI agent; it can make mistakes. Review its outputs and
   files before acting on them."
+- The composer's placeholder hints at slash commands:
+  "Message Syna... (/help to view commands)". Inputs starting with `/`
+  route through a client-side registry (`SLASH_COMMANDS`): `/help`
+  renders the command list locally (a styled block mirroring the
+  terminal's help format — description line, then the indented
+  `/command` usage), anything else is sent as a `command` message for
+  the server's `WEB_COMMANDS` gate, with the same queueing semantics
+  as messages; unknown names get a local error row pointing at /help.
+  A plain-node drift-guard test (`tests/js/test_slash_commands.cjs`)
+  asserts every non-local registry entry exists in the server
+  whitelist and that `/help` never reaches it.
+- A session usage chip sits centered in the top bar (`#usage-chip`,
+  absolutely centered between the brand and the action buttons): it
+  shows the running session's context use as a share of the model's
+  window — "7k / 1M", the last request's prompt tokens over the real
+  context window OpenRouter's models list reports, or just "7k" while
+  the fetch is pending, after a failure, or off OpenRouter — plus the
+  session's cumulative cost ("7k / 1M · $0.0003"; two decimals at
+  $0.01 and above, four below). The chip is fed by
+  `usage` events (one per main turn-loop request) that keep exactly
+  one replace-in-place entry in the server's replayed event log: a
+  reloaded or reopened page restores the chip with the session's
+  latest numbers while the server session still exists, and a new
+  chat starts from an empty log and an empty chip.
 - Tool-row headers read the parsed `arguments` of the event (per-tool
   primary key) instead of regex-parsing the repr signature, which broke
   on commands containing single quotes (Python repr switches to double

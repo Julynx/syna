@@ -61,6 +61,10 @@ TERMINAL_COMMANDS = {
         "description": "Drop the conversation and destroy the pod.",
         "arg_help": "",
     },
+    "compact": {
+        "description": "Summarize older history now.",
+        "arg_help": "",
+    },
     "exit": {"description": "End the chat with Syna.", "arg_help": ""},
 }
 
@@ -383,6 +387,7 @@ class TerminalChat:
             "kill": self._command_kill,
             "undo": self._command_undo,
             "rewind": self._command_rewind,
+            "compact": self._command_compact,
             "newchat": self._command_newchat,
             "exit": self._command_exit,
             "help": self._command_help,
@@ -691,6 +696,14 @@ class TerminalChat:
             if answer == "3":
                 return None
             self.say("    Answer with a number, 1 to 3.")
+
+    def _command_compact(self, args: str) -> None:
+        """Summarize older history on the user's explicit request."""
+        if self.terminal.busy.is_set():
+            self.say("  ! (Syna is busy; try /compact again when idle.)")
+            return
+        self.say("  + (Compacting history...)")
+        self.terminal.session.compact_now()
 
     def _command_newchat(self, args: str) -> None:
         """Drop the conversation and destroy the pod; start fresh."""

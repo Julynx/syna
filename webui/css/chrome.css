@@ -22,6 +22,24 @@ header {
   margin-left: auto;
 }
 
+/* Session usage chip, centered in the top bar: the last request's
+   context tokens and the session's cumulative cost. Absolute centering
+   keeps it fixed between the brand and the action buttons whatever
+   their widths. Populated by non-persistent usage events, so it clears
+   on new chat and when the browser goes away. */
+.usage-chip {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  padding: 4px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;

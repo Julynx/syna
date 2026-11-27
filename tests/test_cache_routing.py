@@ -149,7 +149,9 @@ def test_ask_question_applies_routing_fields_and_reports_usage(monkeypatch):
         [{"role": "user", "content": "hi"}],
         delay=0,
         session_id="sess-1",
-        usage_callback=lambda prompt, cached: usage_samples.append((prompt, cached)),
+        usage_callback=lambda prompt, cached, cost: usage_samples.append(
+            (prompt, cached, cost)
+        ),
     )
 
     assert reply["content"] == "done"
@@ -159,7 +161,7 @@ def test_ask_question_applies_routing_fields_and_reports_usage(monkeypatch):
     assert "cache_control" not in client.requests[0], (
         "non-anthropic models get no cache opt-in"
     )
-    assert usage_samples == [(1000, 800)], "usage flows to the callback"
+    assert usage_samples == [(1000, 800, None)], "usage flows to the callback"
 
     monkeypatch.setattr(
         config_module,
@@ -210,11 +212,12 @@ def test_session_logs_cache_summary_on_close(monkeypatch):
 
     session = AgentSession(session_id="cache-summary-test")
     session._record_usage(1000, 800)
-    session._record_usage(1000, 0)
+    session._record_usage(1000, 0, 0.004)
     assert session._usage_totals == {
         "requests": 2,
         "prompt_tokens": 2000,
         "cached_tokens": 800,
+        "cost": 0.004,
     }, "usage accumulates across requests"
 
     fake_logger = FakeLogger()

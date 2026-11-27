@@ -98,6 +98,29 @@ NEW_CHAT_STOP_TIMEOUT_S = 20
 IMAGE_CACHE_LIMIT = 32
 SERVER_ENTRY_POINT = "syna-server"
 
+# Web slash commands the server accepts. The web UI's own registry
+# (including its local /help) mirrors this list; here is the boundary.
+WEB_COMMANDS = frozenset({"compact"})
+
+
+def _handle_web_command(record: SessionRecord, data: dict) -> None:
+    """Route one web slash command; the worker runs it between turns.
+
+    The WEB_COMMANDS whitelist is the authoritative gate for what the
+    web UI's client-side registry may send. A submission while a
+    question is pending is refused: commands have no answer semantics.
+    """
+    name = str(data.get("name", "")).strip().lower()
+    if name not in WEB_COMMANDS:
+        record.push({"type": "error", "text": f"Unknown command: /{name or '?'}"})
+    elif record.pending_question.active:
+        record.push({"type": "error", "text": "Answer the pending question first."})
+    else:
+        record.enqueue_message(
+            {"kind": "command", "name": name, "id": str(data.get("id", ""))}
+        )
+
+
 SERVED_IMAGE_EXTENSIONS = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -170,6 +193,23 @@ class SessionRecord:
                 self.event_log.append(event)
                 if len(self.event_log) > EVENT_LOG_MAX_ITEMS:
                     self.event_log.pop(0)
+            for subscriber in self.subscribers:
+                subscriber.put(event)
+
+    def push_usage(self, event: dict):
+        """Deliver a usage event and keep only the latest one in the log.
+
+        Usage is idempotent state, not history: the log holds one entry
+        showing the session's latest numbers, so the replay cap is
+        never flooded with one event per request, older chat rows are
+        never evicted, and a reloaded page restores the chip with the
+        current values while the server session still exists.
+        """
+        with self.event_log_lock:
+            self.event_log = [
+                logged for logged in self.event_log if logged.get("type") != "usage"
+            ]
+            self.event_log.append(event)
             for subscriber in self.subscribers:
                 subscriber.put(event)
 
@@ -482,6 +522,13 @@ class SessionRecord:
     def _on_session_event(self, event: dict):
         if event.get("type") == "rewind_state":
             event = self._decorate_rewind_state(event)
+        if event.get("type") == "usage":
+            # One replace-in-place log entry: a reloaded page restores
+            # the chip with the session's latest numbers, a new chat
+            # starts from an empty log, and the per-request events
+            # never flood the replay cap or evict real chat rows.
+            self.push_usage(event)
+            return
         metadata = shared_file_metadata(event)
         if metadata is not None:
             try:
@@ -549,6 +596,9 @@ class SessionRecord:
                     if self.container is None and item.get("mode") == "all":
                         self._start_container()
                     self._execute_rewind(item)
+                    continue
+                if item.get("kind") == "command":
+                    self._execute_command(item)
                     continue
                 if item.get("kind") != "message":
                     continue
@@ -694,6 +744,22 @@ class SessionRecord:
                 }
             ),
         )
+
+    def _execute_command(self, item: dict):
+        """Run one queued web slash command between turns.
+
+        Commands are model-only (no pod involved), so they run even when
+        the session's container never came up. The session reports its
+        own progress and failures through its events; the guard below
+        only covers unexpected routing errors.
+        """
+        name = str(item.get("name", ""))
+        try:
+            if name == "compact":
+                self.session.compact_now()
+        except Exception:
+            logger.exception("Command /%s failed for session %s", name, self.client_id)
+            self.push({"type": "error", "text": f"/{name} failed."})
 
     def _execute_rewind(self, request: dict):
         """Truncate the conversation back to a rewind point.
@@ -1891,6 +1957,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     record.session.queue_injection(item)
                 else:
                     record.enqueue_message(item)
+            elif message_type == "command":
+                _handle_web_command(record, data)
             elif message_type == "answer":
                 choice = str(data.get("choice", "")).strip()
                 if not choice:

@@ -9,6 +9,7 @@ const newchatBtn = document.getElementById("newchat-btn");
 const settingsBtn = document.getElementById("settings-btn");
 const bgBtn = document.getElementById("bg-btn");
 const fileInput = document.getElementById("file-input");
+const usageChip = document.getElementById("usage-chip");
 const statusRow = document.createElement("div");
 statusRow.className = "inline-status glass";
 statusRow.innerHTML =
@@ -1442,6 +1443,49 @@ function addEventRow(text, isError) {
   append(row);
 }
 
+/* The centered top-bar chip shows the running session's context use
+   (the last request's prompt tokens) against the model's context
+   window when OpenRouter's models list knows it ("7k / 1M"), plus the
+   session's cumulative cost. The usage event is non-persistent, so the
+   numbers clear on new chat or when the browser goes away instead of
+   replaying on reconnect. */
+function formatTokens(value) {
+  if (value >= 1000000) {
+    const millions = value / 1000000;
+    return (Number.isInteger(millions) ? millions : millions.toFixed(1)) + "M";
+  }
+  if (value >= 1000) return Math.floor(value / 1000) + "k";
+  return String(value);
+}
+
+function updateUsageChip(event) {
+  if (!usageChip) return;
+  const parts = [];
+  const contextTokens = event.context_tokens;
+  if (typeof contextTokens === "number" && contextTokens >= 0) {
+    const contextWindow = event.context_window;
+    parts.push(
+      typeof contextWindow === "number" && contextWindow > contextTokens
+        ? formatTokens(contextTokens) + " / " + formatTokens(contextWindow)
+        : formatTokens(contextTokens),
+    );
+  }
+  const cost = event.cost;
+  if (typeof cost === "number" && cost >= 0) {
+    parts.push(cost >= 0.01 ? "$" + cost.toFixed(2) : "$" + cost.toFixed(4));
+  }
+  if (!parts.length) return;
+  usageChip.textContent = parts.join(" · ");
+  usageChip.hidden = false;
+}
+
+function clearUsageChip() {
+  if (usageChip) {
+    usageChip.hidden = true;
+    usageChip.textContent = "";
+  }
+}
+
 function addCompactionRow(event) {
   const row = document.createElement("div");
   row.className = "tool-row glass compaction-row toggleable";
@@ -1648,6 +1692,9 @@ function render(event) {
     case "compaction":
       addCompactionRow(event);
       break;
+    case "usage":
+      updateUsageChip(event);
+      break;
     case "info":
       addEventRow(event.text, false);
       break;
@@ -1722,6 +1769,7 @@ function connect() {
     busy = false;
     resetAskState();
     clearQueuedMessages();
+    clearUsageChip();
     setSendState();
     setStatus("", "Connecting...");
     updateAmbient();
@@ -1784,9 +1832,72 @@ function setSendState() {
   sendBtn.disabled = busy && !pendingAnswer ? false : !input.value.trim();
 }
 
+/* Web slash commands. `local` runs entirely in the browser (nothing is
+   sent); every other entry goes to the server as a command, whose
+   WEB_COMMANDS whitelist is the authoritative gate — keep the two in
+   step. */
+const SLASH_COMMANDS = {
+  help: {
+    description: "Show the available commands.",
+    argHelp: "",
+    local: true,
+  },
+  compact: {
+    description: "Summarize older history now.",
+    argHelp: "",
+  },
+};
+
+function sendSlashCommand(content) {
+  const name = content.slice(1).trim().split(/\s+/)[0].toLowerCase();
+  const command = SLASH_COMMANDS[name];
+  if (!command) {
+    addEventRow(
+      "Unknown command '/" + name + "'. Type /help to view commands.",
+      true,
+    );
+    return;
+  }
+  if (command.local) {
+    addHelpMessage();
+  } else {
+    ws.send(JSON.stringify({ type: "command", name: name }));
+  }
+  Sfx.play("send");
+  input.value = "";
+  fitInput();
+  setSendState();
+  input.focus();
+}
+
+function addHelpMessage() {
+  const block = document.createElement("div");
+  block.className = "event-row glass help-block";
+  const title = document.createElement("div");
+  title.className = "help-title";
+  title.textContent = "The following commands are supported:";
+  block.appendChild(title);
+  for (const [name, command] of Object.entries(SLASH_COMMANDS)) {
+    const item = document.createElement("div");
+    item.className = "help-item";
+    const description = document.createElement("div");
+    description.textContent = command.description;
+    const usage = document.createElement("div");
+    usage.className = "help-cmd";
+    usage.textContent = "/" + name + command.argHelp;
+    item.append(description, usage);
+    block.appendChild(item);
+  }
+  append(block);
+}
+
 function sendMessage() {
   const content = input.value.trim();
   if (!content || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (content.startsWith("/")) {
+    sendSlashCommand(content);
+    return;
+  }
   ws.send(
     JSON.stringify({
       type: "message",
@@ -1838,6 +1949,7 @@ async function newChat() {
     toolRun = null;
     replayQueue = [];
     runningToolRow = null;
+    clearUsageChip();
     Sfx.endToolWait();
     openFileGroup = null;
     thinkingRow = null;
