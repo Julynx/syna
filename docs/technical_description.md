@@ -1819,13 +1819,7 @@ cannot make Ctrl+C look ineffective. On Windows this matters: Windows
 Terminal treats Ctrl+C as copy whenever text is selected in the pane,
 so a server that "ignores" Ctrl+C is usually one with a selection
 hanging around — press Esc to clear it, or use Ctrl+Break, which
-uvicorn also handles. Because the console path can still degrade on
-some machines over very long sessions, the UI carries the same
-escape hatch: the top-bar quit button (power icon, two presses to
-confirm) calls the token-protected `POST /api/shutdown`, which sets
-`should_exit` on the running uvicorn server and runs this identical
-graceful path; the page then stops reconnecting and points at the
-launcher.
+uvicorn also handles.
 
 Background work surfaces: after the pod starts, the session record
 registers the registry's `event_sink` (subagent streaming as

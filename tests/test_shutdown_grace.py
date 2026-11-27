@@ -11,13 +11,10 @@ import logging
 import signal
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from _runner import MonkeyPatch, run_suite
-
-from fastapi.testclient import TestClient
 
 import syna.server as server_module
 from syna.server import (
@@ -25,8 +22,6 @@ from syna.server import (
     _ShutdownAwareServer,
     build_server_config,
 )
-
-LOCAL_HOST = {"host": "127.0.0.1:8000"}
 
 
 class _ListHandler(logging.Handler):
@@ -102,46 +97,6 @@ def test_second_shutdown_signal_announces_force_exit(monkeypatch):
     )
 
 
-def test_shutdown_endpoint_flips_the_running_server(monkeypatch):
-    stub = SimpleNamespace(should_exit=False)
-    monkeypatch.setattr(server_module, "AUTH_TOKEN", None)
-    monkeypatch.setattr(server_module, "_running_server", stub)
-    client = TestClient(server_module.app)
-
-    response = client.post("/api/shutdown")
-
-    assert response.status_code == 200, response.text
-    assert response.json() == {"status": "stopping"}
-    assert stub.should_exit is True, "the endpoint arms uvicorn's graceful stop"
-
-
-def test_shutdown_endpoint_without_a_running_server(monkeypatch):
-    monkeypatch.setattr(server_module, "AUTH_TOKEN", None)
-    monkeypatch.setattr(server_module, "_running_server", None)
-    client = TestClient(server_module.app)
-
-    response = client.post("/api/shutdown")
-
-    assert response.status_code == 409, response.text
-
-
-def test_shutdown_endpoint_requires_the_token(monkeypatch):
-    monkeypatch.setattr(server_module, "AUTH_TOKEN", "secret123")
-    monkeypatch.setattr(
-        server_module, "_running_server", SimpleNamespace(should_exit=False)
-    )
-    client = TestClient(server_module.app)
-
-    denied = client.post("/api/shutdown", headers=LOCAL_HOST)
-    allowed = client.post(
-        "/api/shutdown", headers={**LOCAL_HOST, "X-Syna-Token": "secret123"}
-    )
-
-    assert denied.status_code == 401
-    assert allowed.status_code == 200
-    assert allowed.json() == {"status": "stopping"}
-
-
 def main():
     run_suite(
         [
@@ -149,9 +104,6 @@ def main():
             test_config_defaults_to_ten_seconds,
             test_first_shutdown_signal_is_announced,
             test_second_shutdown_signal_announces_force_exit,
-            test_shutdown_endpoint_flips_the_running_server,
-            test_shutdown_endpoint_without_a_running_server,
-            test_shutdown_endpoint_requires_the_token,
         ]
     )
 

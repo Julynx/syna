@@ -6,7 +6,6 @@ const sendBtn = document.getElementById("send-btn");
 const attachBtn = document.getElementById("attach-btn");
 const allegroBtn = document.getElementById("allegro-btn");
 const newchatBtn = document.getElementById("newchat-btn");
-const quitBtn = document.getElementById("quit-btn");
 const settingsBtn = document.getElementById("settings-btn");
 const bgBtn = document.getElementById("bg-btn");
 const fileInput = document.getElementById("file-input");
@@ -63,7 +62,6 @@ let ws = null;
 let reconnectDelay = 1000;
 let busy = false;
 let replaying = true;
-let serverStopped = false;
 
 /* Performance state: cached layout constants and tracked elements so
    per-event work stays O(1) instead of scanning a long chat. The replay
@@ -121,7 +119,6 @@ const ICONS = {
   terminal: GLYPH("terminal"),
   globe: GLYPH("public"),
   newchat: GLYPH("refresh"),
-  quit: GLYPH("power_settings_new"),
   search: GLYPH("search"),
   pencil: GLYPH("edit"),
   eye: GLYPH("visibility"),
@@ -1777,7 +1774,7 @@ function connect() {
     setStatus("", "Connecting...");
     updateAmbient();
     banner.classList.add("visible");
-    if (!serverStopped) scheduleReconnect();
+    scheduleReconnect();
   };
 
   ws.onerror = () => ws.close();
@@ -3177,36 +3174,6 @@ attachBtn.innerHTML = ICONS.clip;
 newchatBtn.innerHTML = ICONS.newchat;
 if (APP_VERSION)
   document.getElementById("brand-version").textContent = "v" + APP_VERSION;
-if (quitBtn) {
-  /* Two-step quit: the first press arms the button, the second (within
-     four seconds) stops the server. After a successful stop the page
-     stops reconnecting and points at the launcher. */
-  quitBtn.innerHTML = ICONS.quit;
-  let quitArmedAt = 0;
-  const DISARM_MS = 4000;
-  quitBtn.addEventListener("click", async () => {
-    if (Date.now() - quitArmedAt >= DISARM_MS) {
-      quitArmedAt = Date.now();
-      quitBtn.classList.add("armed");
-      setTimeout(() => {
-        if (!serverStopped) quitBtn.classList.remove("armed");
-      }, DISARM_MS);
-      return;
-    }
-    quitBtn.disabled = true;
-    serverStopped = true;
-    try {
-      await fetch(withToken(API_BASE + "/api/shutdown"), { method: "POST" });
-    } catch (err) {
-      quitBtn.disabled = false;
-      serverStopped = false;
-      return;
-    }
-    banner.textContent =
-      "Syna stopped. Close this tab, or start it again with your launcher.";
-    banner.classList.add("visible");
-  });
-}
 if (settingsBtn) {
   settingsBtn.innerHTML = ICONS.settings;
   settingsBtn.addEventListener("click", openSettingsModal);

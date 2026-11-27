@@ -98,11 +98,6 @@ footer {
   font-size: 19px;
 }
 
-#quit-btn.armed {
-  background: var(--surface-soft);
-  color: var(--danger);
-}
-
 #input {
   flex: 1;
   border: none;

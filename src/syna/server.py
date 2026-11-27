@@ -2041,33 +2041,7 @@ def build_server_config(host: str, port: int) -> uvicorn.Config:
 
 def run_server(host: str, port: int) -> None:
     """Run the FastAPI app on the shutdown-aware uvicorn server."""
-    global _running_server
-    _running_server = _ShutdownAwareServer(build_server_config(host, port))
-    try:
-        _running_server.run()
-    finally:
-        _running_server = None
-
-
-_running_server: _ShutdownAwareServer | None = None
-
-
-@app.post("/api/shutdown")
-def shutdown_server():
-    """Stop the server cleanly from the web UI.
-
-    The token-protected escape hatch for a misbehaving terminal: setting
-    should_exit runs the same graceful path as Ctrl+C — connections
-    drain, the lifespan tears down every session's pod — bounded by the
-    graceful-shutdown timeout. The response is delivered before the
-    stop begins.
-    """
-    if _running_server is None:
-        raise HTTPException(
-            status_code=409, detail="The server was not started through main()."
-        )
-    _running_server.should_exit = True
-    return {"status": "stopping"}
+    _ShutdownAwareServer(build_server_config(host, port)).run()
 
 
 def main():
