@@ -313,8 +313,9 @@ header {
   border-bottom: 1px solid var(--border);
 }
 
-/* The right-side button cluster; the auto margin hugs it to the edge
-   regardless of which member buttons are hidden. */
+/* The right-side button cluster. The auto margin is the fallback that
+   keeps the cluster on the edge while the usage chip is hidden; when
+   the chip is visible it takes the push over (see :has below). */
 .header-actions {
   display: flex;
   align-items: center;
@@ -322,22 +323,61 @@ header {
   margin-left: auto;
 }
 
-/* Session usage chip, centered in the top bar: the last request's
-   context tokens and the session's cumulative cost. Absolute centering
-   keeps it fixed between the brand and the action buttons whatever
-   their widths. Populated by non-persistent usage events, so it clears
-   on new chat and when the browser goes away. */
-.usage-chip {
+header:has(.usage-chip:not([hidden])) .header-actions {
+  margin-left: 0;
+}
+
+/* Session usage chip: the last request's context tokens and the
+   session's cumulative cost, as a glass pill hugging the right of the
+   top bar, immediately left of the action buttons. Populated by
+   non-persistent usage events, so it clears on new chat and when the
+   browser goes away. */
+/* The pill doubles as a context gauge: a ::before layer fills it from
+   the left with the fraction of the context window the last request
+   used (--usage-fill, set by the usage event). The fill is a lighter
+   wash over the pill's own surface; text segments sit above it. */
+.usage-chip:not([hidden]) {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.usage-chip::before {
+  content: "";
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--usage-fill, 0%);
+  background: rgba(255, 255, 255, 0.14);
+  transition: width 700ms ease;
+}
+
+.usage-chip > span {
+  position: relative;
+}
+
+.usage-chip {
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
   padding: 4px 12px;
   border-radius: 999px;
   white-space: nowrap;
-  pointer-events: none;
+  cursor: default;
+  background-color: var(--surface-soft);
+  border: 1px solid var(--glass-line);
+}
+
+/* The hairline splitting context from cost: equal margins either side
+   center it between the two halves of the pill. */
+.usage-sep {
+  width: 1px;
+  height: 12px;
+  margin: 0 9px;
+  background: var(--glass-line);
 }
 
 .brand {
@@ -2601,7 +2641,12 @@ body.voice-off #mic-btn {
         ><img class="brand-logo" src="vendor/syna-logo.png" alt="Syna"
         /><span class="brand-version" id="brand-version"></span
       ></span>
-      <div id="usage-chip" class="usage-chip" hidden></div>
+      <div
+        id="usage-chip"
+        class="usage-chip"
+        title="Session context use and cost"
+        hidden
+      ></div>
       <div class="header-actions">
         <button
           id="bg-btn"
@@ -5074,7 +5119,10 @@ function addEventRow(text, isError) {
 function formatTokens(value) {
   if (value >= 1000000) {
     const millions = value / 1000000;
-    return (Number.isInteger(millions) ? millions : millions.toFixed(1)) + "M";
+    const formatted = Number.isInteger(millions)
+      ? String(millions)
+      : millions.toFixed(1).replace(/\.0$/, "");
+    return formatted + "M";
   }
   if (value >= 1000) return Math.floor(value / 1000) + "k";
   return String(value);
@@ -5082,10 +5130,26 @@ function formatTokens(value) {
 
 function updateUsageChip(event) {
   if (!usageChip) return;
-  const parts = [];
   const contextTokens = event.context_tokens;
+  const contextWindow = event.context_window;
+  /* The pill doubles as the context gauge: the fill width is the used
+     fraction of the window, clamped and cleared when the denominator
+     is unknown. */
+  if (
+    typeof contextTokens === "number" &&
+    typeof contextWindow === "number" &&
+    contextWindow > 0
+  ) {
+    const percent = Math.max(
+      0,
+      Math.min(100, (contextTokens / contextWindow) * 100),
+    );
+    usageChip.style.setProperty("--usage-fill", percent.toFixed(2) + "%");
+  } else {
+    usageChip.style.setProperty("--usage-fill", "0%");
+  }
+  const parts = [];
   if (typeof contextTokens === "number" && contextTokens >= 0) {
-    const contextWindow = event.context_window;
     parts.push(
       typeof contextWindow === "number" && contextWindow > contextTokens
         ? formatTokens(contextTokens) + " / " + formatTokens(contextWindow)
@@ -5097,7 +5161,20 @@ function updateUsageChip(event) {
     parts.push(cost >= 0.01 ? "$" + cost.toFixed(2) : "$" + cost.toFixed(4));
   }
   if (!parts.length) return;
-  usageChip.textContent = parts.join(" · ");
+  /* Context and cost read as two halves of one pill: a hairline divider
+     between them instead of a centered dot. Text assignments keep the
+     numbers as plain text; the divider is the one styled element. */
+  usageChip.textContent = "";
+  parts.forEach((part, index) => {
+    if (index) {
+      const divider = document.createElement("span");
+      divider.className = "usage-sep";
+      usageChip.appendChild(divider);
+    }
+    const segment = document.createElement("span");
+    segment.textContent = part;
+    usageChip.appendChild(segment);
+  });
   usageChip.hidden = false;
 }
 
@@ -5105,6 +5182,7 @@ function clearUsageChip() {
   if (usageChip) {
     usageChip.hidden = true;
     usageChip.textContent = "";
+    usageChip.style.removeProperty("--usage-fill");
   }
 }
 
@@ -5207,6 +5285,11 @@ function render(event) {
     Voice.willNarrate(event.content);
   if (snd && !narrates) Sfx.play(snd);
   if (event.type !== "file" && event.type !== "file_sent") closeFileGroup();
+  /* A tool run spans every consecutive tool call, so only events the
+     user can see may end one: bubbles, file cards, errors, infos.
+     Invisible accounting that fires mid-turn (usage after every model
+     request, injected background wakes, replay markers) must not split
+     the group into one "See more" per batch. */
   if (
     event.type !== "tool_call" &&
     event.type !== "status" &&
@@ -5216,7 +5299,10 @@ function render(event) {
     event.type !== "subagent_message" &&
     event.type !== "background_done" &&
     event.type !== "rewind_state" &&
-    event.type !== "history_rewind"
+    event.type !== "history_rewind" &&
+    event.type !== "usage" &&
+    event.type !== "injected_notice" &&
+    event.type !== "history_done"
   ) {
     resetToolRun();
   }

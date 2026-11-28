@@ -1452,7 +1452,10 @@ function addEventRow(text, isError) {
 function formatTokens(value) {
   if (value >= 1000000) {
     const millions = value / 1000000;
-    return (Number.isInteger(millions) ? millions : millions.toFixed(1)) + "M";
+    const formatted = Number.isInteger(millions)
+      ? String(millions)
+      : millions.toFixed(1).replace(/\.0$/, "");
+    return formatted + "M";
   }
   if (value >= 1000) return Math.floor(value / 1000) + "k";
   return String(value);
@@ -1460,10 +1463,26 @@ function formatTokens(value) {
 
 function updateUsageChip(event) {
   if (!usageChip) return;
-  const parts = [];
   const contextTokens = event.context_tokens;
+  const contextWindow = event.context_window;
+  /* The pill doubles as the context gauge: the fill width is the used
+     fraction of the window, clamped and cleared when the denominator
+     is unknown. */
+  if (
+    typeof contextTokens === "number" &&
+    typeof contextWindow === "number" &&
+    contextWindow > 0
+  ) {
+    const percent = Math.max(
+      0,
+      Math.min(100, (contextTokens / contextWindow) * 100),
+    );
+    usageChip.style.setProperty("--usage-fill", percent.toFixed(2) + "%");
+  } else {
+    usageChip.style.setProperty("--usage-fill", "0%");
+  }
+  const parts = [];
   if (typeof contextTokens === "number" && contextTokens >= 0) {
-    const contextWindow = event.context_window;
     parts.push(
       typeof contextWindow === "number" && contextWindow > contextTokens
         ? formatTokens(contextTokens) + " / " + formatTokens(contextWindow)
@@ -1475,7 +1494,20 @@ function updateUsageChip(event) {
     parts.push(cost >= 0.01 ? "$" + cost.toFixed(2) : "$" + cost.toFixed(4));
   }
   if (!parts.length) return;
-  usageChip.textContent = parts.join(" · ");
+  /* Context and cost read as two halves of one pill: a hairline divider
+     between them instead of a centered dot. Text assignments keep the
+     numbers as plain text; the divider is the one styled element. */
+  usageChip.textContent = "";
+  parts.forEach((part, index) => {
+    if (index) {
+      const divider = document.createElement("span");
+      divider.className = "usage-sep";
+      usageChip.appendChild(divider);
+    }
+    const segment = document.createElement("span");
+    segment.textContent = part;
+    usageChip.appendChild(segment);
+  });
   usageChip.hidden = false;
 }
 
@@ -1483,6 +1515,7 @@ function clearUsageChip() {
   if (usageChip) {
     usageChip.hidden = true;
     usageChip.textContent = "";
+    usageChip.style.removeProperty("--usage-fill");
   }
 }
 
@@ -1585,6 +1618,11 @@ function render(event) {
     Voice.willNarrate(event.content);
   if (snd && !narrates) Sfx.play(snd);
   if (event.type !== "file" && event.type !== "file_sent") closeFileGroup();
+  /* A tool run spans every consecutive tool call, so only events the
+     user can see may end one: bubbles, file cards, errors, infos.
+     Invisible accounting that fires mid-turn (usage after every model
+     request, injected background wakes, replay markers) must not split
+     the group into one "See more" per batch. */
   if (
     event.type !== "tool_call" &&
     event.type !== "status" &&
@@ -1594,7 +1632,10 @@ function render(event) {
     event.type !== "subagent_message" &&
     event.type !== "background_done" &&
     event.type !== "rewind_state" &&
-    event.type !== "history_rewind"
+    event.type !== "history_rewind" &&
+    event.type !== "usage" &&
+    event.type !== "injected_notice" &&
+    event.type !== "history_done"
   ) {
     resetToolRun();
   }

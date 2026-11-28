@@ -53,7 +53,7 @@ def _format_tokens(value: int) -> str:
         millions = value / 1_000_000
         if millions.is_integer():
             return f"{int(millions)}M"
-        return f"{millions:.1f}M"
+        return f"{millions:.1f}".replace(".0", "") + "M"
     if value >= 1000:
         return f"{value // 1000}k"
     return str(value)
