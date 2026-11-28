@@ -48,10 +48,10 @@ def test_cache_control_fields_target_anthropic_on_openrouter(monkeypatch):
     monkeypatch.setattr(config_module, "get_env", dict)
     monkeypatch.setattr(config_module, "load_config", dict)
     assert cache_control_fields("~anthropic/claude-sonnet-5.5") == {
-        "cache_control": {"type": "ephemeral"}
+        "cache_control": {"type": "ephemeral", "ttl": "1h"}
     }, "the default model id's ~ prefix is stripped before the provider check"
     assert cache_control_fields("anthropic/claude-opus-5.5") == {
-        "cache_control": {"type": "ephemeral"}
+        "cache_control": {"type": "ephemeral", "ttl": "1h"}
     }, "plain anthropic model ids get caching too"
 
     assert cache_control_fields("~z-ai/glm-flash-latest") == {}, (
@@ -74,14 +74,10 @@ def test_cache_control_fields_honor_ttl_config(monkeypatch):
     import syna.config as config_module
 
     monkeypatch.setattr(config_module, "get_env", dict)
-    monkeypatch.setattr(
-        config_module,
-        "load_config",
-        lambda: {"anthropic_cache_ttl": "1h"},
-    )
+    monkeypatch.setattr(config_module, "load_config", dict)
     assert cache_control_fields("anthropic/claude-opus-5.5") == {
         "cache_control": {"type": "ephemeral", "ttl": "1h"}
-    }, "the one-hour TTL avoids re-writing the prefix during long tool calls"
+    }, "the one-hour default suits turn gaps longer than the 5-minute TTL"
     monkeypatch.setattr(
         config_module,
         "load_config",
@@ -89,7 +85,7 @@ def test_cache_control_fields_honor_ttl_config(monkeypatch):
     )
     assert cache_control_fields("anthropic/claude-opus-5.5") == {
         "cache_control": {"type": "ephemeral"}
-    }, "the default TTL matches Anthropic's own default"
+    }, "an explicit 5m opts out of the one-hour write premium"
 
 
 class FakeUsageDetails:
@@ -190,9 +186,10 @@ def test_ask_question_applies_routing_fields_and_reports_usage(monkeypatch):
         delay=0,
         session_id="sess-1",
     )
-    assert client.requests[0].get("cache_control") == {"type": "ephemeral"}, (
-        "Claude conversations must opt in to prompt caching"
-    )
+    assert client.requests[0].get("cache_control") == {
+        "type": "ephemeral",
+        "ttl": "1h",
+    }, "Claude conversations must opt in to prompt caching"
 
 
 class FakeLogger:

@@ -8,15 +8,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from _runner import run_suite
+
 from syna.protocol.channel import (
     format_tool_result_content,
     is_channel_message,
     unwrap_channel,
 )
 from syna.protocol.context import (
+    elide_images,
     elide_tool_outputs,
     estimate_history_tokens,
     estimate_tokens,
+    recent_window_size,
 )
 from syna.state import build_pod_host_config, register_container, unregister_container
 from syna.capabilities.tools import TOOL_REGISTRY
@@ -37,6 +41,19 @@ def _tool_results_message(
 ) -> dict:
     content = format_tool_result_content(status="ok", output=output, saved_to=saved_to)
     return {"role": "tool", "tool_call_id": f"call_{call}", "content": content}
+
+
+def _image_message(path: str, image_tokens: int) -> dict:
+    """Mirror `_image_history_message`'s shape: list content plus estimates."""
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": f"inspect_image attached '{path}':"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,xxx"}},
+        ],
+        "image_tokens": image_tokens,
+        "image_path": path,
+    }
 
 
 def test_estimate_tokens_bounds():
@@ -159,26 +176,97 @@ def test_elide_is_idempotent():
     assert body.count("output elided") == 1
 
 
-def test_elide_min_chars_keeps_short_outputs_full_text():
-    short = _tool_results_message(
-        1, "web_search", "tiny output", "/tool_outputs/0001_web_search.txt"
+def test_elide_min_savings_keeps_marginal_rewrites_inline():
+    """A rewrite that saves fewer than the threshold tokens is a net loss.
+
+    The excerpt is nearly as long as the output, while the cache suffix
+    after the rewritten message re-bills whole - so marginal rewrites
+    must stay inline with their pointer attached.
+    """
+    marginal = _tool_results_message(
+        1, "web_search", "m" * 700, "/tool_outputs/0001_web_search.txt"
     )
-    long = _tool_results_message(
-        2, "web_search", "x" * 2500, "/tool_outputs/0002_web_search.txt"
+    worth_it = _tool_results_message(
+        2, "web_search", "w" * 2500, "/tool_outputs/0002_web_search.txt"
     )
     messages = [
         {"role": "system", "content": "system prompt"},
         {"role": "user", "content": "task"},
-        short,
-        long,
+        marginal,
+        worth_it,
     ]
-    elided = elide_tool_outputs(messages, keep_recent=0, min_chars=2000)
+    elided = elide_tool_outputs(
+        messages, keep_recent=0, keep_chars=200, min_savings_tokens=250
+    )
     assert elided == 1
-    _, short_body = unwrap_channel(short["content"])
-    assert "tiny output" in short_body, "below-threshold output must stay full text"
-    assert "saved_to=" in short_body, "pointer stays attached to the inline text"
-    _, long_body = unwrap_channel(long["content"])
-    assert "output elided" in long_body
+    _, marginal_body = unwrap_channel(marginal["content"])
+    assert "mmmm" in marginal_body, "a marginal rewrite must stay inline"
+    assert "saved_to=" in marginal_body, "pointer stays attached"
+    assert "output elided" not in marginal_body
+    _, worth_body = unwrap_channel(worth_it["content"])
+    assert "output elided" in worth_body, "a real saving is taken"
+
+
+def test_elide_suffix_rule_demands_more_when_history_is_long():
+    """The rewrite threshold scales with the tokens after the message.
+
+    Rewriting re-bills the suffix at the uncached rate once per elision
+    cadence window, so a small saving cannot repay a large suffix: the
+    threshold rises to suffix / horizon.
+    """
+    old_output = _tool_results_message(
+        1, "web_search", "o" * 2000, "/tool_outputs/0001_web_search.txt"
+    )
+    filler = [{"role": "assistant", "content": "f" * 4000} for _ in range(6)]
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "task"},
+        old_output,
+        *filler,
+    ]
+    elided = elide_tool_outputs(
+        messages, keep_recent=len(filler), keep_chars=200, min_savings_tokens=0
+    )
+    assert elided == 0, (
+        "a ~380-token saving cannot repay re-billing a ~6000-token suffix"
+    )
+
+    big_output = _tool_results_message(
+        2, "web_search", "o" * 20000, "/tool_outputs/0002_web_search.txt"
+    )
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "task"},
+        big_output,
+        *filler,
+    ]
+    elided = elide_tool_outputs(
+        messages, keep_recent=len(filler), keep_chars=200, min_savings_tokens=0
+    )
+    assert elided == 1, "a ~4900-token saving repays the re-bill"
+
+
+def test_elide_horizon_zero_disables_the_suffix_rule():
+    old_output = _tool_results_message(
+        1, "web_search", "o" * 2000, "/tool_outputs/0001_web_search.txt"
+    )
+    filler = [{"role": "assistant", "content": "f" * 4000} for _ in range(6)]
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "task"},
+        old_output,
+        *filler,
+    ]
+    elided = elide_tool_outputs(
+        messages,
+        keep_recent=len(filler),
+        keep_chars=200,
+        min_savings_tokens=0,
+        request_horizon=0,
+    )
+    assert elided == 1, (
+        "a zero horizon is the budget-exceeded path: fit the budget, ignore cache"
+    )
 
 
 def test_elide_keeps_head_and_tail_excerpt():
@@ -191,14 +279,18 @@ def test_elide_keeps_head_and_tail_excerpt():
         {"role": "user", "content": "task"},
         message,
     ]
-    elided = elide_tool_outputs(messages, keep_recent=0, min_chars=400, keep_chars=200)
+    elided = elide_tool_outputs(
+        messages, keep_recent=0, keep_chars=200, min_savings_tokens=250
+    )
     assert elided == 1
     _, body = unwrap_channel(message["content"])
     assert "HEAD-LINE" in body, "head stays so the model recalls the shape"
     assert "TAIL-LINE" in body, "tail stays: command conclusions sit there"
     assert "first and last 200 chars kept" in body
     assert "full text in /tool_outputs/0001_web_search.txt" in body
-    assert "mmmm" not in body, "the middle must be gone"
+    assert body.count("m") < 600, (
+        "only the head and tail excerpts keep m's; the 3000-char middle is gone"
+    )
     assert "[...]" in body
 
 
@@ -212,7 +304,7 @@ def test_elide_excerpt_never_grows_a_result():
         {"role": "user", "content": "task"},
         message,
     ]
-    elided = elide_tool_outputs(messages, keep_recent=0, min_chars=300, keep_chars=200)
+    elided = elide_tool_outputs(messages, keep_recent=0, keep_chars=200)
     assert elided == 0, "excerpt would be no shorter; nothing to remove"
     _, body = unwrap_channel(message["content"])
     assert "output elided" not in body
@@ -228,11 +320,203 @@ def test_elide_keep_chars_zero_gives_pointer_only():
         {"role": "user", "content": "task"},
         message,
     ]
-    elided = elide_tool_outputs(messages, keep_recent=0, min_chars=0, keep_chars=0)
+    elided = elide_tool_outputs(messages, keep_recent=0, keep_chars=0)
     assert elided == 1
     _, body = unwrap_channel(message["content"])
     assert "[output elided; full text in /tool_outputs/0001_web_search.txt]" in body
     assert "zzzz" not in body
+
+
+def test_elide_images_replaces_old_attachments_with_pointers():
+    old_image = _image_message("/tool_outputs/img1.png", 1200)
+    recent_image = _image_message("/tool_outputs/img2.png", 1300)
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        old_image,
+        recent_image,
+    ]
+    before = estimate_history_tokens(messages)
+
+    assert elide_images(messages, keep_recent=1) == 1
+
+    assert isinstance(old_image["content"], str), (
+        "the attachment is replaced by a text pointer"
+    )
+    assert "image elided" in old_image["content"]
+    assert "/tool_outputs/img1.png" in old_image["content"]
+    assert old_image["image_tokens"] == 0, "the budget must stop counting it"
+    assert isinstance(recent_image["content"], list), "recent window untouched"
+    after = estimate_history_tokens(messages)
+    assert before - after > 1000, "eliding must free the image's tokens"
+    assert elide_images(messages, keep_recent=1) == 0, "idempotent"
+
+
+def test_elide_images_respect_the_savings_floor():
+    """The flat floor gates images: a tiny attachment is not worth rewriting."""
+    worthwhile = _image_message("/tool_outputs/img1.png", 1200)
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        worthwhile,
+    ]
+    assert elide_images(messages, keep_recent=0, min_savings_tokens=250) == 1
+    assert worthwhile["image_tokens"] == 0
+
+    tiny = _image_message("/tool_outputs/img2.png", 100)
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        tiny,
+    ]
+    assert elide_images(messages, keep_recent=0, min_savings_tokens=250) == 0, (
+        "a ~70-token saving is below the floor"
+    )
+    assert isinstance(tiny["content"], list), "the attachment stays untouched"
+
+
+def test_elide_images_never_touches_plain_messages():
+    messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "just text"},
+        {"role": "assistant", "content": [{"type": "text", "text": "reply"}]},
+    ]
+    assert elide_images(messages, keep_recent=0) == 0
+    assert messages[1]["content"] == "just text"
+    assert messages[2]["content"] == [{"type": "text", "text": "reply"}]
+
+
+def test_recent_window_size_caps_by_tokens():
+    big = {"role": "user", "content": "x" * 4000}
+    small = {"role": "user", "content": "y" * 40}
+    messages = [big, small, small]
+
+    assert recent_window_size(messages, 3, 0) == 3, "zero disables the cap"
+    assert recent_window_size(messages, 2, 50000) == 2, "cap above window"
+    assert recent_window_size(messages, 3, 1000) == 2, "window shrinks to fit"
+    assert recent_window_size(messages, 1, 50000) == 1, "count bound holds"
+    assert recent_window_size(messages, 3, 10) == 1, "the newest message stays"
+    assert recent_window_size(messages, 0, 50000) == 0, "count zero stays zero"
+
+
+def test_elide_keep_recent_larger_than_history_protects_everything():
+    """A window covering the whole list must not wrap around and elide.
+
+    `last_editable` goes negative when the recent window exceeds the
+    message count, and the negative slice stop wraps the range back
+    into the middle of the list - eliding messages the window promised
+    to protect.
+    """
+    tool_one = _tool_results_message(
+        1, "web_search", "1" * 2000, "/tool_outputs/0001_web_search.txt"
+    )
+    tool_two = _tool_results_message(
+        2, "web_search", "2" * 2000, "/tool_outputs/0002_web_search.txt"
+    )
+    for keep_recent in (3, 4, 5, 6, 12):
+        messages = [
+            {"role": "system", "content": "system prompt"},
+            tool_one,
+            tool_two,
+        ]
+        elided = elide_tool_outputs(
+            messages, keep_recent=keep_recent, keep_chars=0, min_savings_tokens=0
+        )
+        assert elided == 0, f"keep_recent={keep_recent} must protect everything"
+        assert "output elided" not in str(messages)
+
+
+def test_recent_window_size_counts_image_messages_by_their_estimate():
+    """An image inside the cap consumes its `image_tokens`, not its base64."""
+    image = _image_message("/tool_outputs/img1.png", 1200)
+    small = {"role": "user", "content": "y" * 40}
+    messages = [image, small]
+
+    assert recent_window_size(messages, 2, 1300) == 2, (
+        "both fit: the image costs ~1200 tokens, the text ~14"
+    )
+    assert recent_window_size(messages, 2, 1210) == 1, (
+        "the cap admits the image alone and the newest message always stays"
+    )
+
+
+def test_recent_window_size_counts_the_system_message_on_short_histories():
+    """The documented inclusion: the system prompt eats into the cap."""
+    system = {"role": "system", "content": "s" * 4000}
+    small = {"role": "user", "content": "y" * 40}
+    messages = [system, small, small]
+
+    assert recent_window_size(messages, 3, 4200) == 3, (
+        "the window fits: ~1004 tokens of system plus two small messages"
+    )
+    assert recent_window_size(messages, 3, 1031) == 2, (
+        "the cap counts the system message too, shrinking the window"
+    )
+
+
+def test_periodic_cache_summary_preserves_totals():
+    from syna.conversation.session import (
+        CACHE_SUMMARY_INTERVAL_REQUESTS,
+        AgentSession,
+    )
+
+    session = AgentSession(session_id="cache-summary-test")
+    for _ in range(CACHE_SUMMARY_INTERVAL_REQUESTS):
+        session._record_usage(100, 50, 0.01)
+    totals = session._usage_totals
+    assert totals["requests"] == CACHE_SUMMARY_INTERVAL_REQUESTS, (
+        "the periodic log must not reset the accumulating totals"
+    )
+    assert totals["prompt_tokens"] == 100 * CACHE_SUMMARY_INTERVAL_REQUESTS
+    assert abs(totals["cost"] - 0.2) < 1e-9
+
+
+def test_estimate_correction_tracks_observed_ratio():
+    from syna.conversation.session import (
+        ESTIMATE_CORRECTION_MAX,
+        ESTIMATE_CORRECTION_MIN,
+        AgentSession,
+    )
+
+    session = AgentSession(session_id="correction-test")
+    session._pending_request_estimate = 1000
+
+    session._update_estimate_correction(1250)
+    assert session._estimate_correction == 1.25
+    assert session._pending_request_estimate is None, "pairing is consumed"
+
+    session._update_estimate_correction(None)
+    assert session._estimate_correction == 1.25, "no actual keeps the value"
+
+    session._pending_request_estimate = 1000
+    session._update_estimate_correction(9000)
+    assert session._estimate_correction == ESTIMATE_CORRECTION_MAX, "clamped high"
+
+    session._pending_request_estimate = 1000
+    session._update_estimate_correction(100)
+    assert session._estimate_correction == ESTIMATE_CORRECTION_MIN, "clamped low"
+
+
+def test_budget_decision_uses_the_observed_correction(monkeypatch):
+    from syna.conversation.session import AgentSession
+
+    session = AgentSession(session_id="correction-budget-test")
+    session.dump_path = Path(tempfile.mkdtemp(prefix="syna-correction-")) / "dump.json"
+    session.context_budget_tokens = 4500
+    session.max_history_messages = 10**6
+    session.messages = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "x" * 16000},
+    ]
+    summarized = []
+    monkeypatch.setattr(
+        session, "_summarize_history", lambda history, logger: summarized.append(1)
+    )
+
+    session._estimate_correction = 1.0
+    session._compact_history_if_needed()
+    assert not summarized, "raw estimate under budget must not compact"
+
+    session._estimate_correction = 1.5
+    session._compact_history_if_needed()
+    assert summarized, "the corrected total over budget must compact"
 
 
 def test_pod_host_config_assembles_limits():
@@ -414,7 +698,7 @@ def test_session_elides_old_outputs_on_message_interval():
         session.elide_keep_recent_messages = 1
         session.elide_interval_messages = 2
         session.elide_every_requests = 1
-        session.elide_min_chars = 0
+        session.elide_min_savings_tokens = 0
         session.elide_keep_chars = 0
         session.client = FakeChat(
             [
@@ -647,23 +931,43 @@ def test_request_prefix_is_stable_across_steps():
 
 
 def main():
-    test_estimate_tokens_bounds()
-    test_estimate_tokens_is_script_aware()
-    test_estimate_tokens_tracks_real_tokenizer_counts()
-    test_estimate_history_tokens_counts_every_message()
-    test_elide_replaces_old_saved_outputs_with_pointers()
-    test_elide_keeps_results_without_saved_to()
-    test_elide_keeps_recent_messages_untouched()
-    test_elide_is_idempotent()
-    test_pod_host_config_assembles_limits()
-    test_pod_host_config_allows_unset_limits()
-    test_create_container_self_heals_stale_endpoint()
-    test_create_container_non_connection_error_propagates()
-    test_connection_error_classification()
-    test_session_elides_old_outputs_under_token_budget()
-    test_session_elides_old_outputs_on_message_interval()
-    test_session_elision_is_batched_by_request_interval()
-    test_request_prefix_is_stable_across_steps()
+    run_suite(
+        [
+            test_estimate_tokens_bounds,
+            test_estimate_tokens_is_script_aware,
+            test_estimate_tokens_tracks_real_tokenizer_counts,
+            test_estimate_history_tokens_counts_every_message,
+            test_elide_replaces_old_saved_outputs_with_pointers,
+            test_elide_keeps_results_without_saved_to,
+            test_elide_keeps_recent_messages_untouched,
+            test_elide_is_idempotent,
+            test_elide_min_savings_keeps_marginal_rewrites_inline,
+            test_elide_suffix_rule_demands_more_when_history_is_long,
+            test_elide_horizon_zero_disables_the_suffix_rule,
+            test_elide_keeps_head_and_tail_excerpt,
+            test_elide_excerpt_never_grows_a_result,
+            test_elide_keep_chars_zero_gives_pointer_only,
+            test_elide_images_replaces_old_attachments_with_pointers,
+            test_elide_images_respect_the_savings_floor,
+            test_elide_images_never_touches_plain_messages,
+            test_recent_window_size_caps_by_tokens,
+            test_recent_window_size_counts_image_messages_by_their_estimate,
+            test_recent_window_size_counts_the_system_message_on_short_histories,
+            test_elide_keep_recent_larger_than_history_protects_everything,
+            test_pod_host_config_assembles_limits,
+            test_pod_host_config_allows_unset_limits,
+            test_create_container_self_heals_stale_endpoint,
+            test_create_container_non_connection_error_propagates,
+            test_connection_error_classification,
+            test_session_elides_old_outputs_under_token_budget,
+            test_session_elides_old_outputs_on_message_interval,
+            test_session_elision_is_batched_by_request_interval,
+            test_request_prefix_is_stable_across_steps,
+            test_periodic_cache_summary_preserves_totals,
+            test_estimate_correction_tracks_observed_ratio,
+            test_budget_decision_uses_the_observed_correction,
+        ]
+    )
     print("ALL CONTEXT AND POD LIMIT TESTS PASSED")
 
 

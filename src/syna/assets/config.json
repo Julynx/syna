@@ -1,4 +1,5 @@
 {
+  "config_version": 2,
   "timeout_ms": 120000,
   "retry": {
     "strategy": "backoff",
@@ -22,12 +23,14 @@
   "max_steps_per_turn": 100,
   "step_warning_remaining": 20,
   "elide_keep_recent_messages": 12,
+  "elide_keep_recent_tokens": 40000,
   "elide_interval_messages": 30,
   "elide_every_requests": 10,
   "elide_keep_chars": 200,
-  "elide_min_chars": 400,
+  "elide_min_savings_tokens": 250,
+  "elide_images": true,
   "elide_user_message_head_chars": 300,
-  "anthropic_cache_ttl": "5m",
+  "anthropic_cache_ttl": "1h",
   "user_message_archive_min_chars": 2000,
   "user_messages_dest": "/user_messages",
   "verify_log_tail_chars": 128000,

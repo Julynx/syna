@@ -115,6 +115,9 @@ def sticky_routing_fields(session_id: str | None) -> dict:
     return {}
 
 
+DEFAULT_ANTHROPIC_CACHE_TTL = "1h"
+
+
 def cache_control_fields(model: str | None) -> dict:
     """Return the request-body field that opts a model into prompt caching.
 
@@ -124,18 +127,23 @@ def cache_control_fields(model: str | None) -> dict:
     automatic mode - the breakpoint sits on the last cacheable block and
     advances as the conversation grows, which matches an append-only
     agent history. Cache reads run at 0.1x input price; writes at 1.25x
-    (5-minute TTL) or 2x (1-hour TTL, `anthropic_cache_ttl`), so the
-    longer TTL suits sessions with tool calls longer than five minutes
-    that would otherwise re-write the whole prefix. Every other model
-    and endpoint gets no field: providers that cache automatically need
-    no opt-in, and strict custom endpoints reject unknown fields.
+    (5-minute TTL) or 2x (1-hour TTL), so the default of one hour suits
+    this workload: agent turns routinely pause longer than five minutes
+    between requests (pod commands run up to twenty, browser sessions
+    and subagents longer still), and after a 5-minute expiry the whole
+    conversation prefix re-bills at 1x - one avoided re-bill pays the
+    write premium many times over. Sessions that stay under five-minute
+    gaps pay at most the write premium on prefixes they would have
+    re-written anyway. Every other model and endpoint gets no field:
+    providers that cache automatically need no opt-in, and strict custom
+    endpoints reject unknown fields.
     """
     if not model or not model.lstrip("~").startswith("anthropic/"):
         return {}
     if normalize_base_url(get_env().get("BASE_URL")) != DEFAULT_OPENROUTER_BASE_URL:
         return {}
     directive: dict = {"type": "ephemeral"}
-    if load_config().get("anthropic_cache_ttl") == "1h":
+    if load_config().get("anthropic_cache_ttl", DEFAULT_ANTHROPIC_CACHE_TTL) == "1h":
         directive["ttl"] = "1h"
     return {"cache_control": directive}
 
@@ -192,14 +200,105 @@ def load_config() -> dict[str, Any]:
     are merged under the user's file: keys the user's file lacks appear
     with their default values (an old config.json predating a new
     required key no longer crashes callers that index directly), and
-    every user-set value wins. The configuration is cached after the
-    first read; treat the returned dict as read-only and expect a
-    restart to pick up edits.
+    every user-set value wins. Files written by older versions are
+    migrated once (see `_migrate_config`). The configuration is cached
+    after the first read; treat the returned dict as read-only and
+    expect a restart to pick up edits.
     """
     config_path = get_data_home() / "config.json"
     with open(config_path, encoding="utf-8") as config_file:
         user_config = json.load(config_file)
-    return _merge_values(_bundled_defaults(), user_config)
+    merged = _merge_values(_bundled_defaults(), user_config)
+    return _migrate_config(config_path, user_config, merged)
+
+
+# Bump when a release needs to transform config files written by older
+# versions. The bundled config.json ships the current value, so fresh
+# seeds never migrate; existing files get the stamp the first time the
+# migration runs.
+CONFIG_VERSION = 2
+
+
+def _migrate_config(
+    config_path: Path, user_config: dict[str, Any], merged: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply one-time upgrades to a config file written by older versions.
+
+    Version 2 exists because a default flip cannot reach existing
+    installs through the merge alone: a seeded `"anthropic_cache_ttl":
+    "5m"` wins over the bundled `"1h"` forever, and nothing distinguishes
+    a deliberate user choice from the stale seeded default. The
+    migration therefore treats the exact old default as stale, restores
+    the new default, drops the retired `elide_min_chars` key, and stamps
+    `config_version` so the work runs once. The corrected file is
+    persisted when possible; a read-only data home still gets the
+    corrected values for this process, and the migration retries next
+    launch. Users who deliberately want the old behavior re-set it in
+    config.json after upgrading.
+    """
+    try:
+        version = int(user_config.get("config_version", 0))
+    except (TypeError, ValueError):
+        version = 0
+    if version >= CONFIG_VERSION:
+        return merged
+    stale_ttl = user_config.get("anthropic_cache_ttl") == "5m"
+    retired_min_chars = "elide_min_chars" in user_config
+    updated = dict(user_config)
+    updated["config_version"] = CONFIG_VERSION
+    if stale_ttl:
+        updated["anthropic_cache_ttl"] = DEFAULT_ANTHROPIC_CACHE_TTL
+        merged["anthropic_cache_ttl"] = DEFAULT_ANTHROPIC_CACHE_TTL
+    if retired_min_chars:
+        del updated["elide_min_chars"]
+    try:
+        temp_path = config_path.with_name(config_path.name + ".tmp")
+        with open(temp_path, "w", encoding="utf-8") as config_file:
+            json.dump(updated, config_file, indent=2)
+        os.replace(temp_path, config_path)
+        global _pending_migration_notice
+        _pending_migration_notice = (
+            f"Migrated config.json to version {CONFIG_VERSION}"
+            + _migration_change_summary(stale_ttl, retired_min_chars)
+        )
+    except OSError:
+        global _migration_persist_failed
+        _migration_persist_failed = True
+        _pending_migration_notice = (
+            f"Migrated config.json to version {CONFIG_VERSION}"
+            + _migration_change_summary(stale_ttl, retired_min_chars)
+            + " (in memory only; the file could not be updated)"
+        )
+        logging.getLogger(__name__).warning(
+            "Could not persist the config.json migration;"
+            " the corrected values apply to this run only",
+            exc_info=True,
+        )
+        temp_path = config_path.with_name(config_path.name + ".tmp")
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
+    return merged
+
+
+# One-time migration notices cannot go through get_logger(): it reads
+# this very config, and inside the not-yet-cached first load_config call
+# that would recurse. get_logger emits the held notice once the file
+# handler exists, so the migration is visible in syna.log like any other
+# event.
+_pending_migration_notice: str | None = None
+_migration_persist_failed = False
+
+
+def _migration_change_summary(stale_ttl: bool, retired_min_chars: bool) -> str:
+    """The parenthesized description of what a migration v2 changed."""
+    changes = []
+    if stale_ttl:
+        changes.append("anthropic_cache_ttl 5m -> 1h")
+    if retired_min_chars:
+        changes.append("dropped elide_min_chars")
+    return f" ({'; '.join(changes)})" if changes else ""
 
 
 def _bundled_defaults() -> dict[str, Any]:
@@ -222,7 +321,11 @@ def _merge_values(defaults: Any, override: Any) -> Any:
 
 
 def save_config(updates: dict[str, Any]) -> Path:
-    """Merge updates into config.json in the Syna data home and clear cache."""
+    """Merge updates into config.json in the Syna data home and clear cache.
+
+    The write is atomic (temp file plus rename): a crash or full disk
+    mid-write must not leave a truncated config behind.
+    """
     config_path = get_data_home() / "config.json"
     current = {}
     if config_path.is_file():
@@ -232,8 +335,10 @@ def save_config(updates: dict[str, Any]) -> Path:
         except Exception:
             current = {}
     current.update(updates)
-    with open(config_path, "w", encoding="utf-8") as config_file:
+    temp_path = config_path.with_name(config_path.name + ".tmp")
+    with open(temp_path, "w", encoding="utf-8") as config_file:
         json.dump(current, config_file, indent=2)
+    os.replace(temp_path, config_path)
     load_config.cache_clear()
     return config_path
 
@@ -245,6 +350,7 @@ def get_logger() -> logging.Logger:
     log_file_path = get_data_home() / log_file_name
 
     logger = logging.getLogger("syna")
+    logger.setLevel(logging.INFO)
     if not logger.handlers:
         file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
         formatter = logging.Formatter(
@@ -252,7 +358,6 @@ def get_logger() -> logging.Logger:
         )
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-        logger.setLevel(logging.INFO)
         # Bollard logs its operational messages (machine bring-up, the
         # engine self-heal) through its own logger tree; sharing the
         # file handler keeps them in the syna log instead of leaving
@@ -261,6 +366,15 @@ def get_logger() -> logging.Logger:
         bollard_logger.addHandler(file_handler)
         bollard_logger.setLevel(logging.INFO)
 
+    global _pending_migration_notice
+    if _pending_migration_notice:
+        logger.info(_pending_migration_notice)
+        if _migration_persist_failed:
+            logger.warning(
+                "The migration could not be persisted; it will run again"
+                " on the next launch."
+            )
+        _pending_migration_notice = None
     return logger
 
 
@@ -417,7 +531,8 @@ DEFAULT_USER_MESSAGE_ARCHIVE_MIN_CHARS = 2000
 DEFAULT_USER_MESSAGES_DEST = "/user_messages"
 DEFAULT_ELIDE_USER_MESSAGE_HEAD_CHARS = 300
 DEFAULT_ELIDE_KEEP_CHARS = 200
-DEFAULT_ELIDE_MIN_CHARS = 2 * DEFAULT_ELIDE_KEEP_CHARS
+DEFAULT_ELIDE_MIN_SAVINGS_TOKENS = 250
+DEFAULT_ELIDE_KEEP_RECENT_TOKENS = 40000
 DEFAULT_VERIFY_LOG_TAIL_CHARS = 128000
 
 # Background work. Processes and subagents get their own runtime caps,
@@ -461,18 +576,40 @@ def load_elide_user_message_head_chars() -> int:
     )
 
 
-def load_elide_min_chars() -> int:
-    """Return the output size at which routine elision replaces text with an excerpt.
+def load_elide_images() -> bool:
+    """Whether old image attachments are elided like old tool outputs."""
+    return bool(load_config().get("elide_images", True))
 
-    Defaults to twice `elide_keep_chars`: below that size the head and
-    tail excerpt covers the whole output, so there is nothing to remove.
-    Eliding a short output is also a net loss for the prompt cache: the
-    excerpt is nearly as long as the text, and rewriting one message
-    re-bills the whole suffix after it at the uncached rate. Outputs
-    shorter than this stay inline with their saved_to pointer attached.
-    The budget-exceeded elision path ignores the threshold.
+
+def load_elide_min_savings_tokens() -> int:
+    """Return the token saving a rewrite must reach before history is touched.
+
+    Rewriting one history message re-bills the whole prompt-cache suffix
+    after it at the uncached rate, so a rewrite that saves a few dozen
+    tokens is a net loss: the excerpt is nearly as long as the text, and
+    the cache damage dwarfs the gain. Elision therefore only rewrites a
+    message when the excerpt removes at least this many tokens, and
+    additionally when the tokens after the message are large the
+    required saving grows with them (see `context._rewrite_threshold`):
+    the re-bill must be repaid within one elision cadence window. The
+    budget-exceeded elision path ignores the threshold entirely.
     """
-    return load_config().get("elide_min_chars", DEFAULT_ELIDE_MIN_CHARS)
+    return load_config().get(
+        "elide_min_savings_tokens", DEFAULT_ELIDE_MIN_SAVINGS_TOKENS
+    )
+
+
+def load_elide_keep_recent_tokens() -> int:
+    """Return the token cap on the recent elision window.
+
+    The recent window is `elide_keep_recent_messages` messages, but
+    twelve messages can still hold a fresh ten-thousand-token output, so
+    the window is additionally capped at this many tokens: the window
+    shrinks until its contents fit. Zero disables the cap.
+    """
+    return load_config().get(
+        "elide_keep_recent_tokens", DEFAULT_ELIDE_KEEP_RECENT_TOKENS
+    )
 
 
 def load_elide_keep_chars() -> int:

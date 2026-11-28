@@ -313,6 +313,20 @@ def test_rewind_purges_later_points_and_pending_state():
     print("PASS rewinding purges later points, failures, and injections")
 
 
+def test_rewind_resets_the_estimate_correction():
+    """The truncated history is a new composition; the old ratio is stale."""
+    session = _make_session()
+    session._estimate_correction = 1.7
+    _point(session, "msg-1")
+
+    session.rewind("msg-1")
+
+    assert session._estimate_correction == 1.0, (
+        "the correction must reset when a rewind rewrites history"
+    )
+    print("PASS rewinding resets the estimate correction")
+
+
 def test_rewind_of_a_compacted_away_message_still_works():
     """Compaction summarized the message, but the UI still shows it.
 
@@ -787,6 +801,7 @@ def main():
             test_run_turn_without_rewind_records_nothing,
             test_rewind_truncates_history_and_returns_the_text,
             test_rewind_purges_later_points_and_pending_state,
+            test_rewind_resets_the_estimate_correction,
             test_rewind_of_a_compacted_away_message_still_works,
             test_rewinding_an_unknown_point_returns_none,
             test_rewind_delta_events_track_the_point_lifecycle,

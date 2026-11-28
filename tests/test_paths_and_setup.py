@@ -621,12 +621,190 @@ def test_init_docker_client_serializes_concurrent_calls(monkeypatch):
         ) = saved
 
 
+def test_config_migration_repairs_a_stale_default():
+    """A pre-versioning config.json with the old seeded 5m TTL is upgraded once.
+
+    The merge alone cannot flip a default for existing installs: the
+    seeded `"anthropic_cache_ttl": "5m"` wins over the bundled `"1h"`
+    forever. The migration treats the exact old default as stale, so
+    2.0.15-era files reach the new TTL, the retired `elide_min_chars`
+    key is dropped, and a version stamp keeps the work one-time.
+    """
+    import syna.config as config_module
+
+    home_override = tempfile.mkdtemp(prefix="syna-migrate-")
+    user_config = {
+        "anthropic_cache_ttl": "5m",
+        "elide_min_chars": 400,
+    }
+    config_path = Path(home_override) / "config.json"
+    config_path.write_text(json.dumps(user_config), encoding="utf-8")
+    previous = os.environ.get("SYNA_HOME")
+    os.environ["SYNA_HOME"] = home_override
+    paths.get_data_home.cache_clear()
+    config_module.load_config.cache_clear()
+    try:
+        merged = config_module.load_config()
+        assert merged["anthropic_cache_ttl"] == "1h", (
+            "the stale seeded 5m must not mask the new 1h default"
+        )
+        on_disk = json.loads(config_path.read_text(encoding="utf-8"))
+        assert on_disk["anthropic_cache_ttl"] == "1h", "persisted, not just merged"
+        assert "elide_min_chars" not in on_disk, "the retired key is dropped"
+        assert on_disk["config_version"] == config_module.CONFIG_VERSION
+
+        versioned = {"config_version": 2, "anthropic_cache_ttl": "5m"}
+        config_path.write_text(json.dumps(versioned), encoding="utf-8")
+        config_module.load_config.cache_clear()
+        merged = config_module.load_config()
+        assert merged["anthropic_cache_ttl"] == "5m", (
+            "a versioned file's explicit 5m is a user choice, not a stale seed"
+        )
+    finally:
+        if previous is None:
+            os.environ.pop("SYNA_HOME", None)
+        else:
+            os.environ["SYNA_HOME"] = previous
+        paths.get_data_home.cache_clear()
+        config_module.load_config.cache_clear()
+
+
+def test_config_migration_survives_a_failing_write(monkeypatch):
+    """A read-only data home still gets corrected values for the process."""
+    import json as json_module
+
+    import syna.config as config_module
+
+    home_override = tempfile.mkdtemp(prefix="syna-migrate-ro-")
+    config_path = Path(home_override) / "config.json"
+    config_path.write_text(json.dumps({"anthropic_cache_ttl": "5m"}), encoding="utf-8")
+    previous = os.environ.get("SYNA_HOME")
+    os.environ["SYNA_HOME"] = home_override
+    paths.get_data_home.cache_clear()
+    config_module.load_config.cache_clear()
+
+    class WriteFailingJson:
+        """The real parser; the persist step raises like a read-only disk."""
+
+        load = staticmethod(json_module.load)
+
+        @staticmethod
+        def dump(*args, **kwargs):
+            raise OSError("read-only data home")
+
+    monkeypatch.setattr(config_module, "json", WriteFailingJson)
+    try:
+        merged = config_module.load_config()
+        assert merged["anthropic_cache_ttl"] == "1h", (
+            "the migration applies in memory even when it cannot persist"
+        )
+        on_disk = json.loads(config_path.read_text(encoding="utf-8"))
+        assert on_disk["anthropic_cache_ttl"] == "5m", (
+            "the unpersisted file is untouched, and the next launch retries"
+        )
+    finally:
+        config_module._pending_migration_notice = None
+        config_module._migration_persist_failed = False
+        if previous is None:
+            os.environ.pop("SYNA_HOME", None)
+        else:
+            os.environ["SYNA_HOME"] = previous
+        paths.get_data_home.cache_clear()
+        config_module.load_config.cache_clear()
+
+
+def test_config_migration_upgrades_a_pre_ttl_file():
+    """A config predating the TTL key just gets the stamp and the default."""
+    import syna.config as config_module
+
+    home_override = tempfile.mkdtemp(prefix="syna-migrate-pre-")
+    config_path = Path(home_override) / "config.json"
+    config_path.write_text(json.dumps({"model": "user/custom"}), encoding="utf-8")
+    previous = os.environ.get("SYNA_HOME")
+    os.environ["SYNA_HOME"] = home_override
+    paths.get_data_home.cache_clear()
+    config_module.load_config.cache_clear()
+    try:
+        merged = config_module.load_config()
+        assert merged["anthropic_cache_ttl"] == "1h", (
+            "the bundled default applies through the merge alone"
+        )
+        on_disk = json.loads(config_path.read_text(encoding="utf-8"))
+        assert on_disk["config_version"] == config_module.CONFIG_VERSION, (
+            "the stamp lands even when nothing else needs changing"
+        )
+        assert "anthropic_cache_ttl" not in on_disk, (
+            "the user file is never expanded with bundled values"
+        )
+        assert on_disk["model"] == "user/custom"
+    finally:
+        if previous is None:
+            os.environ.pop("SYNA_HOME", None)
+        else:
+            os.environ["SYNA_HOME"] = previous
+        paths.get_data_home.cache_clear()
+        config_module.load_config.cache_clear()
+
+
+def test_config_migration_notice_reaches_the_syna_log(monkeypatch):
+    """The deferred notice lands in the file log, not just this process."""
+    import logging as logging_module
+
+    import syna.config as config_module
+
+    home_override = tempfile.mkdtemp(prefix="syna-migrate-log-")
+    config_path = Path(home_override) / "config.json"
+    config_path.write_text(json.dumps({"anthropic_cache_ttl": "5m"}), encoding="utf-8")
+    previous = os.environ.get("SYNA_HOME")
+    os.environ["SYNA_HOME"] = home_override
+    paths.get_data_home.cache_clear()
+    config_module.load_config.cache_clear()
+
+    class CapturingHandler(logging_module.Handler):
+        def __init__(self):
+            super().__init__()
+            self.records = []
+
+        def emit(self, record):
+            self.records.append(record.getMessage())
+
+    capture = CapturingHandler()
+    syna_logger = logging_module.getLogger("syna")
+    syna_logger.addHandler(capture)
+    try:
+        config_module.load_config()
+        assert config_module._pending_migration_notice is not None, (
+            "the migration holds its notice for the file logger"
+        )
+        config_module.get_logger()
+        assert any(
+            "Migrated config.json to version 2" in message
+            and "anthropic_cache_ttl 5m -> 1h" in message
+            for message in capture.records
+        ), capture.records
+        assert config_module._pending_migration_notice is None, (
+            "the notice is emitted once"
+        )
+    finally:
+        syna_logger.removeHandler(capture)
+        if previous is None:
+            os.environ.pop("SYNA_HOME", None)
+        else:
+            os.environ["SYNA_HOME"] = previous
+        paths.get_data_home.cache_clear()
+        config_module.load_config.cache_clear()
+
+
 def main():
     run_suite(
         [
             test_bundled_assets_resolve,
             test_bundled_config_matches_code_defaults,
             test_load_config_merges_defaults_under_user_values,
+            test_config_migration_repairs_a_stale_default,
+            test_config_migration_survives_a_failing_write,
+            test_config_migration_upgrades_a_pre_ttl_file,
+            test_config_migration_notice_reaches_the_syna_log,
             test_data_home_respects_syna_home_override,
             test_repo_checkout_uses_repo_root,
             test_endpoint_needs_key_matrix,

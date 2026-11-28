@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from _runner import run_suite
 
 from syna.capabilities.tools import TOOL_REGISTRY
-from syna.protocol.channel import is_channel_message
+from syna.protocol.channel import format_tool_result_content, is_channel_message
 from syna.state import register_container, unregister_container
 
 
@@ -193,6 +193,110 @@ def test_summarizer_requests_accumulate_without_emitting():
     ), "the summary must be spliced into history on the compaction channel"
 
 
+def test_main_loop_pairs_the_estimate_with_real_usage():
+    """The correction is derived from the request the estimate was taken on.
+
+    `_pending_request_estimate` is captured right before the request and
+    consumed by the response's usage callback, so the observed ratio is
+    the estimator's error for exactly the billed message list.
+    """
+    TOOL_REGISTRY["smoke_tool"] = lambda label="unlabeled": f"ran: {label}"
+    register_container(FakePod())
+    try:
+        events = []
+        session = _make_session(events)
+        session.client = FakeChat(
+            [
+                _make_tool_call_reply("smoke_tool", {"label": "x"}),
+                FakeMessage(content="done", tool_calls=None),
+            ],
+            prompt_tokens=900,
+            cached_tokens=0,
+            cost=0.001,
+        )
+        session.run_turn("probe")
+    finally:
+        unregister_container()
+        TOOL_REGISTRY.pop("smoke_tool", None)
+
+    assert session._pending_request_estimate is None, "the pairing is consumed"
+    assert session._estimate_correction < 1.0, (
+        "a 900-token bill against a multi-thousand-token estimate must"
+        " pull the correction down"
+    )
+
+
+def test_compaction_resets_the_estimate_correction():
+    """The spliced summary is new composition; the old ratio no longer applies."""
+    TOOL_REGISTRY["smoke_tool"] = lambda label="unlabeled": f"ran: {label}"
+    register_container(FakePod())
+    try:
+        events = []
+        session = _make_session(events)
+        session._estimate_correction = 1.7
+        session.client = FakeChat(
+            [
+                _make_tool_call_reply(
+                    "smoke_tool", {"label": "y" * 2000}, call_id="call_1"
+                ),
+                FakeMessage(content="done", tool_calls=None),
+            ]
+        )
+        session.run_turn("probe")
+        session.client = FakeChat([FakeMessage(content="the summary", tool_calls=None)])
+        session.compact_now()
+    finally:
+        unregister_container()
+        TOOL_REGISTRY.pop("smoke_tool", None)
+
+    assert session._estimate_correction == 1.0, (
+        "the correction must reset when compaction rewrites history"
+    )
+
+
+def test_manual_compact_elides_with_the_corrected_budget():
+    """compact_now uses the corrected token total, like the automatic path.
+
+    The raw estimate sits under the budget while the correction puts it
+    over, so the elision inside the manual command must see the budget
+    as exceeded and run unconditionally.
+    """
+    TOOL_REGISTRY["smoke_tool"] = lambda label="unlabeled": f"ran: {label}"
+    register_container(FakePod())
+    try:
+        events = []
+        session = _make_session(events)
+        session.context_budget_tokens = 5000
+        session._estimate_correction = 1.5
+        session.messages = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "x" * 16000},
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": format_tool_result_content(
+                    status="ok",
+                    output="o" * 2000,
+                    saved_to="/tool_outputs/0001_smoke.txt",
+                ),
+            },
+        ]
+        session.client = FakeChat([FakeMessage(content="the summary", tool_calls=None)])
+        session.compact_now()
+    finally:
+        unregister_container()
+        TOOL_REGISTRY.pop("smoke_tool", None)
+
+    tool_message = next(
+        message
+        for message in session.messages
+        if is_channel_message(message.get("content") or "", "TOOL_RESULTS")
+    )
+    assert "output elided" in tool_message["content"], (
+        "the corrected total is over budget, so the budget path must elide"
+    )
+
+
 def test_compact_now_without_compactable_announces_nothing():
     register_container(FakePod())
     try:
@@ -299,7 +403,10 @@ def main():
     run_suite(
         [
             test_main_loop_emits_usage_events,
+            test_main_loop_pairs_the_estimate_with_real_usage,
             test_summarizer_requests_accumulate_without_emitting,
+            test_compaction_resets_the_estimate_correction,
+            test_manual_compact_elides_with_the_corrected_budget,
             test_compact_now_without_compactable_announces_nothing,
             test_compact_now_ignores_the_master_switch,
             test_usage_events_carry_the_models_context_window,

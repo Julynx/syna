@@ -25,7 +25,9 @@ from ..config import (
     load_command_timeout_s,
     load_config,
     load_elide_keep_chars,
-    load_elide_min_chars,
+    load_elide_keep_recent_tokens,
+    load_elide_images,
+    load_elide_min_savings_tokens,
     load_elide_user_message_head_chars,
     load_max_tool_calls_per_reply,
     load_output_limit_chars,
@@ -51,9 +53,12 @@ from ..protocol.compaction import (
     load_compaction_prompt,
 )
 from ..protocol.context import (
+    ELISION_SAVINGS_HORIZON,
     elide_archived_user_messages,
+    elide_images,
     elide_tool_outputs,
     estimate_history_tokens,
+    recent_window_size,
 )
 from ..protocol.parse import parse_and_execute_tools
 from ..protocol.tool_schemas import get_tool_definitions
@@ -76,6 +81,14 @@ DEFAULT_ELIDE_INTERVAL_MESSAGES = 30
 DEFAULT_ELIDE_EVERY_REQUESTS = 10
 MAX_NO_TOOL_RETRIES = 3
 REPEATED_CALL_LIMIT = 3
+# The running prompt-cache hit ratio is logged this often (the session-end
+# summary is separate), so a cache-hostile pattern shows up mid-session.
+CACHE_SUMMARY_INTERVAL_REQUESTS = 20
+# Bounds on the estimator self-correction: the observed ratio between a
+# request's real prompt tokens and its raw character estimate. The clamp
+# keeps a single anomalous request from flinging the trigger far away.
+ESTIMATE_CORRECTION_MIN = 0.5
+ESTIMATE_CORRECTION_MAX = 2.0
 
 STEP_BUDGET_OUT_NOTICE = (
     "The step budget for this task ran out. Deliver your final status"
@@ -599,12 +612,16 @@ class AgentSession:
             "elide_every_requests", DEFAULT_ELIDE_EVERY_REQUESTS
         )
         self.elide_user_message_head_chars = load_elide_user_message_head_chars()
-        self.elide_min_chars = load_elide_min_chars()
         self.elide_keep_chars = load_elide_keep_chars()
+        self.elide_min_savings_tokens = load_elide_min_savings_tokens()
+        self.elide_keep_recent_tokens = load_elide_keep_recent_tokens()
+        self.elide_images = load_elide_images()
         self.compaction_prompt = load_compaction_prompt()
         self.session_id = session_id
         self.messages: list[dict] = []
         self.rewind_points: dict[str, dict] = {}
+        self._estimate_correction = 1.0
+        self._pending_request_estimate: int | None = None
         self._pending_failed_messages: list[dict] = []
         self._user_message_seq = 0
         self._archive_nonce = secrets.token_hex(8)
@@ -868,6 +885,7 @@ class AgentSession:
         self._pending_failed_messages.clear()
         with self._injection_lock:
             self._pending_injections = []
+        self._estimate_correction = 1.0
         self._emit_rewind_delta(removed=purged)
         get_logger().info(
             "Rewound history to before rewind point %s (%d messages kept)",
@@ -945,6 +963,8 @@ class AgentSession:
             self._usage_totals["cached_tokens"] += cached_tokens
         if cost is not None:
             self._usage_totals["cost"] += cost
+        if not self._usage_totals["requests"] % CACHE_SUMMARY_INTERVAL_REQUESTS:
+            self._log_cache_summary(reset=False)
 
     def _record_main_usage(
         self,
@@ -958,7 +978,13 @@ class AgentSession:
         subagents' prompt sizes are not the conversation's context, so
         flashing them would misstate the context use. Their cost still
         accumulates silently into the session total.
+
+        This is also where the token-estimate correction is fed: the
+        request that just returned was paired with a raw character-count
+        estimate right before it was sent, so the observed ratio becomes
+        the correction the next elision and compaction decisions apply.
         """
+        self._update_estimate_correction(prompt_tokens)
         self._record_usage(prompt_tokens, cached_tokens, cost)
         self._emit(
             {
@@ -969,13 +995,44 @@ class AgentSession:
             }
         )
 
-    def _log_cache_summary(self):
+    def _update_estimate_correction(self, prompt_tokens: int | None):
+        """Re-derive the estimator correction from the request that returned.
+
+        The pending estimate was taken on exactly the messages this
+        request billed, so the ratio is the estimator's error for that
+        composition - code- and JSON-dense histories run denser than the
+        4-chars-per-token model - plus the tool-schema overhead the raw
+        estimate deliberately omits, which the correction absorbs. The
+        correction is the last observed ratio clamped to sane bounds;
+        tracking the latest request keeps the trigger honest about the
+        content that is actually growing. A missing actual (endpoints
+        that do not report usage) keeps the previous value.
+        """
+        pending = self._pending_request_estimate
+        if not prompt_tokens or not pending:
+            return
+        self._pending_request_estimate = None
+        observed = max(
+            ESTIMATE_CORRECTION_MIN,
+            min(ESTIMATE_CORRECTION_MAX, prompt_tokens / pending),
+        )
+        if abs(observed - self._estimate_correction) > 0.02:
+            get_logger().info(
+                "Token estimate correction: %.2f (estimated %d, actual %d)",
+                observed,
+                pending,
+                prompt_tokens,
+            )
+        self._estimate_correction = observed
+
+    def _log_cache_summary(self, reset: bool = True):
         """Log the session's aggregate prompt-cache hit ratio.
 
         With sticky routing in place this ratio is the health check for
         prompt-cache behavior across the whole session; a low ratio on a
         long session points at something repeatedly invalidating the
-        request prefix.
+        request prefix. Runs periodically (without resetting the
+        accumulating totals) and at session close (resetting them).
         """
         totals = self._usage_totals
         if not totals["requests"]:
@@ -991,12 +1048,13 @@ class AgentSession:
             ratio,
             totals["cost"],
         )
-        self._usage_totals = {
-            "requests": 0,
-            "prompt_tokens": 0,
-            "cached_tokens": 0,
-            "cost": 0.0,
-        }
+        if reset:
+            self._usage_totals = {
+                "requests": 0,
+                "prompt_tokens": 0,
+                "cached_tokens": 0,
+                "cost": 0.0,
+            }
 
     def notify_file_upload(self, file_name: str, pod_path: str):
         """Record a user file upload in the conversation history."""
@@ -1238,6 +1296,7 @@ class AgentSession:
                 self._compact_history_if_needed()
                 self.apply_injections()
                 self._emit({"type": "status", "text": "Thinking..."})
+                self._pending_request_estimate = estimate_history_tokens(self.messages)
                 response_msg = ask_question(
                     self.client,
                     self.model,
@@ -1450,7 +1509,7 @@ class AgentSession:
         logger.info(str(msg))
 
     def _elide_old_outputs(self, history, total_tokens, logger) -> int:
-        """Elide saved tool outputs and archived user messages once history passes its interval.
+        """Elide saved tool outputs, old images, and archived user messages.
 
         Elision runs when the message count reaches `elide_interval_messages`,
         keeping prompts small throughout a long run without waiting for the
@@ -1460,15 +1519,20 @@ class AgentSession:
         `elide_every_requests` requests. An elided output keeps its first
         and last `elide_keep_chars` characters around the pointer, so the
         model recalls the shape of old results without re-reading them.
-        Outputs below `elide_min_chars` stay full text (pointer attached):
-        the excerpt would not remove anything, and rewriting the message
-        re-bills the cache suffix after it at the uncached rate. When the
-        budget is exceeded the threshold is ignored - fitting in the
-        budget beats cache economics - but the excerpt still applies.
-        Larger outputs still become excerpts eventually; they simply stay
-        full-text a few requests longer. Lossless: elided output stays
-        readable in the pod at its saved_to path, and an archived user
-        message at its archive path.
+        A rewrite only happens when it removes at least
+        `elide_min_savings_tokens` tokens and repays its cache re-bill
+        within the elision cadence horizon (`ELISION_SAVINGS_HORIZON`:
+        the threshold grows with the suffix after the rewritten message,
+        see `context._rewrite_threshold`) - rewriting one message
+        re-bills the cache suffix after it at the uncached rate. When
+        the budget is exceeded the threshold is ignored entirely -
+        fitting in the budget beats cache economics - but the excerpt
+        still applies. Old image attachments are elided to text pointers
+        when `elide_images` is on, gated by the same flat floor. The
+        recent window is the configured message count capped at
+        `elide_keep_recent_tokens` tokens. Lossless: elided content
+        stays readable in the pod at its saved_to path, image path, or
+        archive path.
         """
         interval = self.elide_interval_messages
         interval_reached = bool(interval) and len(history) >= interval
@@ -1478,26 +1542,37 @@ class AgentSession:
         batch_due = self._requests_since_elide >= self.elide_every_requests
         if not (budget_exceeded or batch_due):
             return 0
-        min_chars = 0 if budget_exceeded else self.elide_min_chars
-        elided = elide_tool_outputs(
+        min_savings = 0 if budget_exceeded else self.elide_min_savings_tokens
+        request_horizon = 0 if budget_exceeded else ELISION_SAVINGS_HORIZON
+        keep_recent = recent_window_size(
             self.messages,
             self.elide_keep_recent_messages,
-            min_chars,
+            self.elide_keep_recent_tokens,
+        )
+        elided = elide_tool_outputs(
+            self.messages,
+            keep_recent,
             self.elide_keep_chars,
+            min_savings,
+            request_horizon,
         )
         elided += elide_archived_user_messages(
             self.messages,
-            self.elide_keep_recent_messages,
+            keep_recent,
             self.elide_user_message_head_chars,
             self._archive_nonce,
+            min_savings,
+            request_horizon,
         )
+        if self.elide_images:
+            elided += elide_images(self.messages, keep_recent, min_savings)
         self._requests_since_elide = 0
         if elided:
-            logger.info("Elided %d old tool outputs from history", elided)
+            logger.info("Elided %d old items from history", elided)
             self._emit(
                 {
                     "type": "status",
-                    "text": "Trimmed old tool outputs...",
+                    "text": "Trimmed old outputs...",
                     "quiet": True,
                 }
             )
@@ -1534,19 +1609,26 @@ class AgentSession:
         their saved_to paths. It runs on a batched message-count interval so
         prompts stay small throughout a long run without rewriting history
         before every request, and additionally whenever the token budget is
-        exceeded. Summarization is the lossy fallback and only runs when the
-        message count hits its interval or the token budget is still exceeded
-        after eliding. The first user message is excluded from summarization
-        and stays verbatim in history, but it is shown to the summarizer as a
-        labeled block so the summary represents the user's request faithfully.
+        exceeded. The token total is the raw estimate scaled by the
+        correction the last real request observed (see
+        `_update_estimate_correction`), so code- and JSON-dense histories
+        trigger when they should instead of when a 4-chars-per-token model
+        guesses. Summarization is the lossy fallback and only runs when the
+        message count hits its interval or the token budget is still
+        exceeded after eliding. The first user message is excluded from
+        summarization and stays verbatim in history, but it is shown to the
+        summarizer as a labeled block so the summary represents the user's
+        request faithfully.
         """
         if not self.compaction_enabled:
             return
         logger = get_logger()
         history = self.messages[1:]
-        total_tokens = estimate_history_tokens(self.messages)
+        raw_estimate = estimate_history_tokens(self.messages)
+        total_tokens = int(raw_estimate * self._estimate_correction)
         if self._elide_old_outputs(history, total_tokens, logger):
-            total_tokens = estimate_history_tokens(self.messages)
+            raw_estimate = estimate_history_tokens(self.messages)
+            total_tokens = int(raw_estimate * self._estimate_correction)
         if (
             len(history) < self.max_history_messages
             and total_tokens <= self._current_budget()
@@ -1559,13 +1641,16 @@ class AgentSession:
 
         The manual command ignores `enable_compaction` (that switch
         governs the automatic triggers) and the budget/count gates:
-        old outputs are elided first — lossless — then anything still
-        compactable is summarized. When nothing is compactable the user
-        is told so instead of being shown an empty compaction.
+        old outputs are elided first — lossless, with the same
+        corrected token total the automatic path uses — then anything
+        still compactable is summarized. When nothing is compactable
+        the user is told so instead of being shown an empty compaction.
         """
         logger = get_logger()
         self._elide_old_outputs(
-            self.messages[1:], estimate_history_tokens(self.messages), logger
+            self.messages[1:],
+            int(estimate_history_tokens(self.messages) * self._estimate_correction),
+            logger,
         )
         history = self.messages[1:]
         if not self._select_compactable(history):
@@ -1633,6 +1718,7 @@ class AgentSession:
             summary_message,
             *tail_group,
         ]
+        self._estimate_correction = 1.0
         self._mark_compacted_rewind_points()
         self._emit({"type": "compaction", "summary": summary})
         logger.info(

@@ -209,14 +209,17 @@ from the canonical constants in `config.py`.
 | `step_warning_remaining`            | Remaining-steps count that triggers the wrap-up warning (default 20).                                                                                                                                                                                                         |
 | `context_budget_tokens`             | The token budget a new session starts with (default 250000 when unset). On OpenRouter it is only the pre-fetch value: a background fetch of the models list overrides it with half the model's real context window once it lands, regardless of this setting. Non-OpenRouter endpoints and failed fetches keep this value. When exceeded, old tool outputs are elided first and summarization runs only if the budget is still exceeded. |
 | `elide_keep_recent_messages`        | History messages kept untouched by output elision (default 12).                                                                                                                                                                                                               |
+| `elide_keep_recent_tokens`          | Token cap on the recent elision window (default 40000): the window shrinks until its contents fit, so a fresh ten-thousand-token output cannot make the immune window grow without limit. Zero disables the cap; the newest message always stays.                              |
 | `elide_interval_messages`           | History size at which lossless output elision runs on its own, instead of waiting for the token budget (default 30). Keeps prompts small through long runs; elided outputs remain readable in the pod at their `saved_to` paths.                                              |
 | `elide_every_requests`              | Requests between batched elision passes once the message interval is reached (default 10). Batching keeps the conversation prefix stable between passes so the provider prompt cache stays warm; the token-budget path always elides immediately.                             |
-| `elide_min_chars`                   | Output size below which routine elision keeps the full text inline with its `saved_to` pointer attached (default 400, twice `elide_keep_chars`: below it the excerpt removes nothing). The token-budget path ignores this threshold.                                           |
+| `elide_min_savings_tokens`          | Token saving a rewrite must reach before elision touches a message (default 250). Rewriting one message re-bills the whole cache suffix after it at the uncached rate, so a rewrite that saves a few dozen tokens is a net loss; when the tokens after the message are large the required saving additionally grows with them (suffix divided by the elision-cadence horizon, `context._rewrite_threshold`). The token-budget path ignores this threshold. |
+| `elide_images`                      | Whether old image attachments are elided like old tool outputs (default `true`): the list-content message becomes a harness notice pointing at the pod file, gated by the same flat token-saving floor.                                                                          |
 | `elide_keep_chars`                  | How much of an elided output's head and tail stays in history around the pointer (default 200). Keeps the shape of the result visible so the model recalls it without re-reading the file.                                                                                      |
 | `elide_user_message_head_chars`     | How much of an archived large user message stays in history after elision (default 300); the rest is replaced by a pointer to the verbatim archive file.                                                                                                                      |
 | `user_message_archive_min_chars`    | User message length at which the message is archived verbatim into the pod and annotated with its path (default 2000).                                                                                                                                                        |
 | `user_messages_dest`                | Pod directory holding the archived user messages (default `/user_messages`).                                                                                                                                                                                                  |
 | `verify_log_tail_chars`             | How many characters of the serialized conversation log the `review_work` reviewer receives (default 128000).                                                                                                                                                                  |
+| `config_version`                    | Internal migration marker (currently 2), written by the bundled defaults and by the one-time config migration. Never hand-edit; the migration treats a pre-versioning file's exact old default `anthropic_cache_ttl: "5m"` as stale (restores `"1h"`) and drops the retired `elide_min_chars` key, once. |
 | `max_history_messages`              | History length that triggers compaction as a safety net for degenerate all-small-message histories; the token budget is the primary trigger.                                                                                                                                  |
 | `enable_compaction`                 | Master switch for history compaction.                                                                                                                                                                                                                                         |
 | `checkpoints_enabled`               | Master switch for the web UI's rewind checkpoints (default `false`): when on, the workspace is snapshotted before each user message and the undo buttons appear; snapshots carry some per-message delay, hence the settings dialog's wording.                                 |
@@ -515,10 +518,22 @@ in four parts:
    therefore carry a top-level `cache_control: {"type": "ephemeral"}`,
    which enables Anthropic's automatic mode: the breakpoint sits on the
    last cacheable block and advances as the append-only history grows.
-   Cache reads cost 0.1x input; writes 1.25x (5-minute TTL, the
-   default) or 2x with `anthropic_cache_ttl: "1h"` - the hour suits
-   sessions whose tool calls outlast five minutes and would otherwise
-   re-write the whole prefix. Every other model gets no field: it would
+   Cache reads cost 0.1x input; writes 1.25x (5-minute TTL) or 2x with
+   the default `anthropic_cache_ttl: "1h"` - the hour suits this
+   workload because agent turns routinely pause longer than five
+   minutes between requests (pod commands run up to twenty, browser
+   sessions and subagents longer still), and after a 5-minute expiry
+   the whole conversation prefix re-bills at 1x: one avoided re-bill
+   pays the write premium many times over, while sessions that stay
+   under five-minute gaps pay at most the premium on prefixes they
+   would have re-written anyway. An explicit `"5m"` opts out. Existing
+   installs carry the seeded `"5m"` in their data-home config.json,
+   where a merge cannot flip a default (user values win), so a one-time
+   config migration (the `config_version` marker) upgrades the exact
+   stale default to `"1h"` on first run after upgrading; a user who
+   deliberately wants 5m re-sets it afterwards and the migration never
+   touches it again. Every
+   other model gets no field: it would
    be dead weight at best on automatic-caching providers, and a 400 on
    non-OpenRouter endpoints (the gate is endpoint- and model-scoped).
 3. **Prefix stability**: provider caches match the request prefix byte
@@ -530,10 +545,14 @@ in four parts:
    days (`{{CURRENT_DATE}}`), never between requests of a session.
 4. **Measurement**: per-response cached-token counts are logged on every
    request and aggregated into one session-end summary line (requests,
-   prompt tokens, cached tokens, hit ratio). A low ratio on a long
-   session points at something repeatedly invalidating the prefix; that
-   measurement decides whether elision cadence constants ever need
-   tuning.
+   prompt tokens, cached tokens, hit ratio), repeated every
+   `CACHE_SUMMARY_INTERVAL_REQUESTS` (20) requests without resetting the
+   totals, so a cache-hostile pattern shows up mid-session. A low ratio
+   on a long session points at something repeatedly invalidating the
+   prefix; that measurement decides whether elision cadence constants
+   ever need tuning. The estimator's raw guess is logged against the
+   real prompt tokens of the same request whenever the correction
+   factor moves, so estimate drift is visible in the same log.
 
 ## 5. The protocol layer
 
@@ -829,17 +848,35 @@ the loop, `ask_utils.py` sends the model requests, and
   which `model_accepts_images` reads for `inspect_image`'s pre-flight
   check (only a proven text-only model blocks an attachment).
   Archived large user messages are
-  elided the same way (head excerpt plus pointer to the verbatim file).
+  elided the same way (head excerpt plus pointer to the verbatim file),
+  and so are old image attachments when `elide_images` is on: the
+  list-content message becomes a harness notice pointing at the pod file
+  and the budget stops counting the image's tokens.
   To keep the provider prompt cache warm,
   the rewrite is batched: outside the budget-exceeded path it only runs every
   `elide_every_requests` requests, so history stays append-only (and the
   cache prefix intact) between passes. An elided output keeps its first
   and last `elide_keep_chars` characters around the pointer, so the model
-  recalls the shape of the result without re-reading the file. Outputs
-  shorter than `elide_min_chars` (default twice `elide_keep_chars`) keep
-  their full text: the excerpt would remove nothing, and rewriting the
-  message re-bills the cache suffix after it at the uncached rate; the
-  budget-exceeded path ignores the threshold but keeps the excerpt.
+  recalls the shape of the result without re-reading the file. A rewrite
+  only happens when it removes at least `elide_min_savings_tokens` tokens,
+  and when the tokens after the message are large the required saving
+  grows with them (suffix divided by the elision-cadence horizon,
+  `context._rewrite_threshold`): the excerpt is nearly as long as the
+  text for small outputs, while rewriting the message re-bills the whole
+  cache suffix after it at the uncached rate once per cadence window, so
+  a marginal rewrite is a net loss; the budget-exceeded path ignores the
+  threshold entirely but keeps the excerpt. The
+  recent window is the configured `elide_keep_recent_messages` count
+  capped at `elide_keep_recent_tokens` tokens, so a fresh
+  ten-thousand-token output cannot make the immune window grow without
+  limit (the newest message always stays).
+  The token total driving these decisions is the character-count
+  estimate scaled by a self-correction factor: every main-loop request
+  is paired with the raw estimate taken right before it was sent, and
+  the observed ratio between the real `prompt_tokens` and that estimate
+  (clamped to sane bounds, reset on compaction and rewind) becomes the
+  next trigger's multiplier - code- and JSON-dense histories run denser
+  than 4 chars per token, and without this the trigger fires late.
   Summarization runs only if the message count reaches
   `max_history_messages` or the budget is still exceeded after elision,
   keeping the system prompt, first real user message, the compaction
@@ -1819,7 +1856,20 @@ cannot make Ctrl+C look ineffective. On Windows this matters: Windows
 Terminal treats Ctrl+C as copy whenever text is selected in the pane,
 so a server that "ignores" Ctrl+C is usually one with a selection
 hanging around — press Esc to clear it, or use Ctrl+Break, which
-uvicorn also handles.
+uvicorn also handles. Ctrl+C remains inconsistent in the field, and
+the cause is unknown. The launch chain's layers were each exercised
+in isolation against an idle test server (cmd wrapper, stdin
+redirect, uv tool shim, uvicorn 0.54, podman machine bring-up) and
+delivered the event correctly there, but the real failure was never
+reproduced, so nothing is ruled out — including states of this
+program itself (a busy turn, a live WebSocket, the event loop or a
+session worker mid-work) holding or losing the signal. The log is
+the discriminator: shutdown lines present means the signal arrived
+and something hung afterwards; no shutdown lines at all means the
+handler never ran, for a reason this project has not identified.
+Closing the terminal window is the fallback; the pod containers are
+stopped the next time a server starts (the stale-socket heal covers
+the unclean shutdown).
 
 Background work surfaces: after the pod starts, the session record
 registers the registry's `event_sink` (subagent streaming as
